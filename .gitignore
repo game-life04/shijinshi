@@ -1,0 +1,53 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+.env*
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+!.env.example
+
+# 运行数据与评测输出（可能含对话文字，不进仓库；正式实验结果另行整理后再提交）
+/data/
+/eval/out/
+
+# 测试产物
+/test-results/
+/playwright-report/
+
+# 本地私有的发布前禁词表（含不能公开的名称，绝不提交）
+.release-denylist.txt

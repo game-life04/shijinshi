@@ -1,0 +1,59 @@
+@import "tailwindcss";
+
+/* 统一的颜色变量（设计系统）。组件里只用这些变量，不直接写颜色值。 */
+:root {
+  --background: #f5f7fb;
+  --surface: #ffffff;
+  --foreground: #1f2733;
+  --muted: #5a6676;
+  --border: #d8e0ea;
+  --primary: #2b6cb0;
+  --primary-soft: #e8f0fa;
+  --ok: #2f855a;
+  --ok-soft: #e6f4ec;
+  --bad: #c0392b;
+  --bad-soft: #fbe9e7;
+  --warn: #b7791f;
+  --warn-soft: #fdf3e2;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #11161d;
+    --surface: #1a212b;
+    --foreground: #e6ebf2;
+    --muted: #9aa7b8;
+    --border: #2c3644;
+    --primary: #6aa7e8;
+    --primary-soft: #1d2b3c;
+    --ok: #5cc28a;
+    --ok-soft: #173126;
+    --bad: #ee7a6c;
+    --bad-soft: #3a1f1c;
+    --warn: #e3b25a;
+    --warn-soft: #382c17;
+  }
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-border: var(--border);
+  --color-primary: var(--primary);
+  --color-primary-soft: var(--primary-soft);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-bad: var(--bad);
+  --color-bad-soft: var(--bad-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --font-sans: "Microsoft YaHei", "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+}
