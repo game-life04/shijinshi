@@ -1,0 +1,10 @@
+{
+  "suite": "smoke",
+  "variant": "B2",
+  "policy": "S1",
+  "judge_rag": true,
+  "max_turns": 3,
+  "max_cases": 20,
+  "max_llm_calls": 200,
+  "include_drafts": true
+}
