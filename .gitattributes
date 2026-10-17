@@ -1,0 +1,4 @@
+# 统一用 LF；法规快照按原始字节保存，不做任何换行转换（否则 SHA-256 会变）
+* text=auto eol=lf
+kb/sources/** -text
+*.png binary
