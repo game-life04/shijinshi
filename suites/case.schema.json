@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/touchstone/case.v1.schema.json",
+  "title": "TouchstoneCaseV1",
+  "description": "单条用例合同。导入支持 JSONL，每行一个对象；本 Schema 本身不授权执行 draft 用例。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "base_case_id",
+    "split",
+    "family",
+    "modality",
+    "approval",
+    "inputs",
+    "expected",
+    "clause_refs",
+    "conditions",
+    "source"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "id": { "type": "string", "pattern": "^[A-Z][A-Z0-9_-]{2,79}$" },
+    "base_case_id": { "type": "string", "pattern": "^[A-Z][A-Z0-9_-]{2,79}$" },
+    "split": { "enum": ["smoke", "dev", "heldout"] },
+    "family": { "enum": ["CANARY", "PERSONA", "AI_IDENTITY", "USAGE_REMINDER", "EXIT", "CRISIS_SUPPORT", "MINOR_BOUNDARY"] },
+    "modality": { "enum": ["text", "voice"] },
+    "approval": { "enum": ["draft", "approved", "rejected"] },
+    "inputs": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["role", "content"],
+        "properties": {
+          "role": { "const": "user" },
+          "content": { "type": "string", "minLength": 1, "maxLength": 1200 },
+          "input_audio_asset_id": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "expected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["observable_behavior", "assertion_ids", "target_layer", "on_ambiguity"],
+      "properties": {
+        "observable_behavior": { "type": "string", "minLength": 1, "maxLength": 1600 },
+        "assertion_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]*$" }
+        },
+        "target_layer": { "enum": ["raw_subject_output", "released_output", "service_state", "multi_layer"] },
+        "on_ambiguity": { "const": "human_review" }
+      }
+    },
+    "clause_refs": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+    "conditions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["clock_mode", "elapsed_seconds", "advance_seconds", "voice_variant", "canary_mode"],
+      "properties": {
+        "clock_mode": { "enum": ["real", "simulated"] },
+        "elapsed_seconds": { "type": "number", "minimum": 0 },
+        "advance_seconds": { "type": "number", "minimum": 0 },
+        "voice_variant": { "enum": ["none", "clean", "homophone", "interruption"] },
+        "canary_mode": { "enum": ["none", "random_per_run"] }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "reference", "license", "reviewer", "reviewed_at"],
+      "properties": {
+        "kind": { "enum": ["original", "licensed_adaptation"] },
+        "reference": { "type": "string", "minLength": 1 },
+        "license": { "type": "string", "minLength": 1 },
+        "reviewer": { "type": ["string", "null"] },
+        "reviewed_at": { "type": ["string", "null"], "description": "ISO 8601，approved 时必须填写。" }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "approval": { "const": "approved" } } },
+      "then": {
+        "properties": {
+          "source": {
+            "properties": { "reviewer": { "type": "string", "minLength": 1 }, "reviewed_at": { "type": "string", "minLength": 10 } }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "modality": { "const": "text" } } },
+      "then": { "properties": { "conditions": { "properties": { "voice_variant": { "const": "none" } } } } },
+      "else": { "properties": { "conditions": { "properties": { "voice_variant": { "enum": ["clean", "homophone", "interruption"] } } } } }
+    },
+    {
+      "if": { "properties": { "family": { "const": "CANARY" } } },
+      "then": { "properties": { "conditions": { "properties": { "canary_mode": { "const": "random_per_run" } } } } }
+    }
+  ]
+}
