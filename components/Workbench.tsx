@@ -2,21 +2,28 @@
 
 // 体检工作台（首屏）：上方配置，左侧角色，中间用例进度与对话，右侧证据与 Agent 工具调用，底部计量。
 // 运行过程通过事件流实时更新；每完成一例就取一次最新结果（含结论与证据）。
+// 语音运行：事件流驱动播放器——句子放行就取音频播放，护栏截断或终止就按代际丢弃旧音频；
+// 服务端开始等本轮播放结果时，把渲染区间和计时上报回去（漏出时长由服务端算）。
 
 import { Pause, Play, RotateCcw, Square, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { VoicePlayer } from "@/lib/client/voice-player";
 import {
   type CaseResult,
   FAMILY_LABEL,
   type Family,
+  POLICY_LABEL,
+  type ReleasePolicy,
   type RunEvent,
   type RunManifest,
   type SubjectVariant,
   type TurnRecord,
   VARIANT_LABEL,
+  VARIANTS,
 } from "@/lib/domain/types";
-import FaceAvatar, { type Expression } from "./FaceAvatar";
+import Avatar from "./Avatar";
+import type { Expression } from "./FaceAvatar";
 import { FindingView, TurnView } from "./Transcript";
 import { Badge, Button, CaseBadge, Metric, Panel } from "./ui";
 
@@ -55,7 +62,9 @@ export default function Workbench() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [suite, setSuite] = useState("smoke");
   const [variant, setVariant] = useState<SubjectVariant>("B2");
-  const [policy, setPolicy] = useState<"S1" | "S3">("S1");
+  const [policy, setPolicy] = useState<ReleasePolicy>("S1");
+  const [voice, setVoice] = useState(false);
+  const [guardDelay, setGuardDelay] = useState(0);
   const [judgeRag, setJudgeRag] = useState(true);
   const [includeDrafts, setIncludeDrafts] = useState(true);
   const [maxTurns, setMaxTurns] = useState(3);
@@ -76,6 +85,21 @@ export default function Workbench() {
   const [expression, setExpression] = useState<Expression>("neutral");
   const esRef = useRef<EventSource | null>(null);
 
+  // 语音：播放器只建一个（AudioContext 要用户点击才能启动，之后一直复用）
+  const playerRef = useRef<VoicePlayer | null>(null);
+  const voiceRunRef = useRef<string | null>(null);
+  const seenRef = useRef<Set<number>>(new Set());
+  const player = () => {
+    playerRef.current ??= new VoicePlayer();
+    return playerRef.current;
+  };
+  useEffect(() => () => void playerRef.current?.close(), []);
+  /** 形象每帧读一次口型：语音运行按实际渲染的响度；文字运行按放行事件做示意 */
+  const mouth = useCallback(() => {
+    if (voiceRunRef.current && playerRef.current) return playerRef.current.mouthOpen();
+    return speakingRef.current ? 0.3 + 0.6 * Math.abs(Math.sin(performance.now() / 80)) : 0;
+  }, []);
+
   const loadStatus = useCallback(() => {
     setLoadError(null);
     api<Status>("/api/status")
@@ -95,9 +119,34 @@ export default function Workbench() {
     setRunCases(new Set(v.cases.map((c) => c.id)));
   }, []);
 
+  /** 语音运行的事件 → 播放器动作。按 seq 去重：断线重连会补发历史事件，不能重复播放 */
+  const onVoiceEvent = useCallback((e: RunEvent) => {
+    if (voiceRunRef.current !== e.run_id || seenRef.current.has(e.seq)) return;
+    seenRef.current.add(e.seq);
+    const p = playerRef.current;
+    if (!p) return;
+    if (e.type === "turn_started" && e.turn_id) p.beginTurn(e.turn_id);
+    else if (e.type === "utterance_released" && e.turn_id && e.utterance_id) p.play(e.run_id, e.turn_id, e.utterance_id);
+    else if (e.type === "utterance_cut") p.cut("cut");
+    else if (e.type === "run_cancelling") p.cut("cancelled");
+    else if (e.type === "playback_waiting" && e.turn_id) {
+      void p
+        .finishTurn(e.turn_id)
+        .then((report) =>
+          fetch(`/api/runs/${e.run_id}/playback`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(report),
+          }),
+        )
+        .catch(() => {});
+    }
+  }, []);
+
   const onEvent = useCallback(
     (e: RunEvent) => {
       setEvents((prev) => (prev.some((x) => x.seq === e.seq) ? prev : [...prev, e]));
+      onVoiceEvent(e);
       if (e.type === "case_started" && e.case_id) setSelected((s) => s ?? e.case_id ?? null);
       if (e.type === "utterance_released") {
         const text = String(e.data?.text ?? "");
@@ -111,7 +160,7 @@ export default function Workbench() {
         );
         setExpression("neutral");
       }
-      if (e.type === "utterance_blocked") {
+      if (e.type === "utterance_blocked" || e.type === "utterance_cut") {
         speakingRef.current = false;
         setExpression("confused");
       }
@@ -119,11 +168,22 @@ export default function Workbench() {
         void refresh(e.run_id).catch(() => {});
       }
     },
-    [refresh],
+    [refresh, onVoiceEvent],
   );
 
   const start = async () => {
     setActionError(null);
+    voiceRunRef.current = null;
+    if (voice) {
+      // 必须在这次点击里启动 AudioContext，否则浏览器不允许出声
+      try {
+        await player().unlock();
+        player().reset();
+      } catch (e) {
+        setActionError((e as Error).message);
+        return;
+      }
+    }
     setBusy(true);
     esRef.current?.close();
     setEvents([]);
@@ -143,9 +203,16 @@ export default function Workbench() {
           max_turns: maxTurns,
           max_cases: maxCases,
           max_llm_calls: maxCalls,
+          voice,
+          guard_delay_ms: guardDelay,
         }),
       });
       setManifest(m);
+      if (voice) {
+        seenRef.current = new Set();
+        voiceRunRef.current = m.run_id;
+        player().onError = (msg) => setActionError(`语音播放出错：${msg}`);
+      }
       await refresh(m.run_id);
       const es = new EventSource(`/api/runs/${m.run_id}/events`);
       es.onmessage = (msg) => onEvent(JSON.parse(msg.data) as RunEvent);
@@ -213,6 +280,7 @@ export default function Workbench() {
     return [...turns.values()];
   }, [events, selected, selectedResult]);
   const toolSteps = events.filter((e) => e.case_id === selected && e.source === "tester");
+  const audioStats = useMemo(() => summarizeAudio(events), [events]);
 
   const running = manifest && !FINAL.has(manifest.state);
   const cases = suiteInfo?.cases ?? [];
@@ -253,7 +321,7 @@ export default function Workbench() {
             onChange={(e) => setVariant(e.target.value as SubjectVariant)}
             disabled={Boolean(running)}
           >
-            {(Object.keys(VARIANT_LABEL) as SubjectVariant[]).map((v) => (
+            {VARIANTS.map((v) => (
               <option key={v} value={v}>
                 {VARIANT_LABEL[v]}
               </option>
@@ -280,12 +348,32 @@ export default function Workbench() {
           <select
             className="h-8 rounded border border-border bg-surface px-1"
             value={policy}
-            onChange={(e) => setPolicy(e.target.value as "S1" | "S3")}
+            onChange={(e) => setPolicy(e.target.value as ReleasePolicy)}
             disabled={Boolean(running)}
           >
-            <option value="S1">S1 先审后播（默认）</option>
-            <option value="S3">S3 先播后截（仅无害口令对照）</option>
+            {(Object.keys(POLICY_LABEL) as ReleasePolicy[]).map((p) => (
+              <option key={p} value={p}>
+                {POLICY_LABEL[p]}
+                {p === "S1" ? "（默认）" : ""}
+              </option>
+            ))}
           </select>
+        </label>
+        <label
+          className="flex flex-col gap-0.5"
+          title="实验设定（规格 02 E2）：给每句护栏判定加一个固定、已知的延迟，用来观察放行策略的差别；不是真实模型的延迟"
+        >
+          <span className="text-xs text-muted">护栏固定延迟 ms</span>
+          <input
+            type="number"
+            min={0}
+            max={10000}
+            step={100}
+            className="h-8 w-20 rounded border border-border bg-surface px-1"
+            value={guardDelay}
+            onChange={(e) => setGuardDelay(Number(e.target.value))}
+            disabled={Boolean(running)}
+          />
         </label>
         <label className="flex flex-col gap-0.5" title="测试 Agent 每例最多几轮（规格上限 3）">
           <span className="text-xs text-muted">每例轮数</span>
@@ -322,6 +410,10 @@ export default function Workbench() {
             onChange={(e) => setMaxCalls(Number(e.target.value))}
             disabled={Boolean(running)}
           />
+        </label>
+        <label className="flex h-8 items-center gap-1" title="放行的句子合成语音，在浏览器播放并计量；每轮播完才进入下一轮">
+          <input type="checkbox" checked={voice} onChange={(e) => setVoice(e.target.checked)} disabled={Boolean(running)} />
+          语音播放
         </label>
         <label className="flex h-8 items-center gap-1">
           <input type="checkbox" checked={judgeRag} onChange={(e) => setJudgeRag(e.target.checked)} disabled={Boolean(running)} />
@@ -402,10 +494,8 @@ export default function Workbench() {
         {/* 左：角色 + 用例进度 */}
         <div className={`${panelClass("cases")} min-h-0 flex-col gap-2`}>
           <div className="rounded-md border border-border bg-surface p-2">
-            <div className="mx-auto aspect-square max-h-44">
-              <FaceAvatar speakingRef={speakingRef} expression={expression} />
-            </div>
-            <p className="mt-1 text-center text-xs text-muted">琪叶桃 · 示意形象（VRM 在 M2 接入）· AI 角色，非真人</p>
+            <Avatar mouth={mouth} expression={expression} />
+            {manifest?.config.voice && <AudioMeters stats={audioStats} />}
           </div>
           <Panel title={`用例进度${manifest ? `（${manifest.counts.planned} 例）` : ""}`} className="min-h-[12rem] flex-1">
             <ul className="space-y-1">
@@ -513,6 +603,91 @@ export default function Workbench() {
         {manifest?.preview && <Badge tone="warn">含草稿用例：预览结果，不计入正式统计</Badge>}
         {manifest?.failure_reason && <Badge tone="bad">{manifest.failure_reason}</Badge>}
       </div>
+    </div>
+  );
+}
+
+// ---------- 语音计量 ----------
+
+interface AudioUtt {
+  utterance_id: string;
+  rendered_ms: number;
+  leak_rendered_ms: number | null;
+  violation_level: "char" | "sentence_upper_bound" | null;
+  cancel_to_stop_ms: number | null;
+  cancel_to_mouth_zero_ms: number | null;
+  outcome: string;
+}
+
+interface AudioStats {
+  turns: number;
+  timeouts: number;
+  level?: string;
+  firstLast?: number;
+  firstMedian?: number;
+  firstCount: number;
+  cuts: AudioUtt[];
+  guardLast?: number;
+}
+
+function median(xs: number[]): number | undefined {
+  if (!xs.length) return undefined;
+  const s = [...xs].sort((a, b) => a - b);
+  const m = s.length >> 1;
+  return s.length % 2 ? s[m] : Math.round(((s[m - 1] + s[m]) / 2) * 10) / 10;
+}
+
+function summarizeAudio(events: RunEvent[]): AudioStats {
+  const metrics = events.filter((e) => e.type === "playback_metrics");
+  const firsts = metrics.map((e) => e.data?.first_audio_ms).filter((x): x is number => typeof x === "number");
+  const utts = metrics.flatMap((e) => (e.data?.utterances as AudioUtt[] | undefined) ?? []);
+  const guard = events
+    .filter((e) => e.type === "utterance_released" && typeof e.data?.guard_ms === "number")
+    .map((e) => e.data?.guard_ms as number);
+  return {
+    turns: metrics.length,
+    timeouts: events.filter((e) => e.type === "playback_timeout").length,
+    level: metrics.at(-1)?.data?.level as string | undefined,
+    firstLast: firsts.at(-1),
+    firstMedian: median(firsts),
+    firstCount: firsts.length,
+    cuts: utts.filter((u) => u.violation_level !== null),
+    guardLast: guard.at(-1),
+  };
+}
+
+function AudioMeters({ stats }: { stats: AudioStats }) {
+  const leak = stats.cuts.reduce((n, u) => n + (u.leak_rendered_ms ?? 0), 0);
+  const upper = stats.cuts.some((u) => u.violation_level === "sentence_upper_bound");
+  const lastCut = stats.cuts.at(-1);
+  return (
+    <div className="mt-2 space-y-1 border-t border-border pt-2 text-xs" data-testid="audio-meters">
+      <div className="flex items-center justify-between gap-1">
+        <span className="font-semibold">语音计量（浏览器渲染层）</span>
+        {stats.level && <Badge tone={stats.level === "live" ? "ok" : "warn"}>{stats.level === "live" ? "真实合成" : "模拟发声"}</Badge>}
+      </div>
+      <dl className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5">
+        <dt className="text-muted">违规音频渲染</dt>
+        <dd data-testid="leak-meter">
+          {stats.cuts.length
+            ? `${Math.round(leak * 10) / 10} ms（${stats.cuts.length} 次截断，${upper ? "含句级上界" : "按字精确定位"}）`
+            : "— 还没有截断"}
+        </dd>
+        <dt className="text-muted">首声等待</dt>
+        <dd data-testid="first-audio-meter">
+          {stats.firstLast !== undefined ? `最近 ${stats.firstLast} ms · 中位数 ${stats.firstMedian} ms（${stats.firstCount} 轮）` : "—"}
+          {stats.guardLast !== undefined && <span className="text-muted"> · 其中护栏判定 {stats.guardLast} ms</span>}
+        </dd>
+        <dt className="text-muted">停止响应</dt>
+        <dd>
+          {lastCut?.cancel_to_stop_ms != null
+            ? `≤ ${lastCut.cancel_to_stop_ms} ms · 口型归零 ${lastCut.cancel_to_mouth_zero_ms ?? "—"} ms`
+            : "—"}
+        </dd>
+      </dl>
+      {stats.timeouts > 0 && (
+        <p className="text-warn">有 {stats.timeouts} 轮没等到浏览器的播放结果（标签页被关闭或切走），这些轮不计量。</p>
+      )}
     </div>
   );
 }

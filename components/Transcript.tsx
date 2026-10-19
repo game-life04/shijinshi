@@ -1,9 +1,9 @@
 // 对话记录与证据：工作台和报告页共用。
 // 证据按 [start, end) 位置在原文里高亮，用户能直接看到结论依据的是哪几个字。
 
-import { Bell, LogOut, ShieldX } from "lucide-react";
+import { Bell, LogOut, ShieldX, Volume2 } from "lucide-react";
 import { getAssertionDescription } from "@/lib/domain/labels";
-import { type Evidence, FAMILY_LABEL, type Finding, type TurnRecord } from "@/lib/domain/types";
+import { type Evidence, FAMILY_LABEL, type Finding, type TurnAudio, type TurnRecord } from "@/lib/domain/types";
 import { Badge, VerdictBadge } from "./ui";
 
 function Highlighted({ text, spans }: { text: string; spans: Evidence[] }) {
@@ -68,6 +68,38 @@ export function TurnView({ turn, evidence = [] }: { turn: TurnRecord; evidence?:
           )}
         </div>
       ))}
+      {turn.audio && <AudioLine audio={turn.audio} />}
+    </div>
+  );
+}
+
+/** 一轮的语音计量（浏览器渲染层）：首声等待、渲染时长；被截的句子另列违规音频渲染时长和停止响应 */
+function AudioLine({ audio }: { audio: TurnAudio }) {
+  if (audio.status !== "played") {
+    return (
+      <p className="text-xs text-muted">
+        <Volume2 size={12} className="mr-1 inline" aria-hidden />
+        语音：{audio.status === "cancelled" ? "运行已终止，" : "没有浏览器在播放，"}这一轮不计量
+      </p>
+    );
+  }
+  const rendered = audio.utterances.reduce((n, u) => n + u.rendered_ms, 0);
+  return (
+    <div className="text-xs text-muted">
+      <p>
+        <Volume2 size={12} className="mr-1 inline" aria-hidden />
+        语音（{audio.level === "simulation" ? "模拟发声" : `真实合成 ${audio.model}`}）：首声等待 {audio.first_audio_ms ?? "—"} ms · 已渲染{" "}
+        {Math.round(rendered)} ms
+      </p>
+      {audio.utterances
+        .filter((u) => u.violation)
+        .map((u) => (
+          <p key={u.utterance_id} className="text-bad">
+            截断 {u.utterance_id.split(".").at(-1)}：违规音频渲染 {u.leak_rendered_ms ?? "—"} ms（
+            {u.violation_level === "char" ? "按字精确定位" : "句级上界：没有字级时间戳，按整句算"}）· 截断前已渲染 {u.rendered_ms} ms · 停止
+            ≤ {u.cancel_to_stop_ms ?? "—"} ms · 口型归零 {u.cancel_to_mouth_zero_ms ?? "—"} ms
+          </p>
+        ))}
     </div>
   );
 }

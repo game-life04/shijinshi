@@ -5,7 +5,7 @@ import AppShell from "@/components/AppShell";
 import ReviewButtons from "@/components/ReviewButtons";
 import { FindingView, TurnView } from "@/components/Transcript";
 import { Badge, CaseBadge } from "@/components/ui";
-import { FAMILY_LABEL, type Family, VARIANT_LABEL } from "@/lib/domain/types";
+import { FAMILY_LABEL, type Family, POLICY_LABEL, type UtteranceAudio, VARIANT_LABEL } from "@/lib/domain/types";
 import { getClause } from "@/lib/server/rag";
 import { getReport } from "@/lib/server/runs";
 
@@ -32,6 +32,19 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
   const clauseText = (cid: string) => getClause(cid)?.text;
   const finished = ["completed", "cancelled", "failed"].includes(m.state);
   const sourceClause = getClause("anthropomorphic-2026:18");
+  // 语音计量汇总（只统计浏览器实际上报的轮次）
+  const audioTurns = results.flatMap((r) => r.turns.flatMap((t) => (t.audio ? [{ case_id: r.case_id, turn: t, audio: t.audio }] : [])));
+  const played = audioTurns.filter((x) => x.audio.status === "played");
+  const cuts = played.flatMap((x) =>
+    x.audio.utterances
+      .filter((u): u is UtteranceAudio & { violation: [number, number][] } => Boolean(u.violation))
+      .map((u) => ({ ...u, case_id: x.case_id })),
+  );
+  const firsts = played
+    .map((x) => x.audio.first_audio_ms)
+    .filter((v): v is number => typeof v === "number")
+    .sort((a, b) => a - b);
+  const audioLevel = played[0]?.audio.level;
 
   return (
     <AppShell active="/runs">
@@ -53,7 +66,15 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
             <dt className="text-muted">被测配置</dt>
             <dd>{VARIANT_LABEL[m.config.variant]}</dd>
             <dt className="text-muted">放行策略</dt>
-            <dd>{m.config.policy === "S1" ? "S1 先审后播" : "S3 先播后截（仅无害口令对照）"}</dd>
+            <dd>{POLICY_LABEL[m.config.policy]}</dd>
+            <dt className="text-muted">语音播放</dt>
+            <dd>{m.config.voice ? `开（合成：${m.models.tts ?? "未知"}）` : "关（文字运行）"}</dd>
+            {Boolean(m.config.guard_delay_ms) && (
+              <>
+                <dt className="text-muted">护栏固定延迟</dt>
+                <dd>{m.config.guard_delay_ms} ms（实验设定，用来观察放行策略的差别，不代表真实模型的延迟）</dd>
+              </>
+            )}
             <dt className="text-muted">用例套件 / 版本</dt>
             <dd className="font-mono">
               {m.config.suite} / {m.hashes.suite}
@@ -78,6 +99,7 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
             <dt className="text-muted">模型调用 / tokens</dt>
             <dd className="font-mono">
               {m.usage.llm_calls} 次 / 入 {m.usage.prompt_tokens}、出 {m.usage.completion_tokens}
+              {m.usage.tts_chars !== undefined ? ` / 语音合成 ${m.usage.tts_chars} 字` : ""}
             </dd>
           </dl>
         </section>
@@ -120,6 +142,59 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
             </tbody>
           </table>
         </section>
+
+        {m.config.voice && (
+          <section className="rounded-md border border-border bg-surface p-3">
+            <h2 className="mb-1 font-semibold">语音计量（浏览器渲染层）</h2>
+            <p className="mb-2 text-xs text-muted">
+              口径：违规音频渲染时长 = 违规内容的采样区间 ∩ 浏览器 AudioWorklet 实际渲染过的采样区间（规格 02
+              §4.2），由服务端用浏览器上报的区间计算； 首声等待 = 浏览器收到本轮输入事件 → 第一个非静音采样被渲染；停止响应是「收到截断 →
+              确认已丢弃旧音频」的上界。 都不是扬声器实听的数字。
+              {audioLevel === "simulation" ? "本次是模拟发声，按字精确定位；数字只说明机制，不能当实验结果。" : ""}
+            </p>
+            <dl className="grid gap-x-4 gap-y-1 text-sm sm:grid-cols-2">
+              <dt className="text-muted">已计量的轮次</dt>
+              <dd>
+                {played.length} / {audioTurns.length}
+                {audioTurns.length > played.length ? "（其余轮次没有浏览器上报，不计量）" : ""}
+              </dd>
+              <dt className="text-muted">首声等待</dt>
+              <dd>
+                {firsts.length
+                  ? `中位数 ${firsts[firsts.length >> 1]} ms，最小 ${firsts[0]} ms，最大 ${firsts.at(-1)} ms（${firsts.length} 轮）`
+                  : "待测"}
+              </dd>
+              <dt className="text-muted">截断次数</dt>
+              <dd>{cuts.length}</dd>
+            </dl>
+            {cuts.length > 0 && (
+              <table className="mt-2 w-full text-left text-xs">
+                <thead className="text-muted">
+                  <tr>
+                    <th className="py-1">句子</th>
+                    <th>违规音频渲染</th>
+                    <th>定位精度</th>
+                    <th>截断前已渲染</th>
+                    <th>停止响应</th>
+                    <th>口型归零</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {cuts.map((u) => (
+                    <tr key={u.utterance_id} className="border-t border-border">
+                      <td className="py-1 font-mono">{u.utterance_id}</td>
+                      <td>{u.leak_rendered_ms ?? "—"} ms</td>
+                      <td>{u.violation_level === "char" ? "按字精确" : "句级上界"}</td>
+                      <td>{u.rendered_ms} ms</td>
+                      <td>≤ {u.cancel_to_stop_ms ?? "—"} ms</td>
+                      <td>{u.cancel_to_mouth_zero_ms ?? "—"} ms</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </section>
+        )}
 
         {pendingReview.length > 0 && (
           <section className="rounded-md border border-warn/50 bg-warn-soft p-3">

@@ -1,26 +1,26 @@
 "use client";
 
-// 示意形象：琪叶桃的 VRM 模型在 M2 接入，之前用这个平面头像占位（界面上明确标注）。
-// 有角色句子放行时嘴巴动；有句子被拦下时露出困惑表情。用 requestAnimationFrame 直接改 SVG，不触发 React 重渲染。
+// 平面示意形象：没有 VRM 模型文件、浏览器不支持 WebGL 或模型加载失败时使用（界面上明确标注）。
+// 每帧读一次口型（0～1）；有句子被拦下时露出困惑表情。用 requestAnimationFrame 直接改 SVG，不触发 React 重渲染。
 
-import { type RefObject, useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 
 export type Expression = "neutral" | "confused";
 
-export default function FaceAvatar({ speakingRef, expression }: { speakingRef: RefObject<boolean>; expression: Expression }) {
+export default function FaceAvatar({ mouth, expression }: { mouth: () => number; expression: Expression }) {
   const mouthRef = useRef<SVGEllipseElement>(null);
+  const read = useRef(mouth);
+  read.current = mouth;
 
   useEffect(() => {
-    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     let frame = 0;
-    const loop = (t: number) => {
-      const open = speakingRef.current && !reduce ? 0.3 + 0.6 * Math.abs(Math.sin(t / 80)) : 0;
-      mouthRef.current?.setAttribute("ry", String(1.5 + open * 8));
+    const loop = () => {
+      mouthRef.current?.setAttribute("ry", String(1.5 + read.current() * 8));
       frame = requestAnimationFrame(loop);
     };
     frame = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(frame);
-  }, [speakingRef]);
+  }, []);
 
   return (
     <svg viewBox="0 0 200 200" className="h-full w-full" role="img" aria-label="琪叶桃示意形象">
