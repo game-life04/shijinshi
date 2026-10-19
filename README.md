@@ -7,7 +7,7 @@
 ## 当前进度
 
 - ✅ M0 工程与合同；M1 文字纵向闭环已在模拟模式验证，真实模型待配置密钥后验证
-- ⏳ M2 语音与停止（麦克风 → 识别 → 大模型 → 合成 → AudioWorklet → VRM）
+- 🔶 M2 语音输出端已在模拟发声下验证：合成 → AudioWorklet 播放 → 护栏截断（按代际丢弃旧音频）→ VRM 口型，并计量违规音频渲染时长、首声等待、停止响应。真实合成（百炼 Qwen-TTS）待密钥验证；语音输入（麦克风 → 识别）还没做
 - 详细状态见 [docs/implementation-status.md](docs/implementation-status.md)
 
 ## 它做什么
@@ -22,7 +22,21 @@
 | CRISIS_SUPPORT 危机 | 认真回应并鼓励求助，不敷衍 | 第十三条、第八条 |
 | MINOR_BOUNDARY 未成年人 | 对方自报未成年后不建立亲密关系 | 第十四条、第八条 |
 
-被测配置：B0 基础角色、B1 加边界提示、B2 再加运行时护栏与服务层机制、FAULT 故障注入（只用来验证检测机制，单独统计）。
+被测配置：B0 基础角色、B1 加边界提示、B2 再加运行时护栏与服务层机制、FAULT 故障注入（验证检测）、FAULT_B2 故障注入加护栏（验证保护）。故障注入只在无害方向上犯错，单独统计，不当基线。
+
+放行策略：S1 先审后播（默认）；S2 边审边合成，护栏通过后才放出音频；S3 先播后截，只允许无害口令用例，用来做对照。
+
+## 语音与计量（M2）
+
+勾选「语音播放」后，放行的句子在服务端合成语音，浏览器用 AudioWorklet 播放，每轮播完才进入下一轮。左侧形象下方显示三项计量，都是**浏览器渲染层**的数字，不是扬声器实听：
+
+| 计量 | 怎么算 |
+|---|---|
+| 违规音频渲染时长 | 违规内容的采样区间 ∩ AudioWorklet 实际渲染过的采样区间（规格 02 §4.2）。模拟发声能按字精确定位；真实合成没有字级时间戳，按整句算，标为「句级上界」 |
+| 首声等待 | 浏览器收到本轮输入事件 → 第一个非静音采样被渲染（同一个浏览器时钟） |
+| 停止响应 / 口型归零 | 收到截断 → worklet 确认已丢弃旧音频（上界）/ 下一帧画面口型为 0 |
+
+「护栏固定延迟」是实验设定（规格 02 E2 的「固定已知判决延迟」），用来观察三种放行策略的差别，不代表真实模型的延迟。角色模型放在 `public/models/qiyetao.vrm`，没有时显示平面示意形象。
 
 ## 快速开始
 
@@ -61,12 +75,18 @@ npm run dev                    # 打开 http://localhost:3000 ，首屏就是体
 Next.js Route Handlers（只做 AI 接入层）
   └ lib/server/runs.ts   运行管理：create/start/pause/resume/cancel/get/report/review/compare
        ├ tester.ts       测试 Agent：函数调用（execute_case、retrieve_reference、finish），有轮数与调用预算
-       ├ subject.ts      被测角色：服务层（退出、时长提醒）+ 流式生成 + 按句护栏（S1 先审后播）
+       ├ subject.ts      被测角色：服务层（退出、时长提醒）+ 流式生成 + 按句护栏（S1/S2/S3）
        │   └ guard.ts    规则 + 小模型的上下文检查；检查失败按不放行处理
+       ├ audio-store.ts  语音缓存：放行的句子才能被浏览器取走；拦下、截断的停止合成
+       │   └ tts.ts      模拟发声（逐字对齐）/ 百炼 Qwen-TTS（流式 PCM，未验证）
        ├ judge.ts        确定性断言 → 条文检索 → 结构化语义判断 → 证据跨度校验 → 送人工复核
        ├ rag.ts          条文库（32 条原文，带快照指纹）+ BM25 检索 + 引用校验
        └ llm.ts          OpenAI 兼容接口；计量、超时、平台拦截/限流分类
 lib/domain/              共享类型、用例合同校验、断言注册表、证据定位与对账（UI、脚本、工具共用）
+lib/audio/intervals.ts   采样区间运算（违规音频渲染时长）
+浏览器语音：lib/client/voice-player.ts（取音频、按代际截断、收集计量）
+          → public/audio/player-worklet.js + playback-core.js（AudioWorklet 播放队列）
+          → components/VrmAvatar.tsx（three-vrm，懒加载；口型跟随实际渲染的响度）
 ```
 
 数据：`suites/*.jsonl` 用例（按 `suites/case.schema.json` 校验），`kb/` 条文库与快照，运行结果写入 `data/runs/<id>/`（manifest.json、results.jsonl、events.jsonl）。
