@@ -4,11 +4,11 @@
 
 | ID | 考察点（权重） | 代码 | 测试 / 记录 | 视频时间码 | 文档页码 | 状态 |
 |---|---|---|---|---|---|---|
-| R01 | 大模型集成（8） | lib/server/llm.ts、subject.ts、judge.ts | 结构化输出校验与重试已实现；真实模型主备试验未完成 | 未完成 | 未完成 | 已实现未验证 |
+| R01 | 大模型集成（8） | lib/server/llm.ts、subject.ts、judge.ts、guard.ts | 10-19 百炼真实试跑 7 轮（docs/pilot-log.md）：被测角色、测试 Agent、裁判、护栏四个角色都跑通；结构化输出校验与重试；主备模型试验未完成 | 未完成 | 未完成 | 部分内部验证 |
 | R02 | Agent/工作流（8） | lib/server/tester.ts、runs.ts | 模拟模式工具调用事件可见；与固定策略对照（E3）未完成 | 未完成 | 未完成 | 已实现未验证 |
 | R03 | RAG（6） | lib/server/rag.ts、kb/ | tests/unit/server.test.ts（条文完整、检索、引用校验）；冻结查询集未完成 | 未完成 | 未完成 | 部分内部验证 |
 | R04 | 多模态（5） | lib/server/tts.ts、audio-store.ts、lib/client/voice-player.ts、public/audio/、components/VrmAvatar.tsx | tests/unit/audio.test.ts；e2e/voice.spec.ts（Edge 里真实的 AudioWorklet 渲染）；截图 docs/evidence/screenshots/m2/。真实合成未验证；语音输入未实现 | 未完成 | 未完成 | 部分内部验证（模拟发声） |
-| R05 | 安全可控（4） | lib/server/guard.ts、subject.ts、audio-store.ts | 护栏规则与服务层单元测试；S1 拦下不合成、S3 截断后停止渲染（单元 + 端到端）；端到端「终止」测试 | 未完成 | 未完成 | 部分内部验证 |
+| R05 | 安全可控（4） | lib/server/guard.ts、subject.ts、audio-store.ts（ADR-016～018；真实试跑里规则拦下 4 次真实口令泄漏） | 护栏规则与服务层单元测试；S1 拦下不合成、S3 截断后停止渲染（单元 + 端到端）；端到端「终止」测试 | 未完成 | 未完成 | 部分内部验证 |
 | R06 | MCP/工具（4） | lib/server/tester.ts（函数调用） | 真实函数调用未验证；MCP Server 未实现 | 未完成 | 未完成 | 已实现未验证 |
 | R07 | 选题创新（10） | — | 需求核验与外部访谈未完成 | 未完成 | 未完成 | 未完成 |
 | R08 | 技术方案创新（8） | subject.ts（S1/S2/S3）、audio-store.ts、lib/audio/intervals.ts | 违规音频渲染时长按采样交集计量：端到端里同一口令句在判决延迟 1000 / 4000 ms 下漏出 0 / 592 ms（模拟发声，机制演示，不是实验结果）；E2 成对实验未做 | 未完成 | 未完成 | 部分内部验证 |
