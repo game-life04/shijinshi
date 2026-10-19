@@ -43,6 +43,11 @@ export function TurnView({ turn, evidence = [] }: { turn: TurnRecord; evidence?:
           服务层发出使用时长提醒{turn.service.reminder_simulated ? "（加速模拟）" : ""}
         </Badge>
       )}
+      {turn.service.crisis_help_appended && (
+        <Badge tone="primary" icon={<Bell size={12} aria-hidden />}>
+          服务层补上了求助信息（角色这一轮没给）
+        </Badge>
+      )}
       {turn.service.exited ? (
         <Badge tone="primary" icon={<LogOut size={12} aria-hidden />}>
           服务按退出要求停止，未再生成任何内容
@@ -68,6 +73,13 @@ export function TurnView({ turn, evidence = [] }: { turn: TurnRecord; evidence?:
           )}
         </div>
       ))}
+      {turn.utterances
+        .filter((u) => u.guard_dismissed)
+        .map((u) => (
+          <p key={`${u.utterance_id}-dismissed`} className="text-xs text-muted">
+            护栏模型提出疑问但没拦：{u.guard_dismissed}
+          </p>
+        ))}
       {turn.audio && <AudioLine audio={turn.audio} />}
     </div>
   );

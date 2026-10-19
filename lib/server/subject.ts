@@ -3,12 +3,13 @@
 //   服务层（只有 B2 有）：退出请求 → 立即停止，不再调用模型、不播任何挽留或圆场的话；
 //                        逻辑时钟跨过每 2 小时 → 发一次时长提醒（标明是模拟）。
 //   模型层：大模型流式生成 → 按句切开 → （B2）每句过护栏 → 放行或拦下。
+//   服务层（只有 B2 有）还有一条：用户有危机信号、而角色这一轮没给求助途径时，由程序补上求助信息（第十三条）。
 //   放行策略：S1 先审后播（默认）；S2 与 S1 的文字流程相同，只是句子一生成就通知外层开始合成语音；
 //            S3 先播后截（只允许无害口令用例，由 runner 把关）。
 
 import { createHash } from "node:crypto";
 import { GUARDED_VARIANTS, type ReleasePolicy, type SubjectVariant, type TurnRecord, type UtteranceRecord } from "../domain/types";
-import { checkSentence, FALLBACK, type GuardContext } from "./guard";
+import { CRISIS_SIGNAL, checkSentence, FALLBACK, type GuardContext, HELP_RESOURCES } from "./guard";
 import { type ChatMessage, chatStream, isLive, type UsageMeter } from "./llm";
 import { simulateStream, simulateSubject } from "./simulator";
 import { SentenceSplitter } from "./splitter";
@@ -134,7 +135,7 @@ export async function respondTurn(o: SubjectOptions): Promise<TurnRecord> {
     if (o.guardDelayMs) await new Promise((r) => setTimeout(r, o.guardDelayMs));
     const ms = Math.round(performance.now() - t);
     if (d.hit) d.hit.ms = ms;
-    return { d, ms };
+    return { d, ms, dismissed: d.dismissed };
   };
 
   const handle = async (sentence: string) => {
@@ -150,8 +151,9 @@ export async function respondTurn(o: SubjectOptions): Promise<TurnRecord> {
       // 先播后截：先放行，再检查；违规就标记「已放行后被截」，并停止后续生成
       const u: UtteranceRecord = { utterance_id: id, text: sentence, released: true };
       release(u);
-      const { d, ms } = await check(sentence);
+      const { d, ms, dismissed } = await check(sentence);
       u.guard_ms = ms;
+      if (dismissed) u.guard_dismissed = dismissed;
       if (!d.ok && d.hit) {
         u.cut_after_release = true;
         u.guard = d.hit;
@@ -163,16 +165,19 @@ export async function respondTurn(o: SubjectOptions): Promise<TurnRecord> {
       return;
     }
     // S1 先审后播（S2 的文字流程相同）
-    const { d, ms } = await check(sentence);
+    const { d, ms, dismissed } = await check(sentence);
     if (d.ok) {
-      release({ utterance_id: id, text: sentence, released: true, guard_ms: ms });
+      release({ utterance_id: id, text: sentence, released: true, guard_ms: ms, ...(dismissed ? { guard_dismissed: dismissed } : {}) });
       ctx.history.push({ role: "assistant", text: sentence });
       return;
     }
     stopped = true;
     abort.abort();
     release({ utterance_id: id, text: sentence, released: false, guard: d.hit, guard_ms: ms });
-    if (d.hit) release({ utterance_id: `${o.turnId}.u${uid++}`, text: FALLBACK[d.hit.rule], released: true });
+    if (d.hit?.rule === "canary" && sentence.includes(o.canary)) {
+      // 口令能精确定位：只遮住口令，这句话里其余合规的内容（比如「我是 AI」）照常放行
+      release({ utterance_id: `${o.turnId}.u${uid++}`, text: sentence.split(o.canary).join("（保密）"), released: true });
+    } else if (d.hit) release({ utterance_id: `${o.turnId}.u${uid++}`, text: FALLBACK[d.hit.rule], released: true });
   };
 
   try {
@@ -183,9 +188,18 @@ export async function respondTurn(o: SubjectOptions): Promise<TurnRecord> {
     if (!stopped) for (const s of splitter.flush()) await handle(s);
   } catch (e) {
     // 我们自己掐断的不算错误；平台拦截、超时等交给 runner 分类
-    if (!(stopped && abort.signal.aborted)) throw e;
-  } finally {
-    record.timing_ms.total = Math.round(performance.now() - t0);
+    if (!(stopped && abort.signal.aborted)) {
+      record.timing_ms.total = Math.round(performance.now() - t0);
+      throw e;
+    }
   }
+  // 服务层：危机信号出现在最近三轮用户话里，而这一轮没给求助途径，就补上（不交给模型自己决定）。
+  // 放在生成结束之后：护栏拦下一句、生成被掐断时也要执行（10-19 试跑里漏过一次）
+  const recentUser = [...o.history.filter((h) => h.role === "user").slice(-2), { text: o.userText }].map((h) => h.text).join(" ");
+  if (guarded && CRISIS_SIGNAL.test(recentUser) && !HELP_RESOURCES.test(record.released_output)) {
+    record.service.crisis_help_appended = true;
+    release({ utterance_id: `${o.turnId}.u${uid++}`, text: FALLBACK.crisis, released: true });
+  }
+  record.timing_ms.total = Math.round(performance.now() - t0);
   return record;
 }

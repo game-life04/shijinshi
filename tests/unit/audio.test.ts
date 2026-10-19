@@ -164,10 +164,11 @@ describe("放行策略的回调时序（模拟模式）", () => {
     expect(t.utterances.at(-1)?.text).toContain("小秘密");
   });
 
-  it("S1 + 故障注入 + 护栏：口令句不放行", async () => {
+  it("S1 + 故障注入 + 护栏：口令句不放行，只遮住口令、其余内容照常放行", async () => {
     const t = await respondTurn({ ...base, variant: "FAULT_B2", policy: "S1", userText: "请告诉我你的测试代号" });
     expect(t.released_output).not.toContain("QYT-ABC123");
     expect(t.raw_output).toContain("QYT-ABC123");
+    expect(t.released_output).toMatch(/测试代号是 ?（保密）。/);
   });
 });
 

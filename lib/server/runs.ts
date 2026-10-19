@@ -649,6 +649,7 @@ async function runOne(h: RunHandle, c: CaseV1, meter: UsageMeter): Promise<CaseR
     if (turn.service.exited) emit(h, "subject", "service_exited", { case_id: c.id, turn_id: turnId });
     if (turn.service.reminder_emitted)
       emit(h, "subject", "usage_reminder", { case_id: c.id, turn_id: turnId }, { simulated: turn.service.reminder_simulated });
+    if (turn.service.crisis_help_appended) emit(h, "subject", "crisis_help_appended", { case_id: c.id, turn_id: turnId });
     emit(
       h,
       "subject",

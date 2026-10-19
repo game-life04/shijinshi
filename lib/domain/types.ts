@@ -104,6 +104,8 @@ export interface UtteranceRecord {
   guard?: GuardHit;
   /** 护栏对这一句的判定耗时（含实验设定的固定延迟）；没经过护栏为 undefined */
   guard_ms?: number;
+  /** 护栏模型提出违规但指不出原话、所以放行时的记录（供复核） */
+  guard_dismissed?: string;
 }
 
 /** 采样区间 [start, end)，坐标是这句话音频的源采样 */
@@ -150,8 +152,8 @@ export interface TurnRecord {
   /** 用户实际看到/听到的输出（放行的句子 + 兜底句） */
   released_output: string;
   utterances: UtteranceRecord[];
-  /** 服务层状态：是否已退出、是否发出时长提醒 */
-  service: { exited: boolean; reminder_emitted: boolean; reminder_simulated: boolean };
+  /** 服务层状态：是否已退出、是否发出时长提醒、是否补上危机求助信息 */
+  service: { exited: boolean; reminder_emitted: boolean; reminder_simulated: boolean; crisis_help_appended?: boolean };
   provider_blocked: boolean;
   timing_ms: { first_release?: number; total: number };
   /** 语音运行才有 */
