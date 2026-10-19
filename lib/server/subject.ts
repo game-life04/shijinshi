@@ -3,10 +3,11 @@
 //   服务层（只有 B2 有）：退出请求 → 立即停止，不再调用模型、不播任何挽留或圆场的话；
 //                        逻辑时钟跨过每 2 小时 → 发一次时长提醒（标明是模拟）。
 //   模型层：大模型流式生成 → 按句切开 → （B2）每句过护栏 → 放行或拦下。
-//   放行策略：S1 先审后播（默认）；S3 先播后截（只允许无害口令用例，由 runner 把关）。
+//   放行策略：S1 先审后播（默认）；S2 与 S1 的文字流程相同，只是句子一生成就通知外层开始合成语音；
+//            S3 先播后截（只允许无害口令用例，由 runner 把关）。
 
 import { createHash } from "node:crypto";
-import type { ReleasePolicy, SubjectVariant, TurnRecord, UtteranceRecord } from "../domain/types";
+import { GUARDED_VARIANTS, type ReleasePolicy, type SubjectVariant, type TurnRecord, type UtteranceRecord } from "../domain/types";
 import { checkSentence, FALLBACK, type GuardContext } from "./guard";
 import { type ChatMessage, chatStream, isLive, type UsageMeter } from "./llm";
 import { simulateStream, simulateSubject } from "./simulator";
@@ -31,7 +32,7 @@ function secretLine(canary: string): string {
 export function systemPrompt(variant: SubjectVariant, canary: string): string {
   const parts = [PERSONA, secretLine(canary)];
   if (variant === "B1" || variant === "B2") parts.push(BOUNDARIES);
-  if (variant === "FAULT") parts.push(FAULT);
+  if (variant === "FAULT" || variant === "FAULT_B2") parts.push(FAULT);
   return parts.join("\n");
 }
 
@@ -55,8 +56,14 @@ export interface SubjectOptions {
   clock?: { mode: "real" | "simulated"; elapsedBefore: number; advance: number };
   meter: UsageMeter;
   signal?: AbortSignal;
+  /** 实验设定：护栏每句判定额外等待的毫秒数（默认 0） */
+  guardDelayMs?: number;
+  /** 每切出一句、还没检查时通知一次（S2 用它提前开始合成） */
+  onSentenceReady?: (u: { utterance_id: string; text: string }) => void;
   /** 每放行或拦下一句，就通知一次（工作台实时展示、语音播放用） */
   onUtterance?: (u: UtteranceRecord) => void;
+  /** S3：已放行的句子被护栏判为违规、要掐断时通知 */
+  onCut?: (u: UtteranceRecord) => void;
 }
 
 export async function respondTurn(o: SubjectOptions): Promise<TurnRecord> {
@@ -72,7 +79,7 @@ export async function respondTurn(o: SubjectOptions): Promise<TurnRecord> {
     provider_blocked: false,
     timing_ms: { total: 0 },
   };
-  const guarded = o.variant === "B2";
+  const guarded = GUARDED_VARIANTS.includes(o.variant);
   let uid = 0;
   const release = (u: UtteranceRecord) => {
     record.utterances.push(u);
@@ -120,37 +127,51 @@ export async function respondTurn(o: SubjectOptions): Promise<TurnRecord> {
   let stopped = false;
   const splitter = new SentenceSplitter();
 
+  /** 护栏检查，加上实验设定的固定延迟；返回判定和总耗时 */
+  const check = async (sentence: string) => {
+    const t = performance.now();
+    const d = await checkSentence(sentence, ctx, o.meter);
+    if (o.guardDelayMs) await new Promise((r) => setTimeout(r, o.guardDelayMs));
+    const ms = Math.round(performance.now() - t);
+    if (d.hit) d.hit.ms = ms;
+    return { d, ms };
+  };
+
   const handle = async (sentence: string) => {
     if (stopped) return;
     record.raw_output += sentence;
     const id = `${o.turnId}.u${uid++}`;
+    o.onSentenceReady?.({ utterance_id: id, text: sentence });
     if (!guarded) {
       release({ utterance_id: id, text: sentence, released: true });
       return;
     }
     if (o.policy === "S3") {
       // 先播后截：先放行，再检查；违规就标记「已放行后被截」，并停止后续生成
-      release({ utterance_id: id, text: sentence, released: true });
-      const d = await checkSentence(sentence, ctx, o.meter);
+      const u: UtteranceRecord = { utterance_id: id, text: sentence, released: true };
+      release(u);
+      const { d, ms } = await check(sentence);
+      u.guard_ms = ms;
       if (!d.ok && d.hit) {
-        record.utterances[record.utterances.length - 1].cut_after_release = true;
-        record.utterances[record.utterances.length - 1].guard = d.hit;
+        u.cut_after_release = true;
+        u.guard = d.hit;
         stopped = true;
         abort.abort();
+        o.onCut?.(u);
         release({ utterance_id: `${o.turnId}.u${uid++}`, text: FALLBACK[d.hit.rule], released: true });
       } else ctx.history.push({ role: "assistant", text: sentence });
       return;
     }
-    // S1 先审后播
-    const d = await checkSentence(sentence, ctx, o.meter);
+    // S1 先审后播（S2 的文字流程相同）
+    const { d, ms } = await check(sentence);
     if (d.ok) {
-      release({ utterance_id: id, text: sentence, released: true });
+      release({ utterance_id: id, text: sentence, released: true, guard_ms: ms });
       ctx.history.push({ role: "assistant", text: sentence });
       return;
     }
     stopped = true;
     abort.abort();
-    release({ utterance_id: id, text: sentence, released: false, guard: d.hit });
+    release({ utterance_id: id, text: sentence, released: false, guard: d.hit, guard_ms: ms });
     if (d.hit) release({ utterance_id: `${o.turnId}.u${uid++}`, text: FALLBACK[d.hit.rule], released: true });
   };
 

@@ -28,16 +28,29 @@ export type DataLevel = "live" | "simulation";
  * B0 基础角色提示；B1 同角色 + 明确边界提示；B2 = B1 + 运行时护栏与服务层机制；
  * FAULT 明确标记的无害故障注入角色，只用来验证检测与保护机制，单独统计。
  */
-export type SubjectVariant = "B0" | "B1" | "B2" | "FAULT";
+export type SubjectVariant = "B0" | "B1" | "B2" | "FAULT" | "FAULT_B2";
 export const VARIANT_LABEL: Record<SubjectVariant, string> = {
   B0: "B0 基础角色（无边界提示、无护栏）",
   B1: "B1 基础角色 + 边界提示",
   B2: "B2 边界提示 + 运行时护栏",
-  FAULT: "故障注入角色（仅验证机制）",
+  FAULT: "故障注入角色（验证检测）",
+  FAULT_B2: "故障注入 + 运行时护栏（验证保护）",
 };
+export const VARIANTS = Object.keys(VARIANT_LABEL) as SubjectVariant[];
 
-/** 放行策略：S1 先审后播（生产默认）；S3 先播后截（只允许用于无害口令对照实验） */
-export type ReleasePolicy = "S1" | "S3";
+/** 有运行时护栏和服务层机制的配置 */
+export const GUARDED_VARIANTS: SubjectVariant[] = ["B2", "FAULT_B2"];
+
+/**
+ * 放行策略（规格 02 E2）：S1 先审后播（默认）；S2 边审边合成，通过后才放出音频；
+ * S3 先播后截（只允许用于无害口令对照实验）。文字层面 S1 和 S2 一样，差别只在语音合成开始的时机。
+ */
+export type ReleasePolicy = "S1" | "S2" | "S3";
+export const POLICY_LABEL: Record<ReleasePolicy, string> = {
+  S1: "S1 先审后播",
+  S2: "S2 边审边合成",
+  S3: "S3 先播后截（仅无害口令对照）",
+};
 
 // ---------- 用例（与 suites/case.schema.json 一致） ----------
 
@@ -89,6 +102,41 @@ export interface UtteranceRecord {
   released: boolean;
   cut_after_release?: boolean;
   guard?: GuardHit;
+  /** 护栏对这一句的判定耗时（含实验设定的固定延迟）；没经过护栏为 undefined */
+  guard_ms?: number;
+}
+
+/** 采样区间 [start, end)，坐标是这句话音频的源采样 */
+export type SampleRange = [start: number, end: number];
+
+/** 一句话在浏览器里的播放计量（规格 02 §4.2、§4.4） */
+export interface UtteranceAudio {
+  utterance_id: string;
+  /** 浏览器 AudioWorklet 实际渲染过的源采样区间（已合并） */
+  rendered: SampleRange[];
+  rendered_ms: number;
+  /** 被截的句子才有：违规内容的采样区间和定位精度 */
+  violation?: SampleRange[];
+  violation_level?: "char" | "sentence_upper_bound";
+  /** 违规音频渲染时长 = 违规区间 ∩ 已渲染区间（服务端用浏览器上报的区间计算） */
+  leak_rendered_ms?: number;
+  /** 浏览器收到截断/终止 → 主线程收到「已停止渲染」确认（上界） */
+  cancel_to_stop_ms?: number;
+  /** 浏览器收到截断/终止 → 下一帧画面口型归零 */
+  cancel_to_mouth_zero_ms?: number;
+  /** 合成首块就绪耗时（服务端） */
+  tts_first_chunk_ms?: number;
+  outcome: "ended" | "cut" | "cancelled" | "failed" | "not_played";
+}
+
+export interface TurnAudio {
+  status: "played" | "no_client" | "cancelled";
+  level: "simulation" | "live";
+  model: string;
+  sample_rate: number;
+  /** 浏览器收到本轮输入事件 → 第一个非静音采样开始渲染（浏览器同一时钟） */
+  first_audio_ms?: number;
+  utterances: UtteranceAudio[];
 }
 
 export interface TurnRecord {
@@ -106,6 +154,8 @@ export interface TurnRecord {
   service: { exited: boolean; reminder_emitted: boolean; reminder_simulated: boolean };
   provider_blocked: boolean;
   timing_ms: { first_release?: number; total: number };
+  /** 语音运行才有 */
+  audio?: TurnAudio;
 }
 
 export type EvidenceLayer = "raw" | "released";
@@ -163,6 +213,10 @@ export interface RunConfig {
   max_llm_calls: number;
   /** 允许运行草稿用例：结果会标成「预览」，不计入正式结果 */
   include_drafts: boolean;
+  /** 语音播放：放行的句子合成语音，在浏览器播放并计量；每轮等浏览器播完再继续 */
+  voice?: boolean;
+  /** 实验设定：护栏每句判定额外等待的毫秒数（规格 02 E2「固定已知的判决延迟」），默认 0 */
+  guard_delay_ms?: number;
 }
 
 export interface Counts {
@@ -182,6 +236,8 @@ export interface Usage {
   llm_calls: number;
   prompt_tokens: number;
   completion_tokens: number;
+  /** 送去语音合成的字数 */
+  tts_chars?: number;
 }
 
 export interface RunManifest {

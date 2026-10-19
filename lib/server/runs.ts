@@ -2,19 +2,37 @@
 // （规格 01 §3.3）。工作台、评测脚本、工具接口都调用这里，不各自实现一套判定。
 // 落盘：data/runs/<run_id>/manifest.json、results.jsonl、events.jsonl；本轮口令单独存 secret.json，不经接口返回。
 // 暂停：只阻止派发新用例，当前用例跑完后进入 paused；终止：立刻中止当前用例，不可恢复。
+// 语音运行（config.voice）：放行的句子在服务端合成（audio-store.ts），浏览器取音频播放并上报渲染区间；
+// 每轮等浏览器播完（或超时）再继续，首声等待才不会被上一轮的排队声音污染。
 
 import { createHash, randomBytes } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { leakRenderedMs, samplesToMs, totalLength, union } from "../audio/intervals";
 import { aggregate } from "../domain/assertions";
 import { getSuite } from "../domain/cases";
-import type { CaseResult, CaseV1, Counts, Finding, RunConfig, RunEvent, RunManifest, TurnRecord, Verdict } from "../domain/types";
+import type {
+  CaseResult,
+  CaseV1,
+  Counts,
+  Finding,
+  RunConfig,
+  RunEvent,
+  RunManifest,
+  SampleRange,
+  TurnAudio,
+  TurnRecord,
+  UtteranceAudio,
+  Verdict,
+} from "../domain/types";
+import { AudioStore } from "./audio-store";
 import { GUARD_RULES_SOURCE } from "./guard";
 import { judgeCase } from "./judge";
 import { BudgetExceededError, isLive, modelFor, ProviderBlockedError, UsageMeter } from "./llm";
 import { loadKb } from "./rag";
 import { personaHash, respondTurn } from "./subject";
 import { runTester } from "./tester";
+import { TTS_SAMPLE_RATE, ttsModel, violationRanges } from "./tts";
 
 const RUNS_DIR = path.join(process.cwd(), "data", "runs");
 
@@ -33,6 +51,23 @@ interface RunHandle {
   resume?: () => void;
   listeners: Set<Listener>;
   events: RunEvent[];
+  /** 语音运行才有：合成缓存、被截句子的违规区间、等待浏览器上报的轮次 */
+  audio?: AudioStore;
+  violations: Map<string, { ranges: SampleRange[]; level: "char" | "sentence_upper_bound" }>;
+  playbackWaiters: Map<string, (r: PlaybackReport | null) => void>;
+}
+
+/** 浏览器播放完一轮后上报的计量（规格 02 §4.2–4.4）；服务端只信任渲染区间和计时，漏出时长自己算 */
+export interface PlaybackReport {
+  turn_id: string;
+  first_audio_ms?: number;
+  utterances: {
+    utterance_id: string;
+    rendered: SampleRange[];
+    outcome: UtteranceAudio["outcome"];
+    cancel_to_stop_ms?: number;
+    cancel_to_mouth_zero_ms?: number;
+  }[];
 }
 
 // 开发时热更新会重新加载模块，用 globalThis 保留正在运行的任务
@@ -130,7 +165,13 @@ export function createRun(config: RunConfig): RunManifest {
     config,
     data_level: isLive() ? "live" : "simulation",
     preview: cases.some((c) => c.approval !== "approved"),
-    models: { subject: modelFor("subject"), tester: modelFor("tester"), judge: modelFor("judge"), guard: modelFor("guard") },
+    models: {
+      subject: modelFor("subject"),
+      tester: modelFor("tester"),
+      judge: modelFor("judge"),
+      guard: modelFor("guard"),
+      tts: config.voice ? ttsModel() : "none",
+    },
     hashes: {
       suite: suite.sha256.slice(0, 16),
       kb: loadKb().hash,
@@ -155,6 +196,9 @@ export function createRun(config: RunConfig): RunManifest {
     pauseRequested: false,
     listeners: new Set(),
     events: [],
+    audio: config.voice ? new AudioStore() : undefined,
+    violations: new Map(),
+    playbackWaiters: new Map(),
   };
   live.set(run_id, h);
   saveManifest(h);
@@ -202,6 +246,8 @@ export function cancelRun(id: string): RunManifest {
   h.manifest.state = "cancelling";
   h.epoch++; // 旧 epoch 的结果一律作废
   h.abort.abort();
+  h.audio?.abortAll();
+  for (const w of h.playbackWaiters.values()) w(null);
   saveManifest(h);
   emit(h, "runner", "run_cancelling");
   h.resume?.(); // 如果在暂停中，唤醒循环让它结束
@@ -301,6 +347,96 @@ export function reviewFinding(runId: string, findingId: string, decision: "confi
   return view;
 }
 
+// ---------- 语音：取音频、上报播放计量 ----------
+
+/** 浏览器取一句已放行句子的合成音频（PCM 16 位单声道）。未放行、已拦下或不是语音运行时返回 null */
+export function openAudio(
+  runId: string,
+  utteranceId: string,
+): { stream: ReadableStream<Uint8Array>; level: string; sampleRate: number } | null {
+  const h = live.get(runId);
+  const stream = h?.audio?.open(utteranceId);
+  const info = h?.audio?.info(utteranceId);
+  if (!stream || !info) return null;
+  return { stream, level: info.level, sampleRate: info.sampleRate };
+}
+
+const MAX_RANGES = 2000;
+const num = (x: unknown) => (typeof x === "number" && Number.isFinite(x) && x >= 0 ? Math.round(x * 10) / 10 : undefined);
+const OUTCOMES = ["ended", "cut", "cancelled", "failed", "not_played"] as const;
+
+/** 浏览器播完一轮后调用：交给正在等待的运行循环 */
+export function reportPlayback(runId: string, r: PlaybackReport): { accepted: boolean } {
+  const h = live.get(runId);
+  if (!h) throw new Error("运行不存在或已结束");
+  const waiter = h.playbackWaiters.get(r.turn_id);
+  if (!waiter) return { accepted: false }; // 已超时、已取消，或重复上报
+  const clean: PlaybackReport = {
+    turn_id: r.turn_id,
+    first_audio_ms: num(r.first_audio_ms),
+    utterances: (Array.isArray(r.utterances) ? r.utterances : [])
+      .filter((u) => typeof u?.utterance_id === "string" && u.utterance_id.startsWith(`${r.turn_id}.u`))
+      .map((u) => ({
+        utterance_id: u.utterance_id,
+        rendered: (Array.isArray(u.rendered) ? u.rendered : [])
+          .slice(0, MAX_RANGES)
+          .filter(
+            (x): x is SampleRange => Array.isArray(x) && Number.isInteger(x[0]) && Number.isInteger(x[1]) && x[1] > x[0] && x[0] >= 0,
+          ),
+        outcome: OUTCOMES.includes(u.outcome) ? u.outcome : "failed",
+        cancel_to_stop_ms: num(u.cancel_to_stop_ms),
+        cancel_to_mouth_zero_ms: num(u.cancel_to_mouth_zero_ms),
+      })),
+  };
+  waiter(clean);
+  return { accepted: true };
+}
+
+function waitPlayback(h: RunHandle, turnId: string, timeoutMs: number): Promise<PlaybackReport | null> {
+  return new Promise((resolve) => {
+    const done = (r: PlaybackReport | null) => {
+      clearTimeout(timer);
+      h.playbackWaiters.delete(turnId);
+      resolve(r);
+    };
+    const timer = setTimeout(() => done(null), timeoutMs);
+    h.playbackWaiters.set(turnId, done);
+    if (h.abort.signal.aborted) done(null);
+  });
+}
+
+/** 把浏览器上报和服务端记录合成这一轮的音频计量 */
+function buildTurnAudio(h: RunHandle, audio: AudioStore, turn: TurnRecord, report: PlaybackReport | null): TurnAudio {
+  const released = turn.utterances.filter((u) => u.released);
+  const first = released.map((u) => audio.info(u.utterance_id)).find(Boolean);
+  return {
+    status: report ? "played" : h.abort.signal.aborted ? "cancelled" : "no_client",
+    level: first?.level ?? "simulation",
+    model: first?.model ?? ttsModel(),
+    sample_rate: first?.sampleRate ?? TTS_SAMPLE_RATE,
+    first_audio_ms: report?.first_audio_ms,
+    utterances: released.map((u) => {
+      const info = audio.info(u.utterance_id);
+      const sr = info?.sampleRate ?? TTS_SAMPLE_RATE;
+      const rep = report?.utterances.find((x) => x.utterance_id === u.utterance_id);
+      const rendered = union(rep?.rendered ?? []);
+      const v = h.violations.get(u.utterance_id);
+      return {
+        utterance_id: u.utterance_id,
+        rendered,
+        rendered_ms: samplesToMs(totalLength(rendered), sr),
+        violation: v?.ranges,
+        violation_level: v?.level,
+        leak_rendered_ms: v && report ? leakRenderedMs(v.ranges, rendered, sr) : undefined,
+        cancel_to_stop_ms: rep?.cancel_to_stop_ms,
+        cancel_to_mouth_zero_ms: rep?.cancel_to_mouth_zero_ms,
+        tts_first_chunk_ms: info?.firstChunkMs,
+        outcome: rep?.outcome ?? "not_played",
+      };
+    }),
+  };
+}
+
 export interface CompareRow {
   case_id: string;
   a?: Verdict | string;
@@ -380,8 +516,9 @@ async function loop(h: RunHandle) {
     }
   }
   h.manifest.counts = recount(h.cases.length, h.results);
-  h.manifest.usage = { ...meter.usage };
+  h.manifest.usage = { ...meter.usage, ...(h.audio ? { tts_chars: h.audio.chars } : {}) };
   h.manifest.finished_at = new Date().toISOString();
+  if (h.audio) setTimeout(() => h.audio?.clear(), 60_000); // 给浏览器留时间取完最后几句
   saveResults(h);
   saveManifest(h);
   emit(h, "runner", "run_finished", {}, { state: h.manifest.state, counts: h.manifest.counts as unknown as Record<string, unknown> });
@@ -400,7 +537,7 @@ async function runOne(h: RunHandle, c: CaseV1, meter: UsageMeter): Promise<CaseR
   emit(h, "runner", "case_started", { case_id: c.id }, { family: c.family });
 
   if (c.modality === "voice") {
-    return { ...result, status: "not_run", error: "语音用例需要语音链路（M2），文字运行不执行" };
+    return { ...result, status: "not_run", error: "语音输入（注入音频、语音识别）还没实现，语音用例暂不执行" };
   }
   let policy = h.manifest.config.policy;
   if (policy === "S3" && c.family !== "CANARY") {
@@ -433,8 +570,36 @@ async function runOne(h: RunHandle, c: CaseV1, meter: UsageMeter): Promise<CaseR
       clock,
       meter,
       signal: h.abort.signal,
+      guardDelayMs: h.manifest.config.guard_delay_ms ?? 0,
+      onSentenceReady: (u) => {
+        if (h.audio && policy === "S2") h.audio.prepare(u.utterance_id, u.text);
+      },
+      onCut: (u) => {
+        if (h.epoch !== startEpoch || !u.guard) return;
+        const info = h.audio?.info(u.utterance_id);
+        const v = info ? violationRanges(u.text, u.guard, h.canary, info) : undefined;
+        if (v) h.violations.set(u.utterance_id, v);
+        h.audio?.discard(u.utterance_id);
+        emit(
+          h,
+          "guard",
+          "utterance_cut",
+          { case_id: c.id, turn_id: turnId, utterance_id: u.utterance_id },
+          {
+            guard: { rule: u.guard.rule, by: u.guard.by, reason: u.guard.reason, ms: u.guard.ms },
+            violation: v?.ranges ?? null,
+            violation_level: v?.level ?? null,
+          },
+        );
+      },
       onUtterance: (u) => {
         if (h.epoch !== startEpoch) return; // 取消后到达的旧结果不再推送
+        if (h.audio) {
+          if (u.released) {
+            h.audio.prepare(u.utterance_id, u.text);
+            h.audio.release(u.utterance_id);
+          } else h.audio.discard(u.utterance_id);
+        }
         emit(
           h,
           "subject",
@@ -444,11 +609,40 @@ async function runOne(h: RunHandle, c: CaseV1, meter: UsageMeter): Promise<CaseR
             text: u.text,
             guard: u.guard ? { rule: u.guard.rule, by: u.guard.by, reason: u.guard.reason, ms: u.guard.ms } : null,
             cut_after_release: u.cut_after_release ?? false,
+            guard_ms: u.guard_ms ?? null,
           },
         );
       },
     });
     turn.strategy_id = strategyId;
+    // 语音运行：等浏览器把这一轮播完并上报计量；没有浏览器在听（比如命令行评测）就按字数估一个上限后继续
+    if (h.audio && !h.abort.signal.aborted && turn.utterances.some((u) => u.released)) {
+      const chars = turn.utterances.filter((u) => u.released).reduce((n, u) => n + u.text.length, 0);
+      // 先登记等待，再发事件：浏览器（或测试）收到事件后可能立刻上报
+      const pending = waitPlayback(h, turnId, 8000 + chars * 350);
+      emit(h, "subject", "playback_waiting", { case_id: c.id, turn_id: turnId });
+      const report = await pending;
+      turn.audio = buildTurnAudio(h, h.audio, turn, report);
+      emit(
+        h,
+        "subject",
+        report ? "playback_metrics" : "playback_timeout",
+        { case_id: c.id, turn_id: turnId },
+        {
+          first_audio_ms: turn.audio.first_audio_ms ?? null,
+          level: turn.audio.level,
+          utterances: turn.audio.utterances.map((x) => ({
+            utterance_id: x.utterance_id,
+            rendered_ms: x.rendered_ms,
+            leak_rendered_ms: x.leak_rendered_ms ?? null,
+            violation_level: x.violation_level ?? null,
+            cancel_to_stop_ms: x.cancel_to_stop_ms ?? null,
+            cancel_to_mouth_zero_ms: x.cancel_to_mouth_zero_ms ?? null,
+            outcome: x.outcome,
+          })),
+        },
+      );
+    }
     result.turns.push(turn);
     history.push({ role: "user", text: userText });
     if (turn.released_output) history.push({ role: "assistant", text: turn.released_output });
