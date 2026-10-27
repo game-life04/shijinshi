@@ -1,43 +1,50 @@
 @import "tailwindcss";
 
-/* 统一的颜色变量（设计系统）。组件里只用这些变量，不直接写颜色值。 */
+/*
+ * 「分寸」的设计系统：宣纸白、墨黑，唯一的强调色是琪叶桃旗袍的朱红（ADR-021）。
+ * 朱红只用在三处：要用户注意的地方（主按钮、提醒）、红笔批注（证据原话）、印章（合格）。
+ * 组件里只用这些变量，不直接写颜色值。
+ */
 :root {
-  --background: #f5f7fb;
-  --surface: #ffffff;
-  --foreground: #1f2733;
-  --muted: #5a6676;
-  --border: #d8e0ea;
-  --primary: #2b6cb0;
-  --primary-soft: #e8f0fa;
-  --ok: #2f855a;
-  --ok-soft: #e6f4ec;
-  --bad: #c0392b;
-  --bad-soft: #fbe9e7;
-  --warn: #b7791f;
-  --warn-soft: #fdf3e2;
+  --background: #f3efe6; /* 宣纸 */
+  --surface: #faf8f3;
+  --sunken: #ebe5d8; /* 月洞窗里的底色 */
+  --foreground: #1f1c18; /* 墨 */
+  --muted: #6d665b;
+  --border: #dbd3c4;
+  --primary: #b5382b; /* 朱红 */
+  --primary-soft: #f4e2dc;
+  --ok: #b5382b; /* 印章：合格、已确认、真实数据 */
+  --ok-soft: #f4e2dc;
+  --bad: #b5382b; /* 出错、违规：朱笔 */
+  --bad-soft: #f4e2dc;
+  --warn: #5b554c; /* 存疑、模拟、草稿：淡墨虚线 */
+  --warn-soft: #ece7dd;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #11161d;
-    --surface: #1a212b;
-    --foreground: #e6ebf2;
-    --muted: #9aa7b8;
-    --border: #2c3644;
-    --primary: #6aa7e8;
-    --primary-soft: #1d2b3c;
-    --ok: #5cc28a;
-    --ok-soft: #173126;
-    --bad: #ee7a6c;
-    --bad-soft: #3a1f1c;
-    --warn: #e3b25a;
-    --warn-soft: #382c17;
+    --background: #171512; /* 墨底 */
+    --surface: #1f1d19;
+    --sunken: #2a2722;
+    --foreground: #ebe5d8; /* 宣纸色的字 */
+    --muted: #a49c8e;
+    --border: #36322c;
+    --primary: #e0604f;
+    --primary-soft: #3a221d;
+    --ok: #e0604f;
+    --ok-soft: #3a221d;
+    --bad: #e0604f;
+    --bad-soft: #3a221d;
+    --warn: #bdb4a4;
+    --warn-soft: #29261f;
   }
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-surface: var(--surface);
+  --color-sunken: var(--sunken);
   --color-foreground: var(--foreground);
   --color-muted: var(--muted);
   --color-border: var(--border);
@@ -49,11 +56,82 @@
   --color-bad-soft: var(--bad-soft);
   --color-warn: var(--warn);
   --color-warn-soft: var(--warn-soft);
-  --font-sans: "Microsoft YaHei", "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
+  /* 不用网络字体（国内加载不稳定），只用系统自带的中文字体 */
+  --font-sans: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
+  --font-serif: "Source Han Serif SC", "Noto Serif SC", "Songti SC", "STSong", "SimSun", serif;
+  --font-kai: "Kaiti SC", "STKaiti", "KaiTi", "楷体", serif;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans);
+}
+
+h1,
+h2 {
+  font-family: var(--font-serif);
+  letter-spacing: 0.02em;
+}
+
+/* 朱批：证据原话下面的红笔波浪线（不铺底色，像批在纸上） */
+.zhupi {
+  background: none;
+  color: inherit;
+  text-decoration-line: underline;
+  text-decoration-style: wavy;
+  text-decoration-color: var(--primary);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 4px;
+  text-decoration-skip-ink: none;
+}
+
+/* 印章：朱红双线框、楷体、略微歪一点，像真的盖上去 */
+.seal {
+  font-family: var(--font-kai);
+  color: var(--primary);
+  border: 1.5px solid var(--primary);
+  box-shadow:
+    inset 0 0 0 1.5px var(--surface),
+    inset 0 0 0 2.5px var(--primary);
+  border-radius: 3px;
+  transform: rotate(-3deg);
+  letter-spacing: 0.08em;
+}
+
+/* 形象状态环的动画；用户要求减少动态时全部静止 */
+@keyframes ring-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes ring-breathe {
+  50% {
+    opacity: 0.35;
+  }
+}
+@keyframes ring-sweep {
+  from {
+    stroke-dashoffset: 0;
+  }
+  to {
+    stroke-dashoffset: -100;
+  }
+}
+.ring-spin {
+  transform-origin: 50% 50%;
+  animation: ring-spin 1.6s linear infinite;
+}
+.ring-breathe {
+  animation: ring-breathe 2.4s ease-in-out infinite;
+}
+.ring-sweep {
+  animation: ring-sweep 0.9s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ring-spin,
+  .ring-breathe,
+  .ring-sweep {
+    animation: none;
+  }
 }

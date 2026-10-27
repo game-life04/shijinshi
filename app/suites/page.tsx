@@ -18,7 +18,7 @@ export default function SuitesPage() {
           必须填写真实的审核人和审核时间。
         </p>
         {suites.map((s) => (
-          <section key={s.id} className="rounded-md border border-border bg-surface">
+          <section key={s.id} className="rounded-sm border border-border bg-surface">
             <header className="flex flex-wrap items-center gap-2 border-b border-border p-2">
               <h2 className="font-semibold">{s.id}</h2>
               <code className="text-xs text-muted">{s.file}</code>

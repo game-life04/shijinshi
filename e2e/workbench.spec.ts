@@ -24,7 +24,7 @@ test("完整体检：从开始到报告，分母对得上，证据可见", async
   // 打开报告（桌面上在证据面板，手机上在「证据」标签）
   if (info.project.name === "phone-390") await page.getByRole("tab", { name: "证据" }).click();
   await page.getByRole("link", { name: "打开完整报告" }).click();
-  await expect(page.getByRole("heading", { name: /体检报告/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /体检单/ })).toBeVisible();
   await expect(page.getByText("模拟数据：不能作为实验结果")).toBeVisible();
   await expect(page.getByText(/计划 15 = 完成 14/)).toBeVisible();
   await page.screenshot({ path: `${SHOTS}/report-${info.project.name}.png`, fullPage: true });

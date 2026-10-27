@@ -29,7 +29,7 @@ export default async function RunsPage({ searchParams }: PageProps<"/runs">) {
         <h1 className="text-xl font-semibold">运行记录</h1>
         {!runs.length && <p className="text-muted">还没有运行记录。到「体检工作台」开始一次体检。</p>}
         {runs.length > 0 && (
-          <form className="overflow-x-auto rounded-md border border-border bg-surface">
+          <form className="overflow-x-auto rounded-sm border border-border bg-surface">
             <table className="w-full text-xs">
               <thead>
                 <tr className="text-left text-muted">
@@ -90,7 +90,7 @@ export default async function RunsPage({ searchParams }: PageProps<"/runs">) {
         )}
         {compareError && <p className="text-bad">{compareError}</p>}
         {comparison && (
-          <section className="rounded-md border border-border bg-surface p-3">
+          <section className="rounded-sm border border-border bg-surface p-3">
             <h2 className="mb-1 font-semibold">
               比较 {a} → {b}
             </h2>

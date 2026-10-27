@@ -1,4 +1,5 @@
-// 小型共用组件：状态徽标、按钮、面板。颜色只用 globals.css 里的设计变量；状态同时有文字和图标，不只靠颜色。
+// 小型共用组件：状态徽标、按钮、面板。颜色只用 globals.css 里的设计变量；状态同时有文字和图标或形状，不只靠颜色。
+// 判定徽标（ADR-021）：合格是朱红印章，不合格是墨色实印，不确定是淡墨虚线框，不适用只写字。
 
 import { Ban, CheckCircle2, CircleDashed, Clock, HelpCircle, MinusCircle, ShieldAlert, XCircle } from "lucide-react";
 import type { ReactNode } from "react";
@@ -7,10 +8,10 @@ import type { CaseStatus, Verdict } from "@/lib/domain/types";
 type Tone = "ok" | "bad" | "warn" | "muted" | "primary";
 
 const TONE: Record<Tone, string> = {
-  ok: "bg-ok-soft text-ok",
-  bad: "bg-bad-soft text-bad",
-  warn: "bg-warn-soft text-warn",
-  muted: "bg-background text-muted border border-border",
+  ok: "border border-ok text-ok",
+  bad: "bg-bad text-surface",
+  warn: "border border-dashed border-warn text-warn",
+  muted: "border border-border text-muted",
   primary: "bg-primary-soft text-primary",
 };
 
@@ -18,7 +19,7 @@ export function Badge({ tone, icon, children, title }: { tone: Tone; icon?: Reac
   return (
     <span
       title={title}
-      className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium whitespace-nowrap ${TONE[tone]}`}
+      className={`inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-xs font-medium whitespace-nowrap ${TONE[tone]}`}
     >
       {icon}
       {children}
@@ -42,6 +43,25 @@ const STATUS: Record<Exclude<CaseStatus, "completed">, { tone: Tone; label: stri
 
 export function VerdictBadge({ verdict }: { verdict: Verdict }) {
   const v = VERDICT[verdict];
+  if (verdict === "pass") {
+    return (
+      <span className="seal inline-flex items-center px-1.5 py-0.5 text-xs font-semibold whitespace-nowrap" data-verdict="pass">
+        合格
+      </span>
+    );
+  }
+  if (verdict === "fail") {
+    return (
+      <span
+        className="inline-flex items-center gap-1 rounded-sm bg-foreground px-1.5 py-0.5 text-xs font-semibold whitespace-nowrap text-surface"
+        style={{ fontFamily: "var(--font-kai)" }}
+        data-verdict="fail"
+      >
+        {v.icon}
+        不合格
+      </span>
+    );
+  }
   return (
     <Badge tone={v.tone} icon={v.icon}>
       {v.label}
@@ -86,9 +106,11 @@ export function Panel({
   className?: string;
 }) {
   return (
-    <section className={`flex min-h-0 flex-col rounded-md border border-border bg-surface ${className}`}>
+    <section className={`flex min-h-0 flex-col rounded-sm border border-border bg-surface ${className}`}>
       <header className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
-        <h2 className="text-sm font-semibold">{title}</h2>
+        <h2 className="text-sm font-semibold tracking-wide" style={{ fontFamily: "var(--font-serif)" }}>
+          {title}
+        </h2>
         {actions}
       </header>
       <div className="min-h-0 flex-1 overflow-auto p-3">{children}</div>
@@ -113,9 +135,9 @@ export function Button({
 }) {
   const style =
     variant === "primary"
-      ? "bg-primary text-white hover:opacity-90"
+      ? "bg-primary text-surface hover:opacity-90"
       : variant === "danger"
-        ? "bg-bad text-white hover:opacity-90"
+        ? "border border-bad text-bad hover:bg-bad-soft"
         : "border border-border bg-surface hover:bg-background";
   return (
     <button
@@ -123,7 +145,7 @@ export function Button({
       title={title}
       disabled={disabled}
       onClick={onClick}
-      className={`inline-flex h-8 items-center gap-1.5 rounded px-3 text-sm font-medium focus-visible:outline-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:opacity-50 ${style}`}
+      className={`inline-flex h-8 items-center gap-1.5 rounded-sm px-3 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:opacity-50 ${style}`}
     >
       {children}
     </button>

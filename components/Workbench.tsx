@@ -1,6 +1,6 @@
 "use client";
 
-// 体检工作台（首屏）：上方配置，左侧角色，中间用例进度与对话，右侧证据与 Agent 工具调用，底部计量。
+// 体检工作台（首屏）：上方配置，左侧月洞窗里的角色（外圈状态环）、耗时瀑布与用例进度，中间对话，右侧证据与 Agent 工具调用，底部计量。
 // 运行过程通过事件流实时更新；每完成一例就取一次最新结果（含结论与证据）。
 // 语音运行：事件流驱动播放器——句子放行就取音频播放，护栏截断或终止就按代际丢弃旧音频；
 // 服务端开始等本轮播放结果时，把渲染区间和计时上报回去（漏出时长由服务端算）。
@@ -13,6 +13,7 @@ import {
   type CaseResult,
   FAMILY_LABEL,
   type Family,
+  GUARDED_VARIANTS,
   POLICY_LABEL,
   type ReleasePolicy,
   type RunEvent,
@@ -24,6 +25,8 @@ import {
 } from "@/lib/domain/types";
 import Avatar from "./Avatar";
 import type { Expression } from "./FaceAvatar";
+import LatencyWaterfall, { latestTiming } from "./LatencyWaterfall";
+import type { Phase } from "./StatusRing";
 import { FindingView, TurnView } from "./Transcript";
 import { Badge, Button, CaseBadge, Metric, Panel } from "./ui";
 
@@ -84,6 +87,28 @@ export default function Workbench() {
   const speakTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [expression, setExpression] = useState<Expression>("neutral");
   const esRef = useRef<EventSource | null>(null);
+
+  // 形象状态环：听 / 想 / 审 / 说 / 拦。「拦」和文字运行里的「说」要停留一会儿，期间来的新状态等它结束再换
+  const [phase, setPhaseState] = useState<Phase>("idle");
+  const phaseRef = useRef<Phase>("idle");
+  const holdRef = useRef<{ until: number; timer?: ReturnType<typeof setTimeout> }>({ until: 0 });
+  const guardedRef = useRef(false);
+  const setPhase = useCallback((p: Phase, holdMs = 0) => {
+    const h = holdRef.current;
+    const now = performance.now();
+    clearTimeout(h.timer);
+    const apply = () => {
+      phaseRef.current = p;
+      setPhaseState(p);
+    };
+    if (!holdMs && now < h.until) {
+      h.timer = setTimeout(apply, h.until - now);
+      return;
+    }
+    h.until = holdMs ? now + holdMs : 0;
+    apply();
+  }, []);
+  useEffect(() => () => clearTimeout(holdRef.current.timer), []);
 
   // 语音：播放器只建一个（AudioContext 要用户点击才能启动，之后一直复用）
   const playerRef = useRef<VoicePlayer | null>(null);
@@ -154,6 +179,14 @@ export default function Workbench() {
       setEvents((prev) => (prev.some((x) => x.seq === e.seq) ? prev : [...prev, e]));
       onVoiceEvent(e);
       if (e.type === "case_started" && e.case_id) setSelected((s) => s ?? e.case_id ?? null);
+      const voiced = voiceRunRef.current === e.run_id;
+      if (e.type === "run_started" || e.type === "case_started" || e.type === "judging") setPhase("listen");
+      else if (e.type === "turn_started") setPhase("think");
+      else if (e.type === "utterance_ready" && guardedRef.current && phaseRef.current !== "speak") setPhase("check");
+      else if (e.type === "utterance_released") setPhase("speak", voiced ? 0 : Math.min(3000, String(e.data?.text ?? "").length * 120));
+      else if (e.type === "utterance_blocked" || e.type === "utterance_cut") setPhase("blocked", 1500);
+      else if (e.type === "playback_metrics" || e.type === "playback_timeout" || e.type === "turn_finished") setPhase("listen");
+      else if (e.type === "run_finished" || e.type === "run_cancelling") setPhase("idle");
       if (e.type === "utterance_released") {
         const text = String(e.data?.text ?? "");
         speakingRef.current = true;
@@ -174,7 +207,7 @@ export default function Workbench() {
         void refresh(e.run_id).catch(() => {});
       }
     },
-    [refresh, onVoiceEvent],
+    [refresh, onVoiceEvent, setPhase],
   );
 
   const start = async () => {
@@ -192,6 +225,8 @@ export default function Workbench() {
     }
     setBusy(true);
     esRef.current?.close();
+    guardedRef.current = GUARDED_VARIANTS.includes(variant);
+    setPhase("listen");
     setEvents([]);
     setResults([]);
     setRunCases(new Set());
@@ -287,6 +322,16 @@ export default function Workbench() {
   }, [events, selected, selectedResult]);
   const toolSteps = events.filter((e) => e.case_id === selected && e.source === "tester");
   const audioStats = useMemo(() => summarizeAudio(events), [events]);
+  const timing = useMemo(
+    () =>
+      latestTiming(
+        events,
+        manifest?.config.policy,
+        Boolean(manifest?.config.voice),
+        Boolean(manifest && GUARDED_VARIANTS.includes(manifest.config.variant)),
+      ),
+    [events, manifest],
+  );
 
   const running = manifest && !FINAL.has(manifest.state);
   const cases = suiteInfo?.cases ?? [];
@@ -296,7 +341,7 @@ export default function Workbench() {
 
   if (loadError) {
     return (
-      <div className="m-4 rounded-md border border-bad/40 bg-bad-soft p-4 text-sm">
+      <div className="m-4 rounded-sm border border-bad/40 bg-bad-soft p-4 text-sm">
         <p className="flex items-center gap-1 font-medium text-bad">
           <TriangleAlert size={16} aria-hidden />
           工作台初始化失败：{loadError}
@@ -318,7 +363,7 @@ export default function Workbench() {
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2 p-2">
       {/* 配置条 */}
-      <div className="flex flex-wrap items-end gap-2 rounded-md border border-border bg-surface p-2 text-sm">
+      <div className="flex flex-wrap items-end gap-2 rounded-sm border border-border bg-surface p-2 text-sm">
         <label className="flex flex-col gap-0.5">
           <span className="text-xs text-muted">被测配置</span>
           <select
@@ -499,8 +544,13 @@ export default function Workbench() {
       <div className="grid min-h-0 flex-1 gap-2 lg:grid-cols-[minmax(220px,0.8fr)_minmax(0,1.6fr)_minmax(0,1.3fr)]">
         {/* 左：角色 + 用例进度 */}
         <div className={`${panelClass("cases")} min-h-0 flex-col gap-2`}>
-          <div className="rounded-md border border-border bg-surface p-2">
-            <Avatar mouth={mouth} expression={expression} />
+          <div className="rounded-sm border border-border bg-surface p-3">
+            <Avatar mouth={mouth} expression={expression} phase={phase} />
+            {manifest && (
+              <div className="mt-2 border-t border-border pt-2">
+                <LatencyWaterfall timing={timing} />
+              </div>
+            )}
             {manifest?.config.voice && <AudioMeters stats={audioStats} />}
           </div>
           <Panel title={`用例进度${manifest ? `（${manifest.counts.planned} 例）` : ""}`} className="min-h-[12rem] flex-1">
@@ -586,7 +636,7 @@ export default function Workbench() {
       </div>
 
       {/* 底部计量 */}
-      <div className="flex flex-wrap items-center gap-x-6 gap-y-1 rounded-md border border-border bg-surface px-3 py-2">
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-1 rounded-sm border border-border bg-surface px-3 py-2">
         <Metric label="运行状态" value={manifest ? stateLabel(manifest.state) : null} />
         <Metric
           label="对账（计划 = 完成 + 拦截 + 出错 + 取消 + 未执行）"

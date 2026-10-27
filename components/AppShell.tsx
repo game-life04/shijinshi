@@ -1,6 +1,6 @@
-// 页面外框：顶部导航（五个主要视图）+ 常驻的 AI 标识。
+// 页面外框：顶部是「分寸」印章、导航（四个主要视图）和常驻的 AI 标识。
 
-import { FlaskConical, ListChecks, ScrollText, Settings, SquareTerminal } from "lucide-react";
+import { ListChecks, ScrollText, Settings, SquareTerminal } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
 
@@ -11,14 +11,32 @@ const NAV = [
   { href: "/settings", label: "设置", icon: Settings },
 ];
 
+/** 「分寸」两个字竖排在一方朱红印里 */
+export function BrandSeal({ size = 34 }: { size?: number }) {
+  return (
+    <span
+      aria-hidden
+      className="inline-flex shrink-0 flex-col items-center justify-center rounded-[3px] bg-primary leading-none text-surface"
+      style={{ width: size, height: size, fontFamily: "var(--font-kai)", fontSize: size * 0.4 }}
+    >
+      <span>分</span>
+      <span>寸</span>
+    </span>
+  );
+}
+
 export default function AppShell({ children, active }: { children: ReactNode; active?: string }) {
   return (
     <div className="flex min-h-screen flex-col">
-      <header className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-border bg-surface px-4 py-2">
-        <Link href="/workbench" className="flex items-center gap-1.5 font-semibold">
-          <FlaskConical size={18} className="text-primary" aria-hidden />
-          试金石
-          <span className="hidden text-xs font-normal text-muted sm:inline">AI 语音角色安全体检与流式保护工作台</span>
+      <header className="flex flex-wrap items-center gap-x-5 gap-y-1 border-b border-border bg-surface px-4 py-2">
+        <Link href="/workbench" className="flex items-center gap-2" aria-label="分寸 · AI 语音角色安全体检台">
+          <BrandSeal />
+          <span className="flex flex-col leading-tight">
+            <span className="text-lg tracking-[0.2em]" style={{ fontFamily: "var(--font-serif)" }}>
+              分寸
+            </span>
+            <span className="hidden text-[11px] text-muted sm:inline">AI 语音角色安全体检台</span>
+          </span>
         </Link>
         <nav aria-label="主导航" className="flex flex-wrap gap-1">
           {NAV.map(({ href, label, icon: Icon }) => (
@@ -26,7 +44,7 @@ export default function AppShell({ children, active }: { children: ReactNode; ac
               key={href}
               href={href}
               aria-current={active === href ? "page" : undefined}
-              className={`inline-flex items-center gap-1 rounded px-2 py-1 text-sm ${active === href ? "bg-primary-soft text-primary" : "text-muted hover:text-foreground"}`}
+              className={`inline-flex items-center gap-1 border-b-2 px-2 py-1 text-sm ${active === href ? "border-primary text-foreground" : "border-transparent text-muted hover:text-foreground"}`}
             >
               <Icon size={15} aria-hidden />
               {label}
@@ -34,7 +52,7 @@ export default function AppShell({ children, active }: { children: ReactNode; ac
           ))}
         </nav>
         <span
-          className="ml-auto rounded border border-border px-2 py-0.5 text-xs text-muted"
+          className="ml-auto rounded-sm border border-border px-2 py-0.5 text-xs text-muted"
           title="依据《人工智能生成合成内容标识办法》与拟人化互动管理办法第十八条"
         >
           被测对象是 AI 角色，不是真人 · 角色回复由 AI 生成

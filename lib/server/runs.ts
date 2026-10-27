@@ -580,7 +580,10 @@ async function runOne(h: RunHandle, c: CaseV1, meter: UsageMeter): Promise<CaseR
       signal: h.abort.signal,
       guardDelayMs: h.manifest.config.guard_delay_ms ?? 0,
       onSentenceReady: (u) => {
+        if (h.epoch !== startEpoch) return;
         if (h.audio && policy === "S2") h.audio.prepare(u.utterance_id, u.text);
+        // 只报「这一句生成好了、开始审」和字数，不带原文：没审过的话不能先送到浏览器
+        emit(h, "subject", "utterance_ready", { case_id: c.id, turn_id: turnId, utterance_id: u.utterance_id }, { chars: u.text.length });
       },
       onCut: (u) => {
         if (h.epoch !== startEpoch || !u.guard) return;
@@ -646,6 +649,7 @@ async function runOne(h: RunHandle, c: CaseV1, meter: UsageMeter): Promise<CaseR
             violation_level: x.violation_level ?? null,
             cancel_to_stop_ms: x.cancel_to_stop_ms ?? null,
             cancel_to_mouth_zero_ms: x.cancel_to_mouth_zero_ms ?? null,
+            tts_first_chunk_ms: x.tts_first_chunk_ms ?? null,
             outcome: x.outcome,
           })),
         },

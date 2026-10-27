@@ -50,7 +50,10 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
     <AppShell active="/runs">
       <article className="mx-auto w-full max-w-5xl space-y-4 p-4 text-sm">
         <header className="space-y-1">
-          <h1 className="text-xl font-semibold">体检报告 · {m.run_id}</h1>
+          <h1 className="flex flex-wrap items-baseline gap-x-3 text-2xl">
+            体检单
+            <span className="font-mono text-sm text-muted">{m.run_id}</span>
+          </h1>
           <div className="flex flex-wrap gap-1.5">
             <Badge tone={m.data_level === "live" ? "ok" : "warn"}>
               {m.data_level === "live" ? "真实模型数据" : "模拟数据：不能作为实验结果"}
@@ -60,7 +63,7 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
           </div>
         </header>
 
-        <section className="rounded-md border border-border bg-surface p-3">
+        <section className="rounded-sm border border-border bg-surface p-3">
           <h2 className="mb-2 font-semibold">版本与范围</h2>
           <dl className="grid gap-x-4 gap-y-1 sm:grid-cols-2">
             <dt className="text-muted">被测配置</dt>
@@ -104,7 +107,7 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
           </dl>
         </section>
 
-        <section className="rounded-md border border-border bg-surface p-3">
+        <section className="rounded-sm border border-border bg-surface p-3">
           <h2 className="mb-2 font-semibold">完整分母</h2>
           <p className="font-mono">
             计划 {c.planned} = 完成 {c.completed} + 平台拦截 {c.provider_blocked} + 出错 {c.error} + 取消 {c.cancelled} + 未执行 {c.not_run}
@@ -144,7 +147,7 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
         </section>
 
         {m.config.voice && (
-          <section className="rounded-md border border-border bg-surface p-3">
+          <section className="rounded-sm border border-border bg-surface p-3">
             <h2 className="mb-1 font-semibold">语音计量（浏览器渲染层）</h2>
             <p className="mb-2 text-xs text-muted">
               口径：违规音频渲染时长 = 违规内容的采样区间 ∩ 浏览器 AudioWorklet 实际渲染过的采样区间（规格 02
@@ -197,7 +200,7 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
         )}
 
         {pendingReview.length > 0 && (
-          <section className="rounded-md border border-warn/50 bg-warn-soft p-3">
+          <section className="rounded-sm border border-warn/50 bg-warn-soft p-3">
             <h2 className="font-semibold">待人工复核：{pendingReview.length} 条</h2>
             <p className="text-xs text-muted">复核前，待复核的「合格」只计为不确定；待复核的「不合格」仍按不合格计。</p>
           </section>
@@ -208,7 +211,7 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
           {results.map((r) => (
             <details
               key={r.case_id}
-              className="rounded-md border border-border bg-surface p-3"
+              className="rounded-sm border border-border bg-surface p-3"
               open={r.verdict === "fail" || r.findings.some((f) => f.review_status === "pending")}
             >
               <summary className="flex cursor-pointer flex-wrap items-center gap-2">
@@ -240,7 +243,7 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
           ))}
         </section>
 
-        <section className="rounded-md border border-border bg-surface p-3">
+        <section className="rounded-sm border border-border bg-surface p-3">
           <h2 className="mb-1 font-semibold">对话测试测不到的义务（不计入任何通过率）</h2>
           <ul className="list-disc space-y-1 pl-5">
             {NOT_TESTABLE.map((n) => (
@@ -251,7 +254,7 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
           </ul>
         </section>
 
-        <section className="rounded-md border border-border bg-surface p-3">
+        <section className="rounded-sm border border-border bg-surface p-3">
           <h2 className="mb-1 font-semibold">局限</h2>
           <ul className="list-disc space-y-1 pl-5">
             <li>用例数量有限，结论只代表本套件覆盖的情形；未测项不能视为通过。</li>
@@ -262,7 +265,7 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
           </ul>
         </section>
 
-        <section className="rounded-md border border-border bg-surface p-3 text-xs">
+        <section className="rounded-sm border border-border bg-surface p-3 text-xs">
           <h2 className="mb-1 text-sm font-semibold">来源</h2>
           <p>
             《{sourceClause?.law}》（{sourceClause?.version}，{sourceClause?.effective} 施行）。条文取自{" "}

@@ -15,7 +15,7 @@ export default function SettingsPage() {
     <AppShell active="/settings">
       <div className="mx-auto w-full max-w-4xl space-y-4 p-4 text-sm">
         <h1 className="text-xl font-semibold">设置</h1>
-        <section className="rounded-md border border-border bg-surface p-3">
+        <section className="rounded-sm border border-border bg-surface p-3">
           <h2 className="mb-2 font-semibold">模型连接</h2>
           <p className="mb-2">
             {isLive() ? (
@@ -40,7 +40,7 @@ export default function SettingsPage() {
             在项目根目录的 .env.local 里配置（参考 .env.example），改完重启服务。密钥不会出现在页面、日志或导出文件里。
           </p>
         </section>
-        <section className="rounded-md border border-border bg-surface p-3">
+        <section className="rounded-sm border border-border bg-surface p-3">
           <h2 className="mb-2 font-semibold">条文来源</h2>
           <p>
             《{first?.law}》{first?.version}，{first?.effective} 施行，共 {kb.clauses.length} 条；条文库版本{" "}
@@ -52,7 +52,7 @@ export default function SettingsPage() {
             <code>npx tsx scripts/build-kb.ts</code>
           </p>
         </section>
-        <section className="rounded-md border border-border bg-surface p-3">
+        <section className="rounded-sm border border-border bg-surface p-3">
           <h2 className="mb-2 font-semibold">数据与隐私</h2>
           <ul className="list-disc space-y-1 pl-5">
             <li>运行结果保存在服务器的 data/runs/ 目录，只含文字对话和事件；不保存录音。</li>

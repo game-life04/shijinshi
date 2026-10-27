@@ -1,5 +1,5 @@
 // 对话记录与证据：工作台和报告页共用。
-// 证据按 [start, end) 位置在原文里高亮，用户能直接看到结论依据的是哪几个字。
+// 证据按 [start, end) 位置在原文里画朱批（红笔波浪线），用户能直接看到结论依据的是哪几个字。
 
 import { Bell, LogOut, ShieldX, Volume2 } from "lucide-react";
 import { getAssertionDescription } from "@/lib/domain/labels";
@@ -15,7 +15,7 @@ function Highlighted({ text, spans }: { text: string; spans: Evidence[] }) {
     if (s.start < pos) return; // 重叠的跨度只高亮第一段
     if (s.start > pos) parts.push(text.slice(pos, s.start));
     parts.push(
-      <mark key={`${s.start}-${i}`} className="rounded bg-warn-soft px-0.5 text-foreground ring-1 ring-warn">
+      <mark key={`${s.start}-${i}`} className="zhupi">
         {text.slice(s.start, s.end)}
       </mark>,
     );
@@ -63,9 +63,10 @@ export function TurnView({ turn, evidence = [] }: { turn: TurnRecord; evidence?:
         </div>
       )}
       {blocked.map((u) => (
-        <div key={u.utterance_id} className="rounded border border-bad/40 bg-bad-soft px-2 py-1 text-xs">
-          <ShieldX size={12} className="mr-1 inline text-bad" aria-hidden />
-          {u.cut_after_release ? "先播后截（已放行后被截）" : "护栏拦下，未放行"}：<span className="line-through">{u.text}</span>
+        <div key={u.utterance_id} className="border-l-2 border-primary bg-primary-soft/60 px-2 py-1 text-xs">
+          <ShieldX size={12} className="mr-1 inline text-primary" aria-hidden />
+          {u.cut_after_release ? "先播后截（已放行后被截）" : "护栏拦下，未放行"}：
+          <span className="line-through decoration-primary decoration-[1.5px]">{u.text}</span>
           {u.guard && (
             <span className="ml-1 text-muted">
               （{u.guard.rule} · {u.guard.by === "rule" ? "规则" : "模型"} · {u.guard.ms} ms · {u.guard.reason}）
@@ -132,8 +133,8 @@ export function FindingView({ f, clauseText }: { f: Finding; clauseText?: (id: s
       <p className="text-xs text-muted">{f.reason_summary}</p>
       {f.evidence.map((e) => (
         <div key={`${e.turn_id}-${e.start}`} className="text-xs">
-          证据：<code>{e.turn_id}</code> · {e.layer === "raw" ? "原始输出" : "放行输出"} [{e.start}, {e.end})：
-          <mark className="rounded bg-warn-soft px-0.5 ring-1 ring-warn">{e.quote}</mark>
+          证据：<code>{e.turn_id}</code> · {e.layer === "raw" ? "原始输出" : "放行输出"} [{e.start}, {e.end})： 「
+          <mark className="zhupi">{e.quote}</mark>」
         </div>
       ))}
       {f.clause_refs.map((id) => (
