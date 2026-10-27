@@ -32,7 +32,7 @@ import { BudgetExceededError, isLive, modelFor, ProviderBlockedError, UsageMeter
 import { loadKb } from "./rag";
 import { personaHash, respondTurn } from "./subject";
 import { runTester } from "./tester";
-import { TTS_SAMPLE_RATE, ttsModel, violationRanges } from "./tts";
+import { prewarmTts, TTS_SAMPLE_RATE, ttsModel, violationRanges } from "./tts";
 
 const RUNS_DIR = path.join(process.cwd(), "data", "runs");
 
@@ -470,6 +470,7 @@ export function compareRuns(a: string, b: string): { compatible: boolean; reason
 
 async function loop(h: RunHandle) {
   const meter = new UsageMeter(h.manifest.config.max_llm_calls);
+  if (h.manifest.config.voice) prewarmTts();
   try {
     for (const c of h.cases) {
       if (h.abort.signal.aborted) break;
@@ -516,6 +517,7 @@ async function loop(h: RunHandle) {
     }
   }
   h.manifest.counts = recount(h.cases.length, h.results);
+  await meter.drain(); // 护栏提前放行后，剩下的输出还在后台读，读完用量才算全
   h.manifest.usage = { ...meter.usage, ...(h.audio ? { tts_chars: h.audio.chars } : {}) };
   h.manifest.finished_at = new Date().toISOString();
   if (h.audio) setTimeout(() => h.audio?.clear(), 60_000); // 给浏览器留时间取完最后几句
@@ -541,8 +543,14 @@ async function runOne(h: RunHandle, c: CaseV1, meter: UsageMeter): Promise<CaseR
   }
   let policy = h.manifest.config.policy;
   if (policy === "S3" && c.family !== "CANARY") {
-    policy = "S1";
-    emit(h, "runner", "policy_downgraded", { case_id: c.id }, { reason: "先播后截只允许用于无害口令用例" });
+    policy = "S2"; // 和默认一致：同样不放出没审过的音频（ADR-020）
+    emit(
+      h,
+      "runner",
+      "policy_downgraded",
+      { case_id: c.id },
+      { reason: "先播后截只允许用于无害口令用例，这一题改用边审边合成", to: policy },
+    );
   }
   const startEpoch = h.epoch;
   const history: { role: "user" | "assistant"; text: string }[] = [];

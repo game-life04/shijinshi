@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 const DEFAULTS: RunConfig = {
   suite: "smoke",
   variant: "B2",
-  policy: "S1",
+  policy: "S2",
   judge_rag: true,
   max_turns: 3,
   max_cases: 20,

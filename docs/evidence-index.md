@@ -7,13 +7,13 @@
 | R01 | 大模型集成（8） | lib/server/llm.ts、subject.ts、judge.ts、guard.ts | 10-19 百炼真实试跑 7 轮（docs/pilot-log.md）：被测角色、测试 Agent、裁判、护栏四个角色都跑通；结构化输出校验与重试；主备模型试验未完成 | 未完成 | 未完成 | 部分内部验证 |
 | R02 | Agent/工作流（8） | lib/server/tester.ts、runs.ts | 10-19 真实试跑里测试 Agent 用 qwen-plus 真实选策略、调用工具（docs/pilot-log.md）；与固定策略对照（E3）未完成 | 未完成 | 未完成 | 部分内部验证 |
 | R03 | RAG（6） | lib/server/rag.ts、kb/ | tests/unit/server.test.ts（条文完整、检索、引用校验）；冻结查询集未完成 | 未完成 | 未完成 | 部分内部验证 |
-| R04 | 多模态（5） | lib/server/tts.ts、audio-store.ts、lib/client/voice-player.ts、public/audio/、components/VrmAvatar.tsx | tests/unit/audio.test.ts；e2e/voice.spec.ts（Edge 里真实的 AudioWorklet 渲染）；截图 docs/evidence/screenshots/m2/。真实合成未验证；语音输入未实现 | 未完成 | 未完成 | 部分内部验证（模拟发声） |
+| R04 | 多模态（5） | lib/server/tts.ts、audio-store.ts、lib/client/voice-player.ts、public/audio/、components/VrmAvatar.tsx | tests/unit/audio.test.ts；e2e/voice.spec.ts（Edge 里真实的 AudioWorklet 渲染）；截图 docs/evidence/screenshots/m2/；tests/unit/live-paths.test.ts（真实合成的超时、重试）。真实合成 10-27 内部跑通，首声测量见 ADR-020；语音输入未实现 | 未完成 | 未完成 | 部分内部验证（模拟发声） |
 | R05 | 安全可控（4） | lib/server/guard.ts、subject.ts、audio-store.ts（ADR-016～018；真实试跑里规则拦下 4 次真实口令泄漏） | 护栏规则与服务层单元测试；S1 拦下不合成、S3 截断后停止渲染（单元 + 端到端）；端到端「终止」测试 | 未完成 | 未完成 | 部分内部验证 |
 | R06 | MCP/工具（4） | lib/server/tester.ts（函数调用） | 10-19 真实试跑里函数调用跑通；MCP Server 未实现 | 未完成 | 未完成 | 部分内部验证 |
 | R07 | 选题创新（10） | — | 需求核验与外部访谈未完成 | 未完成 | 未完成 | 未完成 |
 | R08 | 技术方案创新（8） | subject.ts（S1/S2/S3）、audio-store.ts、lib/audio/intervals.ts | 违规音频渲染时长按采样交集计量：端到端里同一口令句在判决延迟 1000 / 4000 ms 下漏出 0 / 592 ms（模拟发声，机制演示，不是实验结果）；E2 成对实验未做 | 未完成 | 未完成 | 部分内部验证 |
 | R09 | 交互模式创新（7） | components/Workbench.tsx、Transcript.tsx | 截图 docs/evidence/screenshots/m1/ | 未完成 | 未完成 | 部分内部验证 |
-| R10 | 代码质量（4） | 全仓库 | lint、typecheck、单元测试 34 个、端到端 9 个（另有 1 个等角色模型） | 未完成 | 未完成 | 内部验证 |
+| R10 | 代码质量（4） | 全仓库 | lint、typecheck、单元测试 45 个、端到端 10 个（三种尺寸合计） | 未完成 | 未完成 | 内部验证 |
 | R11 | 组件与架构（3） | lib/domain（共享）、lib/server、components | UI、评测脚本共用 runs.ts 服务 | 未完成 | 未完成 | 内部验证 |
 | R12 | 前端性能（3） | components/Avatar.tsx（next/dynamic 懒加载）、VrmAvatar.tsx（帧率写在 data-fps）；音频在 AudioWorklet 线程 | e2e/vrm.spec.ts 用示例模型验证过加载和画面在动；规定设备的加载时间和帧率未测 | 未完成 | 未完成 | 已实现未验证 |
 | R13 | 真实场景（5） | — | 外部角色作者需求未核验 | 未完成 | 未完成 | 未完成 |

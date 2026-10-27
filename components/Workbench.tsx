@@ -62,7 +62,7 @@ export default function Workbench() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [suite, setSuite] = useState("smoke");
   const [variant, setVariant] = useState<SubjectVariant>("B2");
-  const [policy, setPolicy] = useState<ReleasePolicy>("S1");
+  const [policy, setPolicy] = useState<ReleasePolicy>("S2");
   const [voice, setVoice] = useState(false);
   const [guardDelay, setGuardDelay] = useState(0);
   const [judgeRag, setJudgeRag] = useState(true);
@@ -94,6 +94,12 @@ export default function Workbench() {
     return playerRef.current;
   };
   useEffect(() => () => void playerRef.current?.close(), []);
+  // 勾上「语音播放」就提前建好音频引擎，开始体检时第一轮不用再等加载
+  useEffect(() => {
+    if (!voice) return;
+    playerRef.current ??= new VoicePlayer();
+    void playerRef.current.prewarm();
+  }, [voice]);
   /** 形象每帧读一次口型：语音运行按实际渲染的响度；文字运行按放行事件做示意 */
   const mouth = useCallback(() => {
     if (voiceRunRef.current && playerRef.current) return playerRef.current.mouthOpen();
@@ -354,7 +360,7 @@ export default function Workbench() {
             {(Object.keys(POLICY_LABEL) as ReleasePolicy[]).map((p) => (
               <option key={p} value={p}>
                 {POLICY_LABEL[p]}
-                {p === "S1" ? "（默认）" : ""}
+                {p === "S2" ? "（默认）" : ""}
               </option>
             ))}
           </select>

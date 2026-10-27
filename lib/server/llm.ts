@@ -79,6 +79,40 @@ export class UsageMeter {
     this.usage.prompt_tokens += u?.prompt_tokens ?? 0;
     this.usage.completion_tokens += u?.completion_tokens ?? 0;
   }
+
+  private pending = new Set<Promise<void>>();
+
+  /** 登记一个还在后台读的调用（例如护栏已经拿到判定、剩下的输出只为记用量），结算前要等它读完 */
+  track(p: Promise<unknown>) {
+    const q: Promise<void> = p.then(
+      () => {},
+      () => {},
+    );
+    this.pending.add(q);
+    void q.then(() => this.pending.delete(q));
+  }
+
+  /** 结算用量前调用：等后台的调用读完（最多等 timeoutMs） */
+  async drain(timeoutMs = 5000): Promise<void> {
+    if (!this.pending.size) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([Promise.all(this.pending), new Promise<void>((r) => (timer = setTimeout(r, timeoutMs)))]);
+    clearTimeout(timer);
+  }
+}
+
+/** 解析模型给的 JSON：容忍外面包了 ```json 代码块；解析失败返回 undefined */
+export function parseJSONLoose(content: string): unknown {
+  try {
+    return JSON.parse(
+      content
+        .replace(/^\s*```(?:json)?/i, "")
+        .replace(/```\s*$/, "")
+        .trim(),
+    );
+  } catch {
+    return undefined;
+  }
 }
 
 function baseUrl(): string {
@@ -112,7 +146,7 @@ export async function* chatStream(
   role: ModelRole,
   messages: ChatMessage[],
   meter: UsageMeter,
-  opts: { temperature?: number; signal?: AbortSignal } = {},
+  opts: { temperature?: number; signal?: AbortSignal; json?: boolean } = {},
 ): AsyncGenerator<string> {
   meter.reserve();
   const res = await post(
@@ -122,6 +156,7 @@ export async function* chatStream(
       stream: true,
       stream_options: { include_usage: true },
       temperature: opts.temperature ?? 0.7,
+      ...(opts.json ? { response_format: { type: "json_object" } } : {}),
     },
     opts.signal,
   );
@@ -180,18 +215,10 @@ export async function chatJSON<T>(
     const json = await res.json();
     meter.add(json.usage);
     const content: string = json.choices?.[0]?.message?.content ?? "";
-    try {
-      const parsed = JSON.parse(
-        content
-          .replace(/^\s*```(?:json)?/i, "")
-          .replace(/```\s*$/, "")
-          .trim(),
-      );
-      if (validate(parsed)) return { value: parsed, attempts: attempt };
-      lastError = "字段不全或取值不对";
-    } catch {
-      lastError = "不是合法的 JSON";
-    }
+    const parsed = parseJSONLoose(content);
+    if (parsed === undefined) lastError = "不是合法的 JSON";
+    else if (validate(parsed)) return { value: parsed, attempts: attempt };
+    else lastError = "字段不全或取值不对";
   }
   throw new UpstreamError(`模型两次都没有给出合格的 JSON：${lastError}`);
 }

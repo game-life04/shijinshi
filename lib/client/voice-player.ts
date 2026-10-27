@@ -69,11 +69,36 @@ export class VoicePlayer {
     return this.ctx?.state === "running";
   }
 
+  /**
+   * 提前建好音频引擎（不需要用户点击：新建的 AudioContext 处于暂停状态，加载 worklet 也不需要点击）。
+   * 这样点「开始体检」时只剩恢复播放这一步，第一轮的首声不再包含加载 worklet 的时间。
+   */
+  async prewarm(): Promise<void> {
+    if (typeof AudioContext === "undefined" || typeof AudioWorkletNode === "undefined") return;
+    await this.ensureGraph().catch(() => {});
+  }
+
   /** 必须在用户点击的处理函数里调用：浏览器只允许用户操作后开始播放声音 */
   async unlock(): Promise<void> {
     if (typeof AudioContext === "undefined" || typeof AudioWorkletNode === "undefined") {
       throw new Error("这个浏览器不支持 AudioWorklet，不能播放语音。请换用新版 Edge 或 Chrome。");
     }
+    await this.ensureGraph();
+    if (this.ctx && this.ctx.state !== "running") await this.ctx.resume();
+    if (this.ctx?.state !== "running") throw new Error("浏览器没有允许播放声音：请先在页面上点一下，再开始体检。");
+  }
+
+  private graphReady?: Promise<void>;
+
+  private ensureGraph(): Promise<void> {
+    this.graphReady ??= this.buildGraph().catch((e) => {
+      this.graphReady = undefined;
+      throw e;
+    });
+    return this.graphReady;
+  }
+
+  private async buildGraph(): Promise<void> {
     if (!this.ctx) {
       // AudioContext 和合成都用 24 kHz：渲染区间直接就是源采样坐标，不用换算（设备重采样发生在渲染之后）
       this.ctx = new AudioContext({ sampleRate: PLAYER_SAMPLE_RATE, latencyHint: "interactive" });
@@ -86,8 +111,6 @@ export class VoicePlayer {
       this.node.port.onmessage = (e: MessageEvent<WorkletMessage>) => this.onMessage(e.data);
       this.node.connect(this.ctx.destination);
     }
-    if (this.ctx.state !== "running") await this.ctx.resume();
-    if (this.ctx.state !== "running") throw new Error("浏览器没有允许播放声音：请先在页面上点一下，再开始体检。");
   }
 
   /** 收到本轮输入事件时调用：首声等待从这里开始计时 */
@@ -269,5 +292,6 @@ export class VoicePlayer {
     await this.ctx?.close().catch(() => {});
     this.ctx = undefined;
     this.node = undefined;
+    this.graphReady = undefined;
   }
 }

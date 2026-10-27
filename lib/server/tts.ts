@@ -2,7 +2,7 @@
 // 两种实现：
 //   simulated  没有密钥时使用的「模拟发声」：按字生成音节（不是真人声音，界面和数据都标成模拟）。
 //              每个字落在哪段采样是程序自己生成的，所以能精确算出违规内容对应的音频区间；
-//   dashscope  阿里云百炼 Qwen-TTS 流式接口（SSE，返回 Base64 PCM）。**尚未用真实密钥验证**，
+//   dashscope  阿里云百炼 Qwen-TTS 流式接口（SSE，返回 Base64 PCM）。10-27 已用真实密钥跑通；
 //              它不给字级时间戳，所以违规区间只能取整句，记为「句级上界」（规格 01 §3.7）。
 
 import type { SampleRange } from "../audio/intervals";
@@ -24,6 +24,16 @@ export interface Synthesis {
   chunks: AsyncGenerator<Int16Array>;
 }
 
+/**
+ * 预热到合成服务的网络连接（只建立 TLS 连接，不合成、不计费）。
+ * 第一轮的合成请求如果要现建连接，首声会多等几百毫秒；运行一开始就把连接建好。
+ */
+export function prewarmTts(): void {
+  if (ttsProvider() !== "dashscope") return;
+  const base = (process.env.TTS_BASE_URL || "https://dashscope.aliyuncs.com/api/v1").replace(/\/$/, "");
+  void fetch(base, { method: "HEAD", signal: AbortSignal.timeout(3000) }).catch(() => {});
+}
+
 export function ttsProvider(): "simulated" | "dashscope" {
   const p = process.env.TTS_PROVIDER;
   if (p === "simulated" || p === "dashscope") return p;
@@ -36,9 +46,23 @@ export function ttsModel(): string {
   return ttsProvider() === "dashscope" ? process.env.TTS_MODEL || "qwen3-tts-flash" : "simulated-babble";
 }
 
+/** 句子里有没有能念出来的字（汉字、假名、拉丁字母、数字） */
+export const SPEAKABLE = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}A-Za-z0-9]/u;
+
 export function synthesize(text: string, signal?: AbortSignal): Synthesis {
+  // 只有颜文字或标点的一句（例如「（*^▽^*）」）没有可念的字：不送去合成，按无声处理
+  // （10-27 真实运行里，百炼对这种句子返回 InvalidParameter，浏览器那边就成了一次播放失败）
+  if (!SPEAKABLE.test(text)) return silence(ttsProvider() === "dashscope" ? "live" : "simulation", ttsModel());
   return ttsProvider() === "dashscope" ? dashscope(text, signal) : simulated(text, signal);
 }
+
+function silence(level: AudioLevel, model: string): Synthesis {
+  async function* none(): AsyncGenerator<Int16Array> {}
+  return { level, model, sampleRate: TTS_SAMPLE_RATE, charRanges: null, totalSamples: 0, chunks: none() };
+}
+
+/** 合成接口明确拒绝了这次请求（参数不对、文本不能合成等）：换个时间再发也一样，不重试 */
+class TtsRequestError extends UpstreamError {}
 
 /**
  * 违规内容在这句话音频里的采样区间 U（规格 02 §4.2）。
@@ -182,61 +206,121 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-// ---------- 阿里云百炼 Qwen-TTS（未验证） ----------
+// ---------- 阿里云百炼 Qwen-TTS（10-27 已用真实密钥跑通：流式出声，第一块中位约 0.3 秒） ----------
+
+/** 两种「等不到声音」的超时：第一块迟迟不来，或中途断流。和总超时分开计，出问题时浏览器不用干等 */
+const TTS_TIMEOUTS = {
+  firstChunkMs: () => Number(process.env.TTS_FIRST_CHUNK_TIMEOUT_MS || 4000),
+  idleMs: () => Number(process.env.TTS_IDLE_TIMEOUT_MS || 5000),
+  totalMs: () => Number(process.env.TTS_TIMEOUT_MS || 20000),
+};
 
 function dashscope(text: string, signal?: AbortSignal): Synthesis {
   const model = ttsModel();
   const base = (process.env.TTS_BASE_URL || "https://dashscope.aliyuncs.com/api/v1").replace(/\/$/, "");
   const key = process.env.TTS_API_KEY || process.env.LLM_API_KEY;
-  async function* chunks(): AsyncGenerator<Int16Array> {
-    const timeout = AbortSignal.timeout(Number(process.env.TTS_TIMEOUT_MS || 20000));
-    const res = await fetch(`${base}/services/aigc/multimodal-generation/generation`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", "X-DashScope-SSE": "enable" },
-      body: JSON.stringify({ model, input: { text, voice: process.env.TTS_VOICE || "Cherry" } }),
-      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
-    });
-    if (!res.ok || !res.body) {
-      const body = await res.text().catch(() => "");
-      if (/DataInspectionFailed|data_inspection_failed/i.test(body))
-        throw new ProviderBlockedError(`语音合成被平台审核拦截（${res.status}）`);
-      if (res.status === 429 || /Throttling|quota|Arrearage/i.test(body))
-        throw new RateLimitError(`语音合成限流或额度不足（${res.status}）`);
-      throw new UpstreamError(`语音合成接口返回 ${res.status}：${body.slice(0, 200)}`);
+
+  /** 一次合成请求：每次读网络都设一个「等不到就中止」的计时器 */
+  async function* attempt(): AsyncGenerator<Int16Array> {
+    const stall = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let stalled = "";
+    const arm = (ms: number, limit: number, what: string) => {
+      clearTimeout(timer);
+      timer = setTimeout(
+        () => {
+          stalled = `语音合成 ${limit} 毫秒没送来${what}，已中止`;
+          stall.abort();
+        },
+        Math.max(1, ms),
+      );
+    };
+    const firstLimit = TTS_TIMEOUTS.firstChunkMs();
+    const idleLimit = TTS_TIMEOUTS.idleMs();
+    // 第一块从请求发出算起，收到心跳之类不带声音的事件也不顺延
+    const firstDeadline = performance.now() + firstLimit;
+    const signals = [stall.signal, AbortSignal.timeout(TTS_TIMEOUTS.totalMs()), ...(signal ? [signal] : [])];
+    let gotAudio = false;
+    try {
+      arm(firstLimit, firstLimit, "第一段声音");
+      const res = await fetch(`${base}/services/aigc/multimodal-generation/generation`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", "X-DashScope-SSE": "enable" },
+        body: JSON.stringify({ model, input: { text, voice: process.env.TTS_VOICE || "Cherry" } }),
+        signal: AbortSignal.any(signals),
+      });
+      if (!res.ok || !res.body) {
+        const body = await res.text().catch(() => "");
+        if (/DataInspectionFailed|data_inspection_failed/i.test(body))
+          throw new ProviderBlockedError(`语音合成被平台审核拦截（${res.status}）`);
+        if (res.status === 429 || /Throttling|quota|Arrearage/i.test(body))
+          throw new RateLimitError(`语音合成限流或额度不足（${res.status}）`);
+        const msg = `语音合成接口返回 ${res.status}：${body.slice(0, 200)}`;
+        throw res.status >= 400 && res.status < 500 ? new TtsRequestError(msg) : new UpstreamError(msg);
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let carry: Uint8Array | null = null; // 两块之间可能断在半个采样上
+      while (true) {
+        // 只在等网络时计时：调用方慢慢取音频不算断流
+        if (gotAudio) arm(idleLimit, idleLimit, "后续声音");
+        else arm(firstDeadline - performance.now(), firstLimit, "第一段声音");
+        const { value, done } = await reader.read();
+        clearTimeout(timer);
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith("data:")) continue;
+          let json: { output?: { audio?: { data?: string } }; code?: string; message?: string };
+          try {
+            json = JSON.parse(trimmed.slice(5));
+          } catch {
+            continue;
+          }
+          if (json.code) throw new TtsRequestError(`语音合成出错：${json.code} ${json.message ?? ""}`);
+          const b64 = json.output?.audio?.data;
+          if (!b64) continue;
+          let bytes: Uint8Array = Buffer.from(b64, "base64");
+          if (carry) {
+            const merged = new Uint8Array(carry.length + bytes.length);
+            merged.set(carry);
+            merged.set(bytes, carry.length);
+            bytes = merged;
+            carry = null;
+          }
+          const even = bytes.length - (bytes.length % 2);
+          if (even < bytes.length) carry = bytes.slice(even);
+          if (even > 0) {
+            gotAudio = true;
+            yield new Int16Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + even));
+          }
+        }
+      }
+    } catch (e) {
+      if (stalled && !signal?.aborted) throw new UpstreamError(stalled);
+      throw e;
+    } finally {
+      clearTimeout(timer);
     }
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let carry: Uint8Array | null = null; // 两块之间可能断在半个采样上
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed.startsWith("data:")) continue;
-        let json: { output?: { audio?: { data?: string } }; code?: string; message?: string };
-        try {
-          json = JSON.parse(trimmed.slice(5));
-        } catch {
-          continue;
+  }
+
+  /** 还没出声就失败（连不上、超时、服务端出错）时重试一次；已经出过声、请求被拒、被平台拦截、限流、被调用方中止都不重试 */
+  async function* chunks(): AsyncGenerator<Int16Array> {
+    for (let n = 1; ; n++) {
+      let yielded = false;
+      try {
+        for await (const c of attempt()) {
+          yielded = true;
+          yield c;
         }
-        if (json.code) throw new UpstreamError(`语音合成出错：${json.code} ${json.message ?? ""}`);
-        const b64 = json.output?.audio?.data;
-        if (!b64) continue;
-        let bytes: Uint8Array = Buffer.from(b64, "base64");
-        if (carry) {
-          const merged = new Uint8Array(carry.length + bytes.length);
-          merged.set(carry);
-          merged.set(bytes, carry.length);
-          bytes = merged;
-          carry = null;
-        }
-        const even = bytes.length - (bytes.length % 2);
-        if (even < bytes.length) carry = bytes.slice(even);
-        if (even > 0) yield new Int16Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + even));
+        return;
+      } catch (e) {
+        const retryable = !(e instanceof ProviderBlockedError || e instanceof RateLimitError || e instanceof TtsRequestError);
+        if (yielded || n >= 2 || signal?.aborted || !retryable) throw e;
       }
     }
   }

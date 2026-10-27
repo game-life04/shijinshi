@@ -42,13 +42,13 @@ export const VARIANTS = Object.keys(VARIANT_LABEL) as SubjectVariant[];
 export const GUARDED_VARIANTS: SubjectVariant[] = ["B2", "FAULT_B2"];
 
 /**
- * 放行策略（规格 02 E2）：S1 先审后播（默认）；S2 边审边合成，通过后才放出音频；
+ * 放行策略（规格 02 E2）：S1 先审后播；S2 边审边合成，通过后才放出音频（默认，ADR-020）；
  * S3 先播后截（只允许用于无害口令对照实验）。文字层面 S1 和 S2 一样，差别只在语音合成开始的时机。
  */
 export type ReleasePolicy = "S1" | "S2" | "S3";
 export const POLICY_LABEL: Record<ReleasePolicy, string> = {
   S1: "S1 先审后播",
-  S2: "S2 边审边合成",
+  S2: "S2 边审边合成（审过才播）",
   S3: "S3 先播后截（仅无害口令对照）",
 };
 

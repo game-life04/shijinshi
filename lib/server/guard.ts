@@ -3,9 +3,12 @@
 // 规则只能发现线索，不能证明安全；模型判断出错或超时，按「不放行」处理（安全优先），并记录原因。
 // 模型判违规时必须摘抄这句话里违规的原话，程序核对原话确实在句子里才拦；摘不出来的不拦，但记下来供复核
 // （10-19 首次真实试跑：没有这条要求时，9 句正常回答被拦了 4 句，见 docs/pilot-log.md）。
+// 模型的回答用流式读取：JSON 开头就是 "violate": false 时立刻放行，不等它写完理由（不违规时理由用不到）；
+// 违规或开头不是这个形状时，照旧读完整个 JSON 再核对原话（ADR-020；10-27 实测判定时间中位从 544 降到 270 毫秒）。
+// 偶尔一次请求特别慢时，过一会儿并行再问一次，谁先判完用谁（对冲请求，见 askGuardModel）。
 
 import type { GuardHit } from "../domain/types";
-import { chatJSON, isLive, type UsageMeter } from "./llm";
+import { type ChatMessage, chatJSON, chatStream, isLive, parseJSONLoose, type UsageMeter } from "./llm";
 
 export type GuardRule = GuardHit["rule"];
 
@@ -99,6 +102,64 @@ interface GuardJSON {
 const isGuardJSON = (x: unknown): x is GuardJSON =>
   typeof x === "object" && x !== null && typeof (x as GuardJSON).violate === "boolean" && typeof (x as GuardJSON).rule === "string";
 
+/** 模型输出的开头已经确定「不违规」：后面的 rule、quote、reason 都不影响放行 */
+export const EARLY_PASS = /^\s*\{\s*"violate"\s*:\s*false\s*[,}]/;
+
+/**
+ * 问护栏模型，带「对冲」：第一次请求过了 GUARD_HEDGE_MS（默认 1200 毫秒）还没判完，就并行再问一次，谁先判完用谁。
+ * 两次用同样的输入和温度 0，判定口径不变；落后的那次在后台读完，用量照样记入。
+ * （10-27 实测：同一晚护栏判定一般 0.3～0.5 秒，偶尔一次要 5.9 秒，现场演示会让角色干站着。）
+ */
+async function askGuardModel(messages: ChatMessage[], meter: UsageMeter): Promise<GuardJSON | "pass"> {
+  const hedgeMs = Number(process.env.GUARD_HEDGE_MS ?? 1200);
+  const first = askGuardOnce(messages, meter);
+  meter.track(first);
+  if (!(hedgeMs > 0)) return first;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const early = await Promise.race([
+    first.then(
+      (v) => ({ v }),
+      (e: unknown) => ({ e }),
+    ),
+    new Promise<null>((r) => (timer = setTimeout(() => r(null), hedgeMs))),
+  ]);
+  clearTimeout(timer);
+  if (early) {
+    if ("e" in early) throw early.e;
+    return early.v;
+  }
+  const second = askGuardOnce(messages, meter);
+  meter.track(second);
+  try {
+    return await Promise.any([first, second]);
+  } catch (e) {
+    throw e instanceof AggregateError ? e.errors[0] : e;
+  }
+}
+
+/** 问一次：开头读到不违规就返回 "pass"，其余情况读完整个 JSON；提前返回后剩下的输出在后台读完，用量记全 */
+async function askGuardOnce(messages: ChatMessage[], meter: UsageMeter): Promise<GuardJSON | "pass"> {
+  const stream = chatStream("guard", messages, meter, { temperature: 0, json: true });
+  let text = "";
+  while (true) {
+    const { value, done } = await stream.next();
+    if (done) break;
+    text += value;
+    if (EARLY_PASS.test(text)) {
+      meter.track(
+        (async () => {
+          while (!(await stream.next()).done) {}
+        })(),
+      );
+      return "pass";
+    }
+  }
+  const parsed = parseJSONLoose(text);
+  if (isGuardJSON(parsed)) return parsed;
+  // 流式输出不合格：退回整段调用（它会带着原因再试一次）
+  return (await chatJSON("guard", messages, isGuardJSON, meter, { temperature: 0 })).value;
+}
+
 export async function checkSentence(sentence: string, ctx: GuardContext, meter: UsageMeter): Promise<GuardDecision> {
   const start = performance.now();
   const userText = ctx.history
@@ -118,16 +179,14 @@ export async function checkSentence(sentence: string, ctx: GuardContext, meter: 
     .map((h) => `${h.role === "user" ? "用户" : "角色"}：${h.text}`)
     .join("\n");
   try {
-    const { value } = await chatJSON(
-      "guard",
+    const value = await askGuardModel(
       [
         { role: "system", content: GUARD_PROMPT },
         { role: "user", content: `上下文：\n${recent}\n\n待检查的一句：${sentence}` },
       ],
-      isGuardJSON,
       meter,
-      { temperature: 0 },
     );
+    if (value === "pass") return { ok: true };
     const rule = (["identity", "exit", "minor", "crisis"] as const).find((x) => x === value.rule);
     if (value.violate && rule) {
       const quote = (value.quote ?? "").trim();

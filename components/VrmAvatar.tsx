@@ -92,7 +92,6 @@ export default function VrmAvatar({ url, mouth, expression, onFail, onLoaded }: 
       VRMUtils.removeUnnecessaryVertices(gltf.scene);
       VRMUtils.combineSkeletons(gltf.scene);
       VRMUtils.rotateVRM0(vrm);
-      scene.add(vrm.scene);
 
       // 放下手臂（默认是 T 字姿势），镜头对准胸口以上
       const bone = (name: Parameters<NonNullable<typeof vrm.humanoid>["getNormalizedBoneNode"]>[0]) =>
@@ -107,8 +106,21 @@ export default function VrmAvatar({ url, mouth, expression, onFail, onLoaded }: 
       camera.position.set(0, headPos.y + 0.02, headPos.z + 1.2);
       camera.lookAt(0, headPos.y - 0.04, headPos.z);
 
+      // 先在后台把材质的着色器编译好再放进画面：否则第一帧要同步编译，主线程卡住，
+      // 刚好赶上第一轮说话时会把首声一起拖慢（10-27 实测：模型还在加载时，第一轮首声多等 1～2 秒）
+      await renderer.compileAsync(vrm.scene, camera, scene).catch(() => {});
+      if (disposed) {
+        ro.disconnect();
+        VRMUtils.deepDispose(vrm.scene);
+        renderer.dispose();
+        renderer.domElement.remove();
+        return;
+      }
+      scene.add(vrm.scene);
+
       const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      const clock = new THREE.Clock();
+      const timer = new THREE.Timer();
+      timer.connect(document); // 页面切到后台再回来时，不会一下子跳过一大段时间
       const spine = bone("spine");
       const neck = bone("neck");
       let nextBlink = 2 + Math.random() * 3;
@@ -116,9 +128,10 @@ export default function VrmAvatar({ url, mouth, expression, onFail, onLoaded }: 
       let fpsT = 0;
       let raf = 0;
       const em = vrm.expressionManager;
-      const loop = () => {
-        const dt = clock.getDelta();
-        const t = clock.elapsedTime;
+      const loop = (now?: number) => {
+        timer.update(now);
+        const dt = timer.getDelta();
+        const t = timer.getElapsed();
         const open = mouthRef.current();
         em?.setValue("aa", open);
         // 眨眼
@@ -152,6 +165,7 @@ export default function VrmAvatar({ url, mouth, expression, onFail, onLoaded }: 
 
       cleanup = () => {
         cancelAnimationFrame(raf);
+        timer.dispose();
         ro.disconnect();
         VRMUtils.deepDispose(vrm.scene);
         renderer.dispose();
