@@ -107,6 +107,16 @@ describe("AudioWorklet 播放队列（epoch 截断）", () => {
     expect(out.every((v) => v === 0)).toBe(true);
     expect(core.push(chunk(1, "fallback", 0, 10))).toBe(true); // 新代际（兜底句）照常播放
   });
+
+  it("同一个句子编号在新的代际里再播一次（同一用例再跑一遍）：重新报一次开口", () => {
+    const core = new PlaybackCore();
+    const out = new Float32Array(128);
+    core.push(chunk(0, "C#1.u0", 0, 100));
+    expect(core.render(out, 0).started.map((s) => s.uttId)).toEqual(["C#1.u0"]);
+    core.flush(1);
+    core.push(chunk(1, "C#1.u0", 0, 100));
+    expect(core.render(out, 128).started.map((s) => s.uttId)).toEqual(["C#1.u0"]);
+  });
 });
 
 describe("服务端语音缓存的放行门槛", () => {

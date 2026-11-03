@@ -1,10 +1,11 @@
-// 运行记录：时间、配置、模型、各类结果数、调用量；可选两次兼容的运行做比较。
+// 运行记录：时间、配置、模型、各类结果数、调用量；选两次兼容的运行，到「前后对比」页看改了什么、结果怎么变。
 
 import Link from "next/link";
 import AppShell from "@/components/AppShell";
 import { Badge } from "@/components/ui";
+import { DEFAULT_PERSONA } from "@/lib/domain/persona";
 import { VARIANT_LABEL } from "@/lib/domain/types";
-import { compareRuns, listRuns } from "@/lib/server/runs";
+import { listRuns } from "@/lib/server/runs";
 
 export const dynamic = "force-dynamic";
 
@@ -13,15 +14,6 @@ export default async function RunsPage({ searchParams }: PageProps<"/runs">) {
   const runs = listRuns();
   const a = typeof sp.a === "string" ? sp.a : undefined;
   const b = typeof sp.b === "string" ? sp.b : undefined;
-  let comparison: ReturnType<typeof compareRuns> | null = null;
-  let compareError: string | null = null;
-  if (a && b) {
-    try {
-      comparison = compareRuns(a, b);
-    } catch (e) {
-      compareError = e instanceof Error ? e.message : String(e);
-    }
-  }
 
   return (
     <AppShell active="/runs">
@@ -29,7 +21,7 @@ export default async function RunsPage({ searchParams }: PageProps<"/runs">) {
         <h1 className="text-xl font-semibold">运行记录</h1>
         {!runs.length && <p className="text-muted">还没有运行记录。到「体检工作台」开始一次体检。</p>}
         {runs.length > 0 && (
-          <form className="overflow-x-auto rounded-sm border border-border bg-surface">
+          <form action="/compare" className="overflow-x-auto rounded-sm border border-border bg-surface">
             <table className="w-full text-xs">
               <thead>
                 <tr className="text-left text-muted">
@@ -60,7 +52,8 @@ export default async function RunsPage({ searchParams }: PageProps<"/runs">) {
                       </Link>
                     </td>
                     <td>
-                      {VARIANT_LABEL[r.config.variant].split("（")[0]} · {r.config.policy} · {r.config.suite}
+                      {VARIANT_LABEL[r.config.variant].split("（")[0]} · {r.config.policy} · {r.config.suite} ·{" "}
+                      {(r.config.persona ?? DEFAULT_PERSONA).name}
                     </td>
                     <td>
                       {r.data_level === "live" ? <Badge tone="ok">实时</Badge> : <Badge tone="warn">模拟</Badge>}
@@ -83,42 +76,10 @@ export default async function RunsPage({ searchParams }: PageProps<"/runs">) {
             </table>
             <div className="border-t border-border p-2">
               <button type="submit" className="h-8 rounded border border-border px-3 hover:bg-background">
-                比较选中的 A 和 B
+                前后对比：A 改之前 → B 改之后
               </button>
             </div>
           </form>
-        )}
-        {compareError && <p className="text-bad">{compareError}</p>}
-        {comparison && (
-          <section className="rounded-sm border border-border bg-surface p-3">
-            <h2 className="mb-1 font-semibold">
-              比较 {a} → {b}
-            </h2>
-            {!comparison.compatible ? (
-              <p className="text-warn">{comparison.reason}</p>
-            ) : (
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="text-left text-muted">
-                    <th className="py-1">用例</th>
-                    <th>A</th>
-                    <th>B</th>
-                    <th>变化</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {comparison.rows.map((row) => (
-                    <tr key={row.case_id} className="border-t border-border">
-                      <td className="py-1 font-mono">{row.case_id}</td>
-                      <td>{row.a ?? "—"}</td>
-                      <td>{row.b ?? "—"}</td>
-                      <td>{row.changed ? <Badge tone="primary">有变化</Badge> : ""}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </section>
         )}
       </div>
     </AppShell>

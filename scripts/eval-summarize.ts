@@ -3,7 +3,8 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import type { CaseResult, RunManifest } from "../lib/domain/types";
+import { caseLayers } from "../lib/domain/layers";
+import { type CaseResult, GUARDED_VARIANTS, type RunManifest } from "../lib/domain/types";
 import { recount } from "../lib/server/runs";
 
 function arg(name: string) {
@@ -35,6 +36,20 @@ for (const r of results) {
   byFamily[r.family][key] = (byFamily[r.family][key] ?? 0) + 1;
 }
 
+// 三层（ADR-022）：判定看最终播出；角色原话越界和护栏动作单独统计（B0/B1/B2 对照时要分开看）
+const guarded = GUARDED_VARIANTS.includes(manifest.config.variant);
+const layers = results.filter((r) => r.status === "completed").map((r) => caseLayers(r, guarded));
+const layerSummary = {
+  raw_crossed: layers.filter((l) => l.raw.status === "crossed").length,
+  raw_unknown: layers.filter((l) => l.raw.status === "unknown").length,
+  guard_blocked: layers.reduce((n, l) => n + l.guard.blocked + l.guard.cut, 0),
+  guard_masked: layers.reduce((n, l) => n + l.guard.masked, 0),
+  guard_fallback: layers.reduce((n, l) => n + l.guard.fallback, 0),
+  guard_failed: layers.reduce((n, l) => n + l.guard.failed, 0),
+  early_pass: layers.reduce((n, l) => n + l.guard.early, 0),
+  early_pass_late_mismatch: layers.reduce((n, l) => n + l.guard.late, 0),
+};
+
 const summary = {
   run_id: manifest.run_id,
   data_level: manifest.data_level,
@@ -46,6 +61,7 @@ const summary = {
   reconciled,
   decided_pass_ratio: counts.pass + counts.fail ? counts.pass / (counts.pass + counts.fail) : null,
   by_family: byFamily,
+  layers: layerSummary,
   pending_review: results.flatMap((r) => r.findings).filter((f) => f.review_status === "pending").length,
   usage: manifest.usage,
   note: manifest.data_level === "live" ? "真实模型数据" : "模拟数据：只用于验证流程，不能作为实验结果",

@@ -1,14 +1,18 @@
 "use client";
 
-// 体检工作台（首屏）：上方配置，左侧月洞窗里的角色（外圈状态环）、耗时瀑布与用例进度，中间对话，右侧证据与 Agent 工具调用，底部计量。
+// 体检工作台（首屏）：上方配置（含角色设定：开发者粘贴自己的人设和边界），左侧月洞窗里的角色（外圈状态环）、耗时瀑布与用例进度，
+// 中间对话，右侧三层结果（角色原话 / 护栏处理 / 最终播出）、证据与 Agent 工具调用，底部计量。
+// 改一处再测：上一次跑完的运行记下来，这次跑完给出「和上一次比」的入口（ADR-022）。
 // 运行过程通过事件流实时更新；每完成一例就取一次最新结果（含结论与证据）。
 // 语音运行：事件流驱动播放器——句子放行就取音频播放，护栏截断或终止就按代际丢弃旧音频；
 // 服务端开始等本轮播放结果时，把渲染区间和计时上报回去（漏出时长由服务端算）。
 
-import { Pause, Play, RotateCcw, Square, TriangleAlert } from "lucide-react";
+import { Pause, Play, RotateCcw, Square, TriangleAlert, UserRound } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { VoicePlayer } from "@/lib/client/voice-player";
+import { caseLayers } from "@/lib/domain/layers";
+import { DEFAULT_PERSONA, isDefaultPersona, PERSONA_LIMITS, PERSONA_STORAGE_KEY, type PersonaConfig } from "@/lib/domain/persona";
 import {
   type CaseResult,
   FAMILY_LABEL,
@@ -26,6 +30,7 @@ import {
 import Avatar from "./Avatar";
 import type { Expression } from "./FaceAvatar";
 import LatencyWaterfall, { latestTiming } from "./LatencyWaterfall";
+import { LayerStrip } from "./Layers";
 import type { Phase } from "./StatusRing";
 import { FindingView, TurnView } from "./Transcript";
 import { Badge, Button, CaseBadge, Metric, Panel } from "./ui";
@@ -73,6 +78,10 @@ export default function Workbench() {
   const [maxTurns, setMaxTurns] = useState(3);
   const [maxCases, setMaxCases] = useState(20);
   const [maxCalls, setMaxCalls] = useState(200);
+  const [persona, setPersona] = useState<PersonaConfig>(DEFAULT_PERSONA);
+  const [personaOpen, setPersonaOpen] = useState(false);
+  /** 上一次跑完的运行：这次跑完后可以和它做前后对比 */
+  const [prevRunId, setPrevRunId] = useState<string | null>(null);
 
   const [manifest, setManifest] = useState<RunManifest | null>(null);
   const [results, setResults] = useState<CaseResult[]>([]);
@@ -130,6 +139,26 @@ export default function Workbench() {
     if (voiceRunRef.current && playerRef.current) return playerRef.current.mouthOpen();
     return speakingRef.current ? 0.3 + 0.6 * Math.abs(Math.sin(performance.now() / 80)) : 0;
   }, []);
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(PERSONA_STORAGE_KEY) ?? "null") as PersonaConfig | null;
+      if (saved && typeof saved.name === "string" && typeof saved.persona === "string" && typeof saved.boundaries === "string") {
+        setPersona(saved);
+      }
+    } catch {
+      // 浏览器不让读本地存储：用默认角色
+    }
+  }, []);
+  const updatePersona = (next: PersonaConfig) => {
+    setPersona(next);
+    try {
+      if (isDefaultPersona(next)) localStorage.removeItem(PERSONA_STORAGE_KEY);
+      else localStorage.setItem(PERSONA_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      // 存不下就只在这次页面里有效
+    }
+  };
 
   const loadStatus = useCallback(() => {
     setLoadError(null);
@@ -225,6 +254,7 @@ export default function Workbench() {
     }
     setBusy(true);
     esRef.current?.close();
+    if (manifest && FINAL.has(manifest.state)) setPrevRunId(manifest.run_id);
     guardedRef.current = GUARDED_VARIANTS.includes(variant);
     setPhase("listen");
     setEvents([]);
@@ -246,6 +276,7 @@ export default function Workbench() {
           max_llm_calls: maxCalls,
           voice,
           guard_delay_ms: guardDelay,
+          persona: isDefaultPersona(persona) ? undefined : persona,
         }),
       });
       setManifest(m);
@@ -379,6 +410,20 @@ export default function Workbench() {
             ))}
           </select>
         </label>
+        <div className="flex flex-col gap-0.5">
+          <span className="text-xs text-muted">被测角色</span>
+          <button
+            type="button"
+            onClick={() => setPersonaOpen((o) => !o)}
+            aria-expanded={personaOpen}
+            className="inline-flex h-8 items-center gap-1 rounded border border-border bg-surface px-2 hover:bg-background"
+            data-testid="persona-toggle"
+          >
+            <UserRound size={14} aria-hidden />
+            {persona.name}
+            <span className="text-xs text-muted">{isDefaultPersona(persona) ? "（默认）" : "（自己的设定）"}</span>
+          </button>
+        </div>
         <label className="flex flex-col gap-0.5">
           <span className="text-xs text-muted">用例套件</span>
           <select
@@ -508,6 +553,10 @@ export default function Workbench() {
         </div>
       </div>
 
+      {personaOpen && (
+        <PersonaPanel value={persona} disabled={Boolean(running)} onChange={updatePersona} onClose={() => setPersonaOpen(false)} />
+      )}
+
       {!includeDrafts && approvedCount === 0 && (
         <p className="rounded border border-warn/50 bg-warn-soft px-3 py-1.5 text-xs">
           这个套件还没有经过人工审核的用例。正式运行只接受已审核用例；要先看效果，请勾选「包含草稿（预览）」。
@@ -608,13 +657,32 @@ export default function Workbench() {
           className={`${panelClass("evidence")} min-h-[16rem]`}
           actions={
             manifest && FINAL.has(manifest.state) ? (
-              <Link className="text-xs text-primary underline" href={`/reports/${manifest.run_id}`}>
-                打开完整报告
-              </Link>
+              <span className="flex flex-wrap gap-2">
+                <Link className="text-xs text-primary underline" href={`/reports/${manifest.run_id}`}>
+                  打开体检单
+                </Link>
+                {prevRunId && (
+                  <Link
+                    className="text-xs text-primary underline"
+                    href={`/compare?a=${prevRunId}&b=${manifest.run_id}`}
+                    data-testid="compare-link"
+                  >
+                    和上一次比
+                  </Link>
+                )}
+              </span>
             ) : null
           }
         >
           {!selectedResult && <p className="text-sm text-muted">用例跑完后，这里显示每条检查的结论、原文证据和依据条文。</p>}
+          {selectedResult?.status === "completed" && manifest && (
+            <div className="mb-2 space-y-1 border-b border-border pb-2">
+              <LayerStrip layers={caseLayers(selectedResult, GUARDED_VARIANTS.includes(manifest.config.variant))} />
+              <p className="text-xs text-muted">
+                角色原话：{caseLayers(selectedResult, GUARDED_VARIANTS.includes(manifest.config.variant)).raw.note}
+              </p>
+            </div>
+          )}
           {selectedResult?.findings.map((f) => (
             <FindingView key={f.finding_id} f={f} />
           ))}
@@ -660,6 +728,80 @@ export default function Workbench() {
         {manifest?.failure_reason && <Badge tone="bad">{manifest.failure_reason}</Badge>}
       </div>
     </div>
+  );
+}
+
+// ---------- 角色设定 ----------
+
+/** 开发者粘贴自己角色的人设和边界提示；B0 只用人设，B1、B2 再加边界提示（B2 还有运行时护栏） */
+function PersonaPanel({
+  value,
+  disabled,
+  onChange,
+  onClose,
+}: {
+  value: PersonaConfig;
+  disabled: boolean;
+  onChange: (p: PersonaConfig) => void;
+  onClose: () => void;
+}) {
+  const field = "w-full rounded border border-border bg-surface p-1.5 text-sm";
+  const count = (k: keyof PersonaConfig) => (
+    <span className={`text-xs ${value[k].length > PERSONA_LIMITS[k] ? "text-bad" : "text-muted"}`}>
+      {value[k].length} / {PERSONA_LIMITS[k]}
+    </span>
+  );
+  return (
+    <section className="space-y-2 rounded-sm border border-border bg-surface p-3 text-sm" aria-label="角色设定" data-testid="persona-panel">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="font-semibold" style={{ fontFamily: "var(--font-serif)" }}>
+          角色设定
+        </h2>
+        <span className="text-xs text-muted">
+          粘贴你自己角色的人设和边界提示。B0 只用人设；B1 加边界提示；B2 再加运行时护栏。改一处再测，跑完点「和上一次比」。
+        </span>
+      </div>
+      <label className="flex flex-col gap-0.5">
+        <span className="flex justify-between text-xs text-muted">角色名 {count("name")}</span>
+        <input
+          className={`${field} h-8 max-w-xs`}
+          value={value.name}
+          disabled={disabled}
+          onChange={(e) => onChange({ ...value, name: e.target.value })}
+        />
+      </label>
+      <div className="grid gap-2 md:grid-cols-2">
+        <label className="flex flex-col gap-0.5">
+          <span className="flex justify-between text-xs text-muted">人设 {count("persona")}</span>
+          <textarea
+            className={field}
+            rows={6}
+            value={value.persona}
+            disabled={disabled}
+            onChange={(e) => onChange({ ...value, persona: e.target.value })}
+            data-testid="persona-text"
+          />
+        </label>
+        <label className="flex flex-col gap-0.5">
+          <span className="flex justify-between text-xs text-muted">边界提示（B1、B2 才用） {count("boundaries")}</span>
+          <textarea
+            className={field}
+            rows={6}
+            value={value.boundaries}
+            disabled={disabled}
+            onChange={(e) => onChange({ ...value, boundaries: e.target.value })}
+            data-testid="boundaries-text"
+          />
+        </label>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Button onClick={() => onChange(DEFAULT_PERSONA)} disabled={disabled || isDefaultPersona(value)}>
+          <RotateCcw size={14} aria-hidden />
+          恢复默认角色
+        </Button>
+        <Button onClick={onClose}>收起</Button>
+      </div>
+    </section>
   );
 }
 

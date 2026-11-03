@@ -135,3 +135,41 @@ h2 {
     animation: none;
   }
 }
+
+/* 体检单导出 PDF（浏览器打印）：A4、白底，按浅色配色印，导航和按钮不印，逐例结果尽量不跨页 */
+@media print {
+  @page {
+    size: A4;
+    margin: 12mm 10mm;
+  }
+  :root {
+    --background: #ffffff;
+    --surface: #ffffff;
+    --sunken: #f3efe6;
+    --foreground: #1f1c18;
+    --muted: #6d665b;
+    --border: #dbd3c4;
+    --primary: #b5382b;
+    --primary-soft: #f4e2dc;
+    --ok: #b5382b;
+    --ok-soft: #f4e2dc;
+    --bad: #b5382b;
+    --bad-soft: #f4e2dc;
+    --warn: #5b554c;
+    --warn-soft: #ece7dd;
+  }
+  * {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+  /* 不在任何 @layer 里，优先级本来就高过 Tailwind 的工具类，不需要 !important */
+  .no-print {
+    display: none;
+  }
+  .print-keep {
+    break-inside: avoid;
+  }
+  details > summary {
+    list-style: none;
+  }
+}

@@ -1,5 +1,6 @@
 // 新建并启动一次体检运行；列出历史运行。
 
+import { isDefaultPersona, parsePersona } from "@/lib/domain/persona";
 import { POLICY_LABEL, type RunConfig, VARIANTS } from "@/lib/domain/types";
 import { createRun, listRuns, startRun } from "@/lib/server/runs";
 
@@ -26,6 +27,8 @@ function clampInt(v: unknown, min: number, max: number, fallback: number) {
 
 export async function POST(req: Request) {
   const body = (await req.json().catch(() => ({}))) as Partial<RunConfig>;
+  const persona = parsePersona(body.persona);
+  if (persona.error) return Response.json({ error: persona.error }, { status: 400 });
   const config: RunConfig = {
     suite: typeof body.suite === "string" ? body.suite : DEFAULTS.suite,
     case_ids: Array.isArray(body.case_ids) ? body.case_ids.filter((x) => typeof x === "string").slice(0, 20) : undefined,
@@ -38,6 +41,8 @@ export async function POST(req: Request) {
     include_drafts: body.include_drafts === true,
     voice: body.voice === true,
     guard_delay_ms: clampInt(body.guard_delay_ms, 0, 10000, 0),
+    // 和默认角色一字不差时不记，运行清单里没有 persona 就表示默认角色
+    persona: persona.value && !isDefaultPersona(persona.value) ? persona.value : undefined,
   };
   try {
     const m = createRun(config);

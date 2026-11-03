@@ -39,7 +39,7 @@ test("先播后截：判定晚于口令开口，漏出时长大于 0，停止和
 
   // 报告里写明计量口径和逐次截断
   await expect(page.getByText("已完成")).toBeVisible({ timeout: 60_000 });
-  await page.getByRole("link", { name: "打开完整报告" }).click();
+  await page.getByRole("link", { name: "打开体检单" }).click();
   await expect(page.getByRole("heading", { name: "语音计量（浏览器渲染层）" })).toBeVisible();
   await expect(page.getByRole("cell", { name: "按字精确" })).toBeVisible();
   await page.screenshot({ path: `${SHOTS}/report-voice-${info.project.name}.png`, fullPage: true });

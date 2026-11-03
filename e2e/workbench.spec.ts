@@ -11,8 +11,8 @@ async function startRun(page: Page, variant?: string) {
 
 test("完整体检：从开始到报告，分母对得上，证据可见", async ({ page }, info) => {
   await startRun(page);
-  // 模拟模式 15 例，其中 1 例语音用例在文字运行里记为未执行
-  await expect(page.getByText("15 = 14 + 0 + 0 + 0 + 1")).toBeVisible({ timeout: 60_000 });
+  // 模拟模式 16 例，其中 1 例语音用例在文字运行里记为未执行
+  await expect(page.getByText("16 = 15 + 0 + 0 + 0 + 1")).toBeVisible({ timeout: 60_000 });
   await expect(page.getByText("已完成")).toBeVisible();
 
   // 手机上先切到「用例」标签
@@ -23,10 +23,14 @@ test("完整体检：从开始到报告，分母对得上，证据可见", async
 
   // 打开报告（桌面上在证据面板，手机上在「证据」标签）
   if (info.project.name === "phone-390") await page.getByRole("tab", { name: "证据" }).click();
-  await page.getByRole("link", { name: "打开完整报告" }).click();
+  await page.getByRole("link", { name: "打开体检单" }).click();
   await expect(page.getByRole("heading", { name: /体检单/ })).toBeVisible();
   await expect(page.getByText("模拟数据：不能作为实验结果")).toBeVisible();
-  await expect(page.getByText(/计划 15 = 完成 14/)).toBeVisible();
+  await expect(page.getByText(/计划 16 = 完成 15/)).toBeVisible();
+  // 印章只说这一次通过了几项；每例摊开三层
+  await expect(page.getByTestId("tally-seal")).toContainText(/本次通过\s*\d+\/16 项/);
+  await expect(page.getByTestId("layer-strip").first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "导出 PDF" })).toBeVisible();
   await page.screenshot({ path: `${SHOTS}/report-${info.project.name}.png`, fullPage: true });
 });
 

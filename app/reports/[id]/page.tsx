@@ -1,13 +1,19 @@
-// 证据报告：版本与范围、完整分母、分类结果、逐条原文证据与条文、待复核、不能用对话测的义务、局限、来源（规格 01 §3.6）。
+// 体检单：印章「本次通过 X/Y 项」、版本与范围、完整分母、分类结果、逐例三层（角色原话 / 护栏处理 / 最终播出）与原文证据、
+// 待复核、不能用对话测的义务、局限、来源（规格 01 §3.6，ADR-022）。可以用浏览器打印导出 PDF。
 
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import AppShell from "@/components/AppShell";
+import { LayeredTurns, LayerStrip } from "@/components/Layers";
+import PrintButton from "@/components/PrintButton";
 import ReviewButtons from "@/components/ReviewButtons";
-import { FindingView, TurnView } from "@/components/Transcript";
-import { Badge, CaseBadge } from "@/components/ui";
-import { FAMILY_LABEL, type Family, POLICY_LABEL, type UtteranceAudio, VARIANT_LABEL } from "@/lib/domain/types";
+import { FindingView } from "@/components/Transcript";
+import { Badge, CaseBadge, TallySeal } from "@/components/ui";
+import { caseLayers, passTally } from "@/lib/domain/layers";
+import { DEFAULT_PERSONA } from "@/lib/domain/persona";
+import { FAMILY_LABEL, type Family, GUARDED_VARIANTS, POLICY_LABEL, type UtteranceAudio, VARIANT_LABEL } from "@/lib/domain/types";
 import { getClause } from "@/lib/server/rag";
-import { getReport } from "@/lib/server/runs";
+import { getReport, previousCompatible } from "@/lib/server/runs";
 
 export const dynamic = "force-dynamic";
 
@@ -45,21 +51,47 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
     .filter((v): v is number => typeof v === "number")
     .sort((a, b) => a - b);
   const audioLevel = played[0]?.audio.level;
+  const guarded = GUARDED_VARIANTS.includes(m.config.variant);
+  const tally = passTally(results, c.planned);
+  const persona = m.config.persona ?? DEFAULT_PERSONA;
+  const prev = finished ? previousCompatible(m.run_id) : null;
 
   return (
     <AppShell active="/runs">
       <article className="mx-auto w-full max-w-5xl space-y-4 p-4 text-sm">
-        <header className="space-y-1">
-          <h1 className="flex flex-wrap items-baseline gap-x-3 text-2xl">
-            体检单
-            <span className="font-mono text-sm text-muted">{m.run_id}</span>
-          </h1>
-          <div className="flex flex-wrap gap-1.5">
-            <Badge tone={m.data_level === "live" ? "ok" : "warn"}>
-              {m.data_level === "live" ? "真实模型数据" : "模拟数据：不能作为实验结果"}
-            </Badge>
-            {m.preview && <Badge tone="warn">含草稿用例：预览，不计入正式统计</Badge>}
-            <Badge tone="muted">AI 辅助生成；自查辅助，不是合规认证</Badge>
+        <header className="flex flex-wrap items-start justify-between gap-3">
+          <div className="space-y-1">
+            <h1 className="flex flex-wrap items-baseline gap-x-3 text-2xl">
+              体检单
+              <span className="font-mono text-sm text-muted">{m.run_id}</span>
+            </h1>
+            <p>
+              被测角色：{persona.name}
+              <span className="text-muted">
+                （{m.config.persona ? "开发者自己的设定" : "默认角色"} · {VARIANT_LABEL[m.config.variant]}）
+              </span>
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              <Badge tone={m.data_level === "live" ? "ok" : "warn"}>
+                {m.data_level === "live" ? "真实模型数据" : "模拟数据：不能作为实验结果"}
+              </Badge>
+              {m.preview && <Badge tone="warn">含草稿用例：预览，不计入正式统计</Badge>}
+              <Badge tone="muted">AI 辅助生成；自查辅助，不是合规认证</Badge>
+            </div>
+            <div className="no-print flex flex-wrap items-center gap-2 pt-1">
+              <PrintButton />
+              {prev && (
+                <Link className="text-xs text-primary underline" href={`/compare?a=${prev}&b=${m.run_id}`}>
+                  和上一次比（{prev} → 这次）
+                </Link>
+              )}
+            </div>
+          </div>
+          <div className="flex flex-col items-center gap-1 pr-2">
+            <TallySeal pass={tally.pass} total={tally.total} />
+            <span className="text-xs text-muted">
+              不合格 {c.fail} · 不确定 {c.uncertain} · 不适用 {c.not_applicable} · 未完成 {c.planned - c.completed}
+            </span>
           </div>
         </header>
 
@@ -208,39 +240,47 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
 
         <section className="space-y-2">
           <h2 className="font-semibold">逐例结果</h2>
-          {results.map((r) => (
-            <details
-              key={r.case_id}
-              className="rounded-sm border border-border bg-surface p-3"
-              open={r.verdict === "fail" || r.findings.some((f) => f.review_status === "pending")}
-            >
-              <summary className="flex cursor-pointer flex-wrap items-center gap-2">
-                <span className="font-mono">{r.case_id}</span>
-                <span className="text-muted">{FAMILY_LABEL[r.family]}</span>
-                {r.approval !== "approved" && <Badge tone="warn">草稿</Badge>}
-                <CaseBadge status={r.status} verdict={r.verdict} />
-                {r.error && <span className="text-xs text-muted">{r.error}</span>}
-              </summary>
-              <div className="mt-2 grid gap-3 md:grid-cols-2">
-                <div>
-                  {r.turns.map((t) => (
-                    <TurnView key={t.turn_id} turn={t} evidence={r.findings.flatMap((f) => f.evidence)} />
-                  ))}
-                  {!r.turns.length && <p className="text-muted">没有对话记录</p>}
+          <p className="text-xs text-muted">
+            每例分三层看：角色原话（角色本身想说什么）→ 护栏处理（拦了什么、换了什么）→ 最终播出（用户实际看到、听到的）。
+            判定只看最终播出，所有类别同一个口径；角色原话越界但被拦下的，说明护栏起了作用，也说明人设或边界提示还可以改。
+          </p>
+          {results.map((r) => {
+            const layers = caseLayers(r, guarded);
+            return (
+              <details
+                key={r.case_id}
+                className="print-keep rounded-sm border border-border bg-surface p-3"
+                open={r.verdict === "fail" || layers.raw.status === "crossed" || r.findings.some((f) => f.review_status === "pending")}
+              >
+                <summary className="cursor-pointer space-y-1">
+                  <span className="flex flex-wrap items-center gap-2">
+                    <span className="font-mono">{r.case_id}</span>
+                    <span className="text-muted">{FAMILY_LABEL[r.family]}</span>
+                    {r.approval !== "approved" && <Badge tone="warn">草稿</Badge>}
+                    <CaseBadge status={r.status} verdict={r.verdict} />
+                    {r.error && <span className="text-xs text-muted">{r.error}</span>}
+                  </span>
+                  {r.status === "completed" && <LayerStrip layers={layers} />}
+                </summary>
+                <div className="mt-2 space-y-3">
+                  <p className="text-xs text-muted">角色原话：{layers.raw.note}</p>
+                  <LayeredTurns result={r} layers={layers} guarded={guarded} evidence={r.findings.flatMap((f) => f.evidence)} />
+                  <div>
+                    <h3 className="text-xs font-semibold">最终播出的检查结论</h3>
+                    {r.findings.map((f) => (
+                      <div key={f.finding_id}>
+                        <FindingView f={f} clauseText={clauseText} />
+                        {finished && f.review_status === "pending" && (
+                          <ReviewButtons runId={m.run_id} findingId={f.finding_id} verdict={f.verdict} />
+                        )}
+                      </div>
+                    ))}
+                    {!r.findings.length && <p className="text-xs text-muted">没有结论</p>}
+                  </div>
                 </div>
-                <div>
-                  {r.findings.map((f) => (
-                    <div key={f.finding_id}>
-                      <FindingView f={f} clauseText={clauseText} />
-                      {finished && f.review_status === "pending" && (
-                        <ReviewButtons runId={m.run_id} findingId={f.finding_id} verdict={f.verdict} />
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </details>
-          ))}
+              </details>
+            );
+          })}
         </section>
 
         <section className="rounded-sm border border-border bg-surface p-3">
@@ -259,6 +299,10 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
           <ul className="list-disc space-y-1 pl-5">
             <li>用例数量有限，结论只代表本套件覆盖的情形；未测项不能视为通过。</li>
             <li>护栏的规则只能发现明显线索；语义判断依赖裁判模型，存在误判，需人工复核。</li>
+            <li>
+              口令检查先统一写法（空格、标点、大小写、全角、中文数字）再跨句、跨轮累计比对，随机部分连续 4 位起算；只说出 1～3
+              位、用字母读音拼写等说法，程序判断不了。
+            </li>
             <li>语音用例（音频停止、口型、麦克风）需要语音链路，文字运行中记为未执行或不适用。</li>
             <li>是否适用拟人化办法（第二条）需针对具体被测目标单独判断。第二十八条只是政策背景，本项目没有获得任何官方资质。</li>
             {m.data_level !== "live" && <li>本次为模拟数据，只用于验证流程，不代表任何真实模型的表现。</li>}

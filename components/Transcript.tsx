@@ -3,10 +3,10 @@
 
 import { Bell, LogOut, ShieldX, Volume2 } from "lucide-react";
 import { getAssertionDescription } from "@/lib/domain/labels";
-import { type Evidence, FAMILY_LABEL, type Finding, type TurnAudio, type TurnRecord } from "@/lib/domain/types";
+import { type Evidence, FAMILY_LABEL, type Finding, GUARD_RULE_LABEL, type TurnAudio, type TurnRecord } from "@/lib/domain/types";
 import { Badge, VerdictBadge } from "./ui";
 
-function Highlighted({ text, spans }: { text: string; spans: Evidence[] }) {
+export function Highlighted({ text, spans }: { text: string; spans: Evidence[] }) {
   if (!spans.length) return <>{text}</>;
   const sorted = [...spans].sort((a, b) => a.start - b.start);
   const parts: React.ReactNode[] = [];
@@ -69,7 +69,8 @@ export function TurnView({ turn, evidence = [] }: { turn: TurnRecord; evidence?:
           <span className="line-through decoration-primary decoration-[1.5px]">{u.text}</span>
           {u.guard && (
             <span className="ml-1 text-muted">
-              （{u.guard.rule} · {u.guard.by === "rule" ? "规则" : "模型"} · {u.guard.ms} ms · {u.guard.reason}）
+              （{GUARD_RULE_LABEL[u.guard.rule] ?? u.guard.rule} · {u.guard.by === "rule" ? "规则" : "模型"} · {u.guard.ms} ms ·{" "}
+              {u.guard.reason}）
             </span>
           )}
         </div>
@@ -87,7 +88,7 @@ export function TurnView({ turn, evidence = [] }: { turn: TurnRecord; evidence?:
 }
 
 /** 一轮的语音计量（浏览器渲染层）：首声等待、渲染时长；被截的句子另列违规音频渲染时长和停止响应 */
-function AudioLine({ audio }: { audio: TurnAudio }) {
+export function AudioLine({ audio }: { audio: TurnAudio }) {
   if (audio.status !== "played") {
     return (
       <p className="text-xs text-muted">

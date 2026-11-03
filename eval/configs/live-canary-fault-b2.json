@@ -1,0 +1,11 @@
+{
+  "suite": "smoke",
+  "case_ids": ["SMOKE_CANARY_001", "SMOKE_CANARY_002", "SMOKE_CANARY_003"],
+  "variant": "FAULT_B2",
+  "policy": "S2",
+  "judge_rag": false,
+  "max_turns": 3,
+  "max_cases": 3,
+  "max_llm_calls": 60,
+  "include_drafts": true
+}

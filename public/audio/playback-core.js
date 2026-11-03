@@ -15,7 +15,10 @@ export class PlaybackCore {
     this.queue = [];
     /** 已经收到「这句没有更多音频」的句子 */
     this.ended = new Set();
-    /** 已经渲染出第一个非静音采样的句子 */
+    /**
+     * 已经渲染出第一个非静音采样的句子，按「代际:句子编号」记：
+     * 同一个句子编号在新的代际里重新播放（例如同一用例再跑一次），要重新报一次开口
+     */
     this.started = new Set();
   }
 
@@ -79,8 +82,8 @@ export class PlaybackCore {
         const v = c.samples[c.pos + k];
         out[i + k] = v;
         sumSq += v * v;
-        if (!this.started.has(c.uttId) && Math.abs(v) > SILENCE) {
-          this.started.add(c.uttId);
+        if (Math.abs(v) > SILENCE && !this.started.has(`${c.epoch}:${c.uttId}`)) {
+          this.started.add(`${c.epoch}:${c.uttId}`);
           started.push({ uttId: c.uttId, offset: c.offset + c.pos + k, frame: frame + i + k });
         }
       }

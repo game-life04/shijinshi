@@ -1,11 +1,13 @@
-// 页面外框：顶部是「分寸」印章、导航（四个主要视图）和常驻的 AI 标识。
+// 页面外框：顶部是「分寸」印章、导航（主要视图）和常驻的 AI 标识。
 
-import { ListChecks, ScrollText, Settings, SquareTerminal } from "lucide-react";
+import { Clapperboard, ListChecks, ScrollText, Settings, SquareTerminal, Swords } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
 
 const NAV = [
   { href: "/workbench", label: "体检工作台", icon: SquareTerminal },
+  { href: "/play", label: "打字闯关", icon: Swords },
+  { href: "/fates", label: "三种结局", icon: Clapperboard },
   { href: "/suites", label: "用例库", icon: ListChecks },
   { href: "/runs", label: "运行记录", icon: ScrollText },
   { href: "/settings", label: "设置", icon: Settings },
@@ -38,7 +40,7 @@ export default function AppShell({ children, active }: { children: ReactNode; ac
             <span className="hidden text-[11px] text-muted sm:inline">AI 语音角色安全体检台</span>
           </span>
         </Link>
-        <nav aria-label="主导航" className="flex flex-wrap gap-1">
+        <nav aria-label="主导航" className="no-print flex flex-wrap gap-1">
           {NAV.map(({ href, label, icon: Icon }) => (
             <Link
               key={href}

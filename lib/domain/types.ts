@@ -1,5 +1,7 @@
 // 领域类型：UI、评测脚本、工具调用共用这一套定义（规格 01 §3.4、02 §4）。
 
+import type { PersonaConfig } from "./persona";
+
 export const FAMILIES = ["CANARY", "PERSONA", "AI_IDENTITY", "USAGE_REMINDER", "EXIT", "CRISIS_SUPPORT", "MINOR_BOUNDARY"] as const;
 export type Family = (typeof FAMILIES)[number];
 
@@ -89,11 +91,23 @@ export interface CaseV1 {
 // ---------- 一轮对话的记录 ----------
 
 export interface GuardHit {
-  rule: "identity" | "exit" | "minor" | "crisis" | "canary";
+  /** unavailable：护栏检查服务本身出错，按不放行处理（不是角色违规） */
+  rule: "identity" | "exit" | "minor" | "crisis" | "canary" | "unavailable";
   by: "rule" | "model";
   reason: string;
   ms: number;
+  /** 违规内容在这一句里的位置（口令类才有，用来只遮住那几个字、按字定位违规音频） */
+  spans?: [start: number, end: number][];
 }
+
+export const GUARD_RULE_LABEL: Record<GuardHit["rule"], string> = {
+  canary: "口令",
+  identity: "身份",
+  exit: "退出",
+  minor: "未成年",
+  crisis: "危机",
+  unavailable: "检查失败",
+};
 
 export interface UtteranceRecord {
   utterance_id: string;
@@ -101,11 +115,20 @@ export interface UtteranceRecord {
   /** 是否放行给用户（S1 下被拦的句子不放行；S3 下先放行、后标记被截） */
   released: boolean;
   cut_after_release?: boolean;
+  /**
+   * 这句话是谁说的：role 角色原话（默认）；masked 角色原话遮住口令后放行；
+   * fallback 护栏拦下后换上的兜底句；service 服务层加的话（时长提醒、求助信息）
+   */
+  origin?: "role" | "masked" | "fallback" | "service";
   guard?: GuardHit;
   /** 护栏对这一句的判定耗时（含实验设定的固定延迟）；没经过护栏为 undefined */
   guard_ms?: number;
   /** 护栏模型提出违规但指不出原话、所以放行时的记录（供复核） */
   guard_dismissed?: string;
+  /** 护栏模型的回答开头就是「不违规」，提前放行 */
+  guard_early?: boolean;
+  /** 提前放行后，后台读完的完整判定和开头不一致（极少见：格式坏掉、键重复），记下来供复核 */
+  guard_late?: string;
 }
 
 /** 采样区间 [start, end)，坐标是这句话音频的源采样 */
@@ -197,6 +220,8 @@ export interface CaseResult {
   turns: TurnRecord[];
   findings: Finding[];
   error?: string;
+  /** 角色原话层的口令检查（只有口令类有）。口令不经接口返回，所以在服务端算好存下（ADR-022） */
+  raw_canary?: { leaked: boolean; kind?: "full" | "partial"; evidence: Evidence[] };
 }
 
 // ---------- 运行 ----------
@@ -219,6 +244,8 @@ export interface RunConfig {
   voice?: boolean;
   /** 实验设定：护栏每句判定额外等待的毫秒数（规格 02 E2「固定已知的判决延迟」），默认 0 */
   guard_delay_ms?: number;
+  /** 被测角色的人设和边界提示（开发者自己粘贴）；不填就是默认角色 */
+  persona?: PersonaConfig;
 }
 
 export interface Counts {

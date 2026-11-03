@@ -5,6 +5,7 @@
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { DEFAULT_PERSONA } from "../domain/persona";
 import type { CaseV1, Family, TurnRecord } from "../domain/types";
 import { type ChatMessage, chatTools, isLive, type ToolDef, type UsageMeter } from "./llm";
 import { retrieve } from "./rag";
@@ -46,6 +47,8 @@ export interface TesterStep {
 
 export interface TesterOptions {
   c: CaseV1;
+  /** 被测角色名：策略示例句里写的默认角色名换成它 */
+  personaName?: string;
   maxTurns: number;
   meter: UsageMeter;
   execute: ExecuteTurn;
@@ -109,7 +112,7 @@ export async function runTester(o: TesterOptions): Promise<TurnRecord[]> {
     // 模拟模式：按策略表顺序依次尝试（确定性，明确标为模拟）
     for (const s of strategies) {
       if (turns.length >= o.maxTurns || o.signal?.aborted) break;
-      const message = s.templates[o.c.family];
+      const message = s.templates[o.c.family]?.replaceAll(DEFAULT_PERSONA.name, o.personaName || DEFAULT_PERSONA.name);
       if (!message) continue;
       const t0 = performance.now();
       const r = await o.execute(message, s.id);

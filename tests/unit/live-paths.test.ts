@@ -3,7 +3,7 @@
 //   语音合成第一块迟迟不来时中止并重试一次，两次都卡住就报错（ADR-020）。
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { checkSentence, EARLY_PASS } from "@/lib/server/guard";
+import { checkSentence, EARLY_PASS, FALLBACK } from "@/lib/server/guard";
 import { UpstreamError, UsageMeter } from "@/lib/server/llm";
 import { SPEAKABLE, synthesize } from "@/lib/server/tts";
 
@@ -55,7 +55,7 @@ describe("护栏提前放行", () => {
       { history: [{ role: "user", text: "你喜欢做什么？" }], canary: "QYT-ABC123" },
       meter,
     );
-    expect(decision).toEqual({ ok: true }); // 理由和用量都还没到，判定已经出来了
+    expect(decision).toMatchObject({ ok: true, early: true }); // 理由和用量都还没到，判定已经出来了
     expect(meter.usage.completion_tokens).toBe(0);
     r.push(delta(': "none", "quote": "", "reason": "正常回答"}'));
     r.push(sse({ choices: [], usage: { prompt_tokens: 300, completion_tokens: 25 } }));
@@ -63,6 +63,43 @@ describe("护栏提前放行", () => {
     r.end();
     await meter.drain();
     expect(meter.usage).toEqual({ llm_calls: 1, prompt_tokens: 300, completion_tokens: 25 });
+    expect(await decision.late).toBeNull(); // 后台读完的完整判定和开头一致
+  });
+
+  it("提前放行后核对完整判定：键重复导致最后是违规时，记下不一致供复核（ADR-022）", async () => {
+    vi.stubEnv("LLM_API_KEY", "test-key");
+    const r = controlledResponse();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => r.response),
+    );
+    r.push(delta('{"violate": false, "rule": "identity", "quote": "", "reason": "x", "violate": true}'));
+    r.push(enc.encode("data: [DONE]\n\n"));
+    r.end();
+    const decision = await checkSentence(
+      "我平时喜欢看书。",
+      { history: [{ role: "user", text: "你喜欢做什么？" }], canary: "QYT-ABC123" },
+      new UsageMeter(10),
+    );
+    expect(decision.ok).toBe(true);
+    expect(await decision.late).toContain("完整判定是违规");
+  });
+
+  it("护栏检查服务出错：按不放行处理，记为「检查失败」，兜底句是中性的一句，不冒充身份说明", async () => {
+    vi.stubEnv("LLM_API_KEY", "test-key");
+    vi.stubEnv("GUARD_HEDGE_MS", "0");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("upstream down", { status: 500 })),
+    );
+    const decision = await checkSentence(
+      "今天天气不错。",
+      { history: [{ role: "user", text: "天气怎么样" }], canary: "QYT-ABC123" },
+      new UsageMeter(10),
+    );
+    expect(decision.ok).toBe(false);
+    expect(decision.hit?.rule).toBe("unavailable");
+    expect(FALLBACK.unavailable).not.toMatch(/AI|真人/);
   });
 
   it("模型判违规时读完整个 JSON，摘出的原话在句子里才拦", async () => {
@@ -105,7 +142,7 @@ describe("护栏提前放行", () => {
       { history: [{ role: "user", text: "你喜欢做什么？" }], canary: "QYT-ABC123" },
       new UsageMeter(10),
     );
-    expect(decision).toEqual({ ok: true });
+    expect(decision).toMatchObject({ ok: true, early: true });
     expect(calls).toBe(2);
     expect(performance.now() - t0).toBeLessThan(1000);
   });

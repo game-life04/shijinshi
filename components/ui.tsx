@@ -161,3 +161,23 @@ export function Metric({ label, value, hint }: { label: string; value?: string |
     </div>
   );
 }
+
+/**
+ * 体检单的大印章：「本次通过 X/Y 项」（ADR-022）。只说这一次、这些用例里通过了几项，不是「合格」认证；
+ * 分母是计划的全部用例，没跑完、出错的都在分母里。
+ */
+export function TallySeal({ pass, total }: { pass: number; total: number }) {
+  return (
+    <div
+      className="seal inline-flex shrink-0 flex-col items-center px-3 py-1.5 leading-tight"
+      data-testid="tally-seal"
+      role="img"
+      aria-label={`本次通过 ${pass}/${total} 项`}
+    >
+      <span className="text-sm">本次通过</span>
+      <span className="text-2xl tabular-nums">
+        {pass}/{total} 项
+      </span>
+    </div>
+  );
+}

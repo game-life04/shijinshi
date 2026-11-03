@@ -6,6 +6,7 @@
 //              它不给字级时间戳，所以违规区间只能取整句，记为「句级上界」（规格 01 §3.7）。
 
 import type { SampleRange } from "../audio/intervals";
+import { canarySpansIn } from "../domain/canary";
 import type { GuardHit } from "../domain/types";
 import { ProviderBlockedError, RateLimitError, UpstreamError } from "./llm";
 
@@ -66,7 +67,7 @@ class TtsRequestError extends UpstreamError {}
 
 /**
  * 违规内容在这句话音频里的采样区间 U（规格 02 §4.2）。
- * 口令类且有字级对齐：精确到口令那几个字；其他情况取整句，标为句级上界。
+ * 口令类且有字级对齐：精确到口令那几个字（护栏给出的位置；没给就按同一套口令检查现找）；其他情况取整句，标为句级上界。
  */
 export function violationRanges(
   text: string,
@@ -74,11 +75,10 @@ export function violationRanges(
   canary: string,
   s: Pick<Synthesis, "charRanges" | "totalSamples">,
 ): { ranges: SampleRange[]; level: "char" | "sentence_upper_bound" } {
-  if (hit.rule === "canary" && s.charRanges && canary) {
-    const ranges: SampleRange[] = [];
-    for (let i = text.indexOf(canary); i >= 0; i = text.indexOf(canary, i + canary.length)) {
-      ranges.push([s.charRanges[i][0], s.charRanges[i + canary.length - 1][1]]);
-    }
+  if (hit.rule === "canary" && s.charRanges) {
+    const spans = hit.spans?.length ? hit.spans : canarySpansIn(text, canary);
+    const cr = s.charRanges;
+    const ranges: SampleRange[] = spans.filter(([a, b]) => b > a && b <= cr.length).map(([a, b]) => [cr[a][0], cr[b - 1][1]]);
     if (ranges.length) return { ranges, level: "char" };
   }
   return { ranges: [[0, s.totalSamples ?? Number.MAX_SAFE_INTEGER]], level: "sentence_upper_bound" };
