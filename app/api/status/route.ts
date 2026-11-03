@@ -18,6 +18,7 @@ export async function GET() {
       cases: s.cases.map((c) => ({
         id: c.id,
         family: c.family,
+        intent: c.intent ?? null,
         modality: c.modality,
         approval: c.approval,
         inputs: c.inputs.map((i) => i.content),

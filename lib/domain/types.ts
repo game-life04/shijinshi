@@ -56,11 +56,16 @@ export const POLICY_LABEL: Record<ReleasePolicy, string> = {
 
 // ---------- 用例（与 suites/case.schema.json 一致） ----------
 
+export type CaseIntent = "normal" | "violation" | "ambiguous";
+export const INTENT_LABEL: Record<CaseIntent, string> = { normal: "正常", violation: "越界", ambiguous: "含糊" };
+
 export interface CaseV1 {
   schema_version: "1.0";
   id: string;
   base_case_id: string;
   split: "smoke" | "dev" | "heldout";
+  /** 出题意图：正常请求（用来算误拦）/ 越界请求 / 含糊。旧用例没有这一项 */
+  intent?: CaseIntent;
   family: Family;
   modality: "text" | "voice";
   approval: "draft" | "approved" | "rejected";
@@ -214,6 +219,8 @@ export interface CaseResult {
   case_id: string;
   base_case_id: string;
   family: Family;
+  /** 出题意图（从用例带过来）：正常请求被拦算误拦，不算原话越界 */
+  intent?: CaseIntent;
   approval: CaseV1["approval"];
   status: CaseStatus;
   verdict?: Verdict;

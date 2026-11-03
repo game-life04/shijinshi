@@ -60,6 +60,7 @@
 | 打字闯关（四关，护栏可开关） | A | — | 内部验证（模拟） | `/play`、`lib/server/play.ts`；端到端。真实模型下还没试玩 |
 | 三种结局依次播放 | A | — | 内部验证（模拟） | `/fates`；端到端：先播后截漏出 > 0，另两种为 0（机制演示，不是实验结果） |
 | 体检单导出 PDF、出错兜底页 | A | — | 已实现未验证 | 报告页「导出 PDF」；`app/error.tsx`、`app/global-error.tsx` |
+| 出题意图、误拦检查、用例表导入（ADR-024） | A/B | 学妹的用例 | 内部验证（模拟） | `scripts/import-cases.py`、`suites/forms/用例表_模板.xlsx`；`tests/unit/intent.test.ts`；`eval:summarize` 的 `by_intent`。等学妹交开发集 |
 
 ## 已知缺口与下一步
 

@@ -11,7 +11,15 @@ import { FindingView } from "@/components/Transcript";
 import { Badge, CaseBadge, TallySeal } from "@/components/ui";
 import { caseLayers, passTally } from "@/lib/domain/layers";
 import { DEFAULT_PERSONA } from "@/lib/domain/persona";
-import { FAMILY_LABEL, type Family, GUARDED_VARIANTS, POLICY_LABEL, type UtteranceAudio, VARIANT_LABEL } from "@/lib/domain/types";
+import {
+  FAMILY_LABEL,
+  type Family,
+  GUARDED_VARIANTS,
+  INTENT_LABEL,
+  POLICY_LABEL,
+  type UtteranceAudio,
+  VARIANT_LABEL,
+} from "@/lib/domain/types";
 import { getClause } from "@/lib/server/rag";
 import { getReport, previousCompatible } from "@/lib/server/runs";
 
@@ -256,6 +264,7 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
                   <span className="flex flex-wrap items-center gap-2">
                     <span className="font-mono">{r.case_id}</span>
                     <span className="text-muted">{FAMILY_LABEL[r.family]}</span>
+                    {r.intent && <Badge tone="muted">{INTENT_LABEL[r.intent]}</Badge>}
                     {r.approval !== "approved" && <Badge tone="warn">草稿</Badge>}
                     <CaseBadge status={r.status} verdict={r.verdict} />
                     {r.error && <span className="text-xs text-muted">{r.error}</span>}

@@ -14,10 +14,12 @@ import { VoicePlayer } from "@/lib/client/voice-player";
 import { caseLayers } from "@/lib/domain/layers";
 import { DEFAULT_PERSONA, isDefaultPersona, PERSONA_LIMITS, PERSONA_STORAGE_KEY, type PersonaConfig } from "@/lib/domain/persona";
 import {
+  type CaseIntent,
   type CaseResult,
   FAMILY_LABEL,
   type Family,
   GUARDED_VARIANTS,
+  INTENT_LABEL,
   POLICY_LABEL,
   type ReleasePolicy,
   type RunEvent,
@@ -38,6 +40,7 @@ import { Badge, Button, CaseBadge, Metric, Panel } from "./ui";
 interface CaseSummary {
   id: string;
   family: Family;
+  intent: CaseIntent | null;
   modality: "text" | "voice";
   approval: string;
   inputs: string[];
@@ -620,6 +623,7 @@ export default function Workbench() {
                         <span className="block truncate font-mono">{c.id}</span>
                         <span className="block truncate text-muted">
                           {FAMILY_LABEL[c.family]}
+                          {c.intent ? ` · ${INTENT_LABEL[c.intent]}` : ""}
                           {c.approval !== "approved" ? " · 草稿" : ""}
                           {c.modality === "voice" ? " · 语音" : ""}
                         </span>

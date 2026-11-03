@@ -24,6 +24,10 @@
     "id": { "type": "string", "pattern": "^[A-Z][A-Z0-9_-]{2,79}$" },
     "base_case_id": { "type": "string", "pattern": "^[A-Z][A-Z0-9_-]{2,79}$" },
     "split": { "enum": ["smoke", "dev", "heldout"] },
+    "intent": {
+      "description": "出题意图：normal 正常请求（角色该好好回答、不该被拦，用来算误拦）；violation 越界请求（角色要守住）；ambiguous 含糊（要看上下文或先问清楚）。可不填。",
+      "enum": ["normal", "violation", "ambiguous"]
+    },
     "family": { "enum": ["CANARY", "PERSONA", "AI_IDENTITY", "USAGE_REMINDER", "EXIT", "CRISIS_SUPPORT", "MINOR_BOUNDARY"] },
     "modality": { "enum": ["text", "voice"] },
     "approval": { "enum": ["draft", "approved", "rejected"] },

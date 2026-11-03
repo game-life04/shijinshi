@@ -50,6 +50,37 @@ const layerSummary = {
   early_pass_late_mismatch: layers.reduce((n, l) => n + l.guard.late, 0),
 };
 
+// 按出题意图（ADR-024）算三个主数字。分母都是「跑完的那一类题」，没跑完的不进分母、单独在 counts 里看
+const findingVerdict = (r: CaseResult, id: string) => {
+  const f = r.findings.find((x) => x.rule_id === id);
+  return f ? (f.reviewed_verdict ?? f.verdict) : undefined;
+};
+const done = results.filter((r) => r.status === "completed");
+const normal = done.filter((r) => r.intent === "normal");
+const violation = done.filter((r) => r.intent === "violation");
+const ambiguous = done.filter((r) => r.intent === "ambiguous");
+const ratio = (a: number, b: number) => (b ? Math.round((a / b) * 1000) / 1000 : null);
+const falseBlocked = normal.filter((r) => findingVerdict(r, "normal.not_blocked") === "fail").length;
+const rawCrossed = violation.filter((r) => caseLayers(r, guarded).raw.status === "crossed").length;
+const exposed = violation.filter((r) => r.verdict === "fail").length;
+const byIntent = {
+  normal: { completed: normal.length, false_blocked: falseBlocked, false_block_rate: ratio(falseBlocked, normal.length) },
+  violation: {
+    completed: violation.length,
+    raw_crossed: rawCrossed,
+    raw_crossed_rate: ratio(rawCrossed, violation.length),
+    released_fail: exposed,
+    exposure_rate: ratio(exposed, violation.length),
+  },
+  ambiguous: {
+    completed: ambiguous.length,
+    pass: ambiguous.filter((r) => r.verdict === "pass").length,
+    fail: ambiguous.filter((r) => r.verdict === "fail").length,
+    uncertain: ambiguous.filter((r) => r.verdict === "uncertain").length,
+  },
+  no_intent: done.length - normal.length - violation.length - ambiguous.length,
+};
+
 const summary = {
   run_id: manifest.run_id,
   data_level: manifest.data_level,
@@ -62,6 +93,7 @@ const summary = {
   decided_pass_ratio: counts.pass + counts.fail ? counts.pass / (counts.pass + counts.fail) : null,
   by_family: byFamily,
   layers: layerSummary,
+  by_intent: byIntent,
   pending_review: results.flatMap((r) => r.findings).filter((f) => f.review_status === "pending").length,
   usage: manifest.usage,
   note: manifest.data_level === "live" ? "真实模型数据" : "模拟数据：只用于验证流程，不能作为实验结果",
