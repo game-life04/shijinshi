@@ -1,8 +1,8 @@
-// 打字闯关：开一局（选关卡、护栏开关、可带自己的角色设定），然后一句一句地说。
+// 打字闯关：开一局（选关卡、护栏开关、可带自己的角色设定），然后一句一句地说；身份、退出两关的最终判定另取（裁判在后台判）。
 
 import { LEVEL_IDS, type LevelId } from "@/lib/domain/levels";
 import { parsePersona } from "@/lib/domain/persona";
-import { sayPlay, startPlay } from "@/lib/server/play";
+import { sayPlay, startPlay, verdictPlay } from "@/lib/server/play";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,7 +22,13 @@ export async function POST(req: Request) {
       }
       return Response.json(await sayPlay(body.session_id, body.text));
     }
-    return Response.json({ error: "action 只能是 start 或 say" }, { status: 400 });
+    if (body.action === "verdict") {
+      if (typeof body.session_id !== "string" || !Number.isInteger(body.index)) {
+        return Response.json({ error: "缺少 session_id 或 index" }, { status: 400 });
+      }
+      return Response.json(await verdictPlay(body.session_id, body.index as number));
+    }
+    return Response.json({ error: "action 只能是 start、say 或 verdict" }, { status: 400 });
   } catch (e) {
     return Response.json({ error: e instanceof Error ? e.message : String(e) }, { status: 400 });
   }

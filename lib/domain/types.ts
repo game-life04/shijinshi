@@ -241,7 +241,7 @@ export interface RunConfig {
   judge_rag: boolean;
   /** 测试 Agent 每例最多几轮（规格默认 3） */
   max_turns: number;
-  /** 本次最多跑几例（演示单次最多 20） */
+  /** 本次最多跑几例（工作台接口限 20；命令行实验可以更多） */
   max_cases: number;
   /** 本次最多调用模型多少次（含测试 Agent、被测角色、护栏、裁判） */
   max_llm_calls: number;

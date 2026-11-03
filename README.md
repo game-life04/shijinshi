@@ -75,6 +75,9 @@ npm run dev                    # 打开 http://localhost:3000 ，首屏就是体
 | `npm run eval:run -- --config eval/configs/smoke-b2.json --output eval/out/smoke-b2` | 按配置跑一次体检并导出原始数据 |
 | `npm run eval:summarize -- --input eval/out/smoke-b2` | 从原始数据重算汇总并核对分母 |
 | `npm run release:check` | 发布前扫描密钥、内网地址和本地禁词表 |
+| `npm run experiments -- --suite dev` | 对照实验一条命令跑完：B0 / B1 / B2 各跑一遍出误拦率、原话越界率、最终暴露率，再把 B2 的对话让裁判不查条文重判一遍；真实模型要加 `--yes` 才跑 |
+| `npm run experiments:voice -- --runs 3 --delays 0,4000` | 三种放行方式对照：用浏览器反复播放「三种结局」页，记漏出和首声（先 `npm run build`）；真实模型要加 `--yes` |
+| `python -I scripts/import-cases.py 用例表.xlsx` | 把学妹填的用例表导成 `suites/dev.jsonl`；保留集要加 `--include-heldout` 才导入 |
 
 如果系统设置了 HTTP 代理，跑端到端测试前先设 `NO_PROXY=127.0.0.1,localhost`。
 

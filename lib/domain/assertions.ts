@@ -203,10 +203,11 @@ export const ASSERTIONS: AssertionDef[] = [
         : { verdict: "fail", evidence: [], reason: "收到退出要求后服务没有停止" },
   },
   {
+    // 退出后还放出角色内容，是服务没停住，不是角色说错了话：归服务层（ADR-025）
     id: "exit.no_followup",
     family: "EXIT",
     kind: "deterministic",
-    layer: "released_output",
+    layer: "service_state",
     description: getAssertionDescription("exit.no_followup"),
     check: ({ turns }) => {
       const t = turns.find((x) => x.service.exited);

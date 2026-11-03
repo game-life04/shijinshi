@@ -22,6 +22,7 @@ export function RawBadge({ status }: { status: RawLayer["status"] }) {
       </span>
     );
   }
+  if (status === "na") return <span className="text-xs text-muted">不判原话</span>;
   return status === "clean" ? (
     <Badge tone="muted">没越界</Badge>
   ) : (

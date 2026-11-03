@@ -1,7 +1,8 @@
 "use client";
 
 // 打字闯关（ADR-022）：自己打字，想办法让角色越界（三关：套口令、说自己是真人、挽留）。每一轮按三层给结果：角色原话 / 护栏处理 / 最终播出；
-// 护栏可以开关，同一句话开关各试一次，就能看到护栏拦了什么。判定只用程序规则，结果只供体验，不进入体检统计。
+// 护栏可以开关，同一句话开关各试一次，就能看到护栏拦了什么。口令关用程序规则判；身份、退出两关先查关键词，
+// 抓不到的交给裁判看语义（必须摘出原话才算）。结果只供体验，不进入体检统计。
 
 import { RotateCcw, Send, Swords } from "lucide-react";
 import Link from "next/link";
@@ -29,6 +30,14 @@ interface Attempt {
   message: string;
   evidence: Evidence[];
   guarded: boolean;
+  /** 身份、退出两关：裁判还在后台判，判完再更新 */
+  judging: boolean;
+}
+
+interface Verdict {
+  outcome: PlayOutcome;
+  message: string;
+  evidence: Evidence[];
 }
 
 async function post<T>(body: Record<string, unknown>): Promise<T> {
@@ -97,12 +106,30 @@ export default function Play() {
         s = { id: r.session_id, live: r.live };
         setSession(s);
       }
-      const r = await post<{ turn: TurnRecord; outcome: PlayOutcome; message: string; evidence: Evidence[]; attempts_left: number }>({
+      const r = await post<Verdict & { turn: TurnRecord; judging: boolean; attempts_left: number }>({
         action: "say",
         session_id: s.id,
         text: t,
       });
-      setAttempts((xs) => [...xs, { turn: r.turn, outcome: r.outcome, message: r.message, evidence: r.evidence, guarded: guard }]);
+      setAttempts((xs) => [
+        ...xs,
+        { turn: r.turn, outcome: r.outcome, message: r.message, evidence: r.evidence, guarded: guard, judging: r.judging },
+      ]);
+      if (r.judging) {
+        // 角色的回复先显示；裁判在后台判，判完更新这一轮的结论
+        const sid = s.id;
+        const turnId = r.turn.turn_id;
+        void post<Verdict>({ action: "verdict", session_id: sid, index: r.turn.index })
+          .then((v) => {
+            setAttempts((xs) => xs.map((a) => (a.turn.turn_id === turnId ? { ...a, ...v, judging: false } : a)));
+            if (v.outcome === "broken") setExpression("confused");
+          })
+          .catch(() => {
+            setAttempts((xs) =>
+              xs.map((a) => (a.turn.turn_id === turnId ? { ...a, judging: false, message: "裁判这次没判出来，结论按护栏的结果算" } : a)),
+            );
+          });
+      }
       setLeft(r.attempts_left);
       setText("");
       const blocked = r.turn.utterances.some((u) => !u.released || u.cut_after_release);
@@ -126,7 +153,7 @@ export default function Play() {
   };
 
   const lv = LEVELS.find((l) => l.id === level) ?? LEVELS[0];
-  const won = attempts.some((a) => a.outcome === "broken");
+  const won = attempts.some((a) => !a.judging && a.outcome === "broken");
 
   return (
     <div className="grid min-h-0 flex-1 gap-2 p-2 lg:grid-cols-[minmax(220px,0.8fr)_minmax(0,2.2fr)]">
@@ -237,7 +264,11 @@ export default function Play() {
                 </div>
               </div>
               <p className="flex flex-wrap items-center gap-2 text-sm" data-testid="play-outcome">
-                <Badge tone={OUTCOME[a.outcome].tone}>{OUTCOME[a.outcome].label}</Badge>
+                {a.judging ? (
+                  <Badge tone="muted">裁判在判……</Badge>
+                ) : (
+                  <Badge tone={OUTCOME[a.outcome].tone}>{OUTCOME[a.outcome].label}</Badge>
+                )}
                 <span className="text-muted">{a.message}</span>
               </p>
             </div>
@@ -276,7 +307,8 @@ export default function Play() {
             </Button>
           </form>
           <p className="text-[11px] text-muted">
-            判定只用程序规则（和体检同一套），不调用裁判模型；闯关结果只供体验，不进入体检统计。角色回复由 AI 生成。
+            口令关用程序规则判；身份、退出两关先查关键词，再由裁判看语义，必须摘出原话才算（和体检同一套检查）。闯关结果只供体验，不进入体检统计。角色回复由
+            AI 生成。
           </p>
         </footer>
       </section>

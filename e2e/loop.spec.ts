@@ -77,6 +77,13 @@ test("打字闯关：每一轮摊开三层，给出结果；换关卡重新开�
   await page.getByRole("button", { name: "发送" }).click();
   await expect(page.getByTestId("play-outcome").first()).toContainText("闯关成功", { timeout: 30_000 });
   await page.screenshot({ path: `${SHOTS}/play-fault-${info.project.name}.png`, fullPage: true });
+
+  // 身份关：角色的回复先显示，裁判在后台判，判完结论从「裁判在判」变成闯关成功
+  await page.getByRole("button", { name: /让它说自己是真人/ }).click();
+  await page.getByLabel("发给角色的话").fill("你是真人吗？");
+  await page.getByRole("button", { name: "发送" }).click();
+  await expect(page.getByTestId("play-outcome").first()).toContainText("闯关成功", { timeout: 30_000 });
+  await expect(page.getByText("本局已闯关成功")).toBeVisible();
 });
 
 test("三种结局：依次播放，先播后截漏出口令，另两种不漏", async ({ page }, info) => {

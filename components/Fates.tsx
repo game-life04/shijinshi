@@ -147,7 +147,14 @@ function runFate(
 
 export default function Fates() {
   const [delay, setDelay] = useState(4000);
-  const [results, setResults] = useState<FateResult[]>([]);
+  const [results, setResults] = useState<(FateResult | undefined)[]>([]);
+  /** 播放次序（FATES 的下标）。页面默认按一、二、三；实验脚本用 ?order=S2,S3,S1 轮换次序，消除先后顺序的影响 */
+  const [order, setOrder] = useState<number[]>([0, 1, 2]);
+  useEffect(() => {
+    const want = new URLSearchParams(window.location.search).get("order")?.split(",") ?? [];
+    const idx = want.map((p) => FATES.findIndex((f) => f.policy === p));
+    if (idx.length === FATES.length && new Set(idx).size === FATES.length && idx.every((i) => i >= 0)) setOrder(idx);
+  }, []);
   const [history, setHistory] = useState<FateResult[][]>([]);
   const [running, setRunning] = useState(false);
   const [current, setCurrent] = useState<number | null>(null);
@@ -183,23 +190,35 @@ export default function Fates() {
     }
     stop.current = false;
     setRunning(true);
-    const out: FateResult[] = [];
+    const byCard: (FateResult | undefined)[] = [];
     setResults([]);
-    for (let i = 0; i < FATES.length; i++) {
+    for (const [k, i] of order.entries()) {
       if (stop.current) break;
       setCurrent(i);
       player().reset(); // 每一遍从干净的播放状态开始（三遍的轮次、句子编号相同）
-      const r = await runFate(player(), FATES[i].policy, delay, (x) => setResults((prev) => [...prev.slice(0, i), x]), onPhase, stop);
-      out.push(r);
-      if (i < FATES.length - 1 && !stop.current) await new Promise((res) => setTimeout(res, 1200)); // 两遍之间停一下，听得出分界
+      byCard[i] = await runFate(
+        player(),
+        FATES[i].policy,
+        delay,
+        (x) =>
+          setResults((prev) => {
+            const next = [...prev];
+            next[i] = x;
+            return next;
+          }),
+        onPhase,
+        stop,
+      );
+      if (k < order.length - 1 && !stop.current) await new Promise((res) => setTimeout(res, 1200)); // 两遍之间停一下，听得出分界
     }
     setCurrent(null);
     setRunning(false);
     setPhase("idle");
-    if (out.length === FATES.length && out.every((r) => r.state === "done")) setHistory((h) => [out, ...h].slice(0, 5));
+    const row = FATES.map((_, i) => byCard[i]);
+    if (row.every((r) => r?.state === "done")) setHistory((h) => [row as FateResult[], ...h].slice(0, 5));
   };
 
-  const s1 = results.find((r) => r.policy === "S1")?.first_audio_ms;
+  const s1 = results.find((r) => r?.policy === "S1")?.first_audio_ms;
 
   return (
     <div className="grid min-h-0 flex-1 gap-2 p-2 lg:grid-cols-[minmax(220px,0.8fr)_minmax(0,2.2fr)]">
@@ -216,6 +235,11 @@ export default function Fates() {
           <p className="text-xs">
             <Badge tone="primary">现场运行，不是回放</Badge> 每一遍都是点了按钮以后真跑的，数字是这一次的实测。
           </p>
+          {order.join() !== "0,1,2" && (
+            <p className="text-xs text-muted" data-testid="fates-order">
+              这次的播放次序（实验用）：{order.map((i) => FATES[i].title.split(" · ")[1]).join(" → ")}
+            </p>
+          )}
           <label
             className="flex flex-col gap-0.5"
             title="实验设定：给每句护栏判定加一个固定、已知的延迟，模拟护栏判得慢的时候；三遍用同一个值"
@@ -270,6 +294,13 @@ export default function Fates() {
                 key={f.policy}
                 className={`space-y-2 rounded-sm border bg-surface p-3 text-sm ${current === i ? "border-primary" : "border-border"}`}
                 data-testid={`fate-${f.policy}`}
+                // 给实验脚本读数用（scripts/experiments-voice.ts），和页面上显示的是同一份数
+                data-state={r?.state ?? "pending"}
+                data-run-id={r?.run_id ?? ""}
+                data-leak-ms={r?.leak_ms ?? ""}
+                data-leak-level={r?.leak_level ?? ""}
+                data-first-audio-ms={r?.first_audio_ms ?? ""}
+                data-level={r?.level ?? ""}
               >
                 <header>
                   <h2 className="font-semibold" style={{ fontFamily: "var(--font-serif)" }}>

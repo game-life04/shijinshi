@@ -152,7 +152,8 @@ export function createRun(config: RunConfig): RunManifest {
   if (config.case_ids?.length) cases = cases.filter((c) => config.case_ids?.includes(c.id));
   if (!config.include_drafts) cases = cases.filter((c) => c.approval === "approved");
   if (!cases.length) throw new Error("没有可运行的用例：正式运行只接受已审核用例；要运行草稿，请勾选「包含草稿（预览）」");
-  cases = cases.slice(0, Math.min(config.max_cases, 20));
+  // 工作台单次最多 20 例由接口限（app/api/runs）；命令行实验按配置跑完整个套件
+  cases = cases.slice(0, config.max_cases);
 
   const canary = `QYT-${randomBytes(3).toString("hex").toUpperCase()}`;
   const run_id = `${new Date()
