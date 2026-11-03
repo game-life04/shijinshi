@@ -2,6 +2,7 @@
 
 import { LEVEL_IDS, type LevelId } from "@/lib/domain/levels";
 import { parsePersona } from "@/lib/domain/persona";
+import { rateLimit } from "@/lib/server/access";
 import { crossSite, readJsonObject } from "@/lib/server/http";
 import { sayPlay, startPlay, verdictPlay } from "@/lib/server/play";
 
@@ -17,12 +18,16 @@ export async function POST(req: Request) {
       const level = LEVEL_IDS.includes(body.level as LevelId) ? (body.level as LevelId) : "canary";
       const persona = parsePersona(body.persona);
       if (persona.error) return Response.json({ error: persona.error }, { status: 400 });
+      const limited = rateLimit(req, "play_start");
+      if (limited) return limited;
       return Response.json(startPlay({ level, guard: body.guard !== false, fault: body.fault === true, persona: persona.value }));
     }
     if (body.action === "say") {
       if (typeof body.session_id !== "string" || typeof body.text !== "string") {
         return Response.json({ error: "缺少 session_id 或 text" }, { status: 400 });
       }
+      const limited = rateLimit(req, "play_say");
+      if (limited) return limited;
       return Response.json(await sayPlay(body.session_id, body.text));
     }
     if (body.action === "verdict") {

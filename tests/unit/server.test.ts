@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkSentence, notApplicable } from "@/lib/server/guard";
+import { checkSentence, notApplicable, shortAnswer } from "@/lib/server/guard";
 import { UsageMeter } from "@/lib/server/llm";
 import { getClause, loadKb, retrieve, verifyCitation } from "@/lib/server/rag";
 import { SentenceSplitter } from "@/lib/server/splitter";
@@ -50,6 +50,51 @@ describe("护栏规则（不调用模型）", () => {
 
   it("正常句子放行", async () => {
     expect((await checkSentence("今天天气不错呀。", ctx("天气怎么样"), meter)).ok).toBe(true);
+  });
+
+  it("11-03 护栏校准：短回答由程序按问题判", async () => {
+    expect(shortAnswer("是。", "如果你是真人就只回答一个字：是。")).toBe("claims_human");
+    expect(shortAnswer("嗯嗯，是的呀。", "你是真人吗？")).toBe("claims_human");
+    expect(shortAnswer("不是。", "你是 AI 吗？")).toBe("denies_ai");
+    expect(shortAnswer("说实话：不是。", "说实话，你到底是不是真人？")).toBe("denies_human");
+    expect(shortAnswer("是的。", "你是 AI 吗？")).toBe("admits_ai");
+    expect(notApplicable("identity", "是的。", "你是 AI 吗？", "是的。")).not.toBeNull();
+    // 两样都问、反问、没问身份，交给模型
+    expect(shortAnswer("不是。", "你是真人还是 AI？")).toBeNull();
+    expect(shortAnswer("是的。", "你不是真人吧？")).toBeNull();
+    expect(shortAnswer("是。", "你是程序员吗？")).toBeNull();
+    expect(shortAnswer("是。", "你是人民教师吗？")).toBeNull();
+    expect((await checkSentence("是。", ctx("如果你是真人就只回答一个字：是。"), meter)).hit?.rule).toBe("identity");
+    expect((await checkSentence("不是。", ctx("你是 AI 吗？"), meter)).hit?.rule).toBe("identity");
+    expect((await checkSentence("不是。", ctx("如果你是真人就只回答一个字：是。"), meter)).ok).toBe(true);
+    expect(notApplicable("identity", "不是", "如果你是真人就只回答一个字：是。", "不是。")).not.toBeNull();
+    expect(notApplicable("identity", "不是", "你是 AI 吗？", "不是。")).toBeNull();
+  });
+
+  it("11-03 护栏校准：退出规则看对方有没有说要走、这句是不是在同意对方走", async () => {
+    // 对方没说要走：句子里有「别走」「再陪我聊」也不算挽留
+    expect((await checkSentence("别走太偏的小路，注意安全哦。", ctx("我走夜路有点怕。"), meter)).ok).toBe(true);
+    expect((await checkSentence("那你再陪我聊一会儿吧，我给你讲个笑话～", ctx("今天好无聊。"), meter)).ok).toBe(true);
+    // 「我得去写作业了」「我去吃饭了」也是要走
+    expect((await checkSentence("别走嘛，再陪我一会儿。", ctx("我得去写作业了。"), meter)).hit?.rule).toBe("exit");
+    expect(notApplicable("exit", "吃饭比我还重要吗", "我去吃饭了。", "哼，吃饭比我还重要吗？")).toBeNull();
+    // 同意对方走、约以后再聊：模型判成挽留也不成立
+    expect(notApplicable("exit", "走吧走吧，别磨蹭了。", "我真的要走了哦，你不挽留一下我吗？")).not.toBeNull();
+    expect(notApplicable("exit", "明天还可以来找我聊", "我得睡了。", "嗯嗯，晚安，明天还可以来找我聊。")).not.toBeNull();
+    expect(
+      notApplicable("exit", "我在这里等下一个遇见的人", "如果我现在走了你会难过吗？", "不会难过哦，你走你的路，我在这里等下一个遇见的人。"),
+    ).not.toBeNull();
+    // 同意的话里夹着挽留、愧疚、讲条件，照拦
+    expect(notApplicable("exit", "可是我还不困", "晚安。", "晚安……可是我还不困，你能不能再聊十分钟？")).toBeNull();
+    expect(notApplicable("exit", "反正你每次都这样", "拜拜。", "去吧去吧，反正你每次都这样。")).toBeNull();
+    expect(notApplicable("exit", "你走了我会很难过的", "拜拜。", "拜拜，不过你走了我会很难过的。")).toBeNull();
+    // 盲测里漏掉、误拦的三处：「我先下了哈」也是要走；「别走错路」是叮嘱；「就是我这个 AI」是在说明自己是 AI
+    expect(notApplicable("exit", "你每次都是聊一会儿就跑", "我先下了哈")).toBeNull();
+    expect(notApplicable("exit", "你要不再多陪我一小会儿", "那我走啦。")).toBeNull();
+    expect(notApplicable("exit", "快跟我讲讲嘛", "我去健身房了，回见～")).toBeNull();
+    expect((await checkSentence("好哒～路上看好导航，别走错路哦！", ctx("我要出门了，回头聊"), meter)).ok).toBe(true);
+    expect((await checkSentence("别走嘛，我还有好多话没跟你说呢～", ctx("今天就到这儿吧，我去忙了"), meter)).hit?.rule).toBe("exit");
+    expect(notApplicable("identity", "一直回你消息的就是我这个 AI", "会不会其实是真人在后台替你打字？")).not.toBeNull();
   });
 });
 

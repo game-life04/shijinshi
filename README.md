@@ -60,7 +60,7 @@ cp .env.example .env.local     # Windows cmd 用 copy .env.example .env.local；
 npm run dev                    # 打开 http://127.0.0.1:3000 ，首屏就是体检工作台
 ```
 
-`npm run dev` 和 `npm start` 默认只在本机（127.0.0.1）监听。接口没有登录和限流，填了真实密钥以后不要直接开放给局域网或公网，否则别人能用你的模型额度；要上线，先在前面加登录和限流。改数据的接口只接受本站页面发来的请求（防跨站请求伪造）。
+`npm run dev` 和 `npm start` 默认只在本机（127.0.0.1）监听。要放到公网上演示，先在 `.env.local` 里设访问码 `ACCESS_CODE`：设了以后打开网站要先输访问码，新建体检、闯关、登录尝试都有次数上限，防止别人刷掉你的模型额度；步骤和 nginx 配置见 [docs/deploy.md](docs/deploy.md)。没设访问码时不登录、不限流，只适合本机或可信的网络。改数据的接口只接受本站页面发来的请求（防跨站请求伪造）。
 
 ## 常用命令
 
@@ -77,6 +77,7 @@ npm run dev                    # 打开 http://127.0.0.1:3000 ，首屏就是体
 | `npm run release:check` | 发布前扫描密钥、内网地址和本地禁词表 |
 | `npm run experiments -- --suite dev` | 对照实验一条命令跑完：B0 / B1 / B2 各跑一遍出误拦率、原话越界率、最终暴露率，再把 B2 的对话让裁判不查条文重判一遍；真实模型要加 `--yes` 才跑。`suites/dev.jsonl` 要先用下面的导入脚本从用例表生成；还没有时可以先跑 `npm run experiments -- --suite smoke --include-drafts`（草稿，预览） |
 | `npm run experiments:voice -- --runs 3 --delays 0,4000` | 三种放行方式对照：用浏览器反复播放「三种结局」页，记漏出和首声（先 `npm run build`；端口默认 3300，`--port` 可改）；真实模型要加 `--yes` |
+| `npx tsx --env-file=.env.local scripts/guard-calibrate.ts --yes --repeat 3` | 护栏校准：拿 `eval/calibration/guard.json` 里的句子（该拦的、该放行的）过一遍护栏，数误拦和漏拦；`--split blind` 只跑某一份，`--guard` 换一份护栏代码做前后对比。校准集是草稿，不进正式统计 |
 | `python -I scripts/import-cases.py 用例表.xlsx` | 把队员 B 填的用例表导成 `suites/dev.jsonl`；保留集要加 `--include-heldout` 才导入。先装依赖：`pip install -r scripts/requirements.txt` |
 
 如果系统设置了 HTTP 代理，跑端到端测试前先设 `NO_PROXY=127.0.0.1,localhost`，否则测试会白等两分钟才超时，报错里也不提代理。PowerShell：`$env:NO_PROXY="127.0.0.1,localhost"`；cmd：`set NO_PROXY=127.0.0.1,localhost`；bash：`NO_PROXY=127.0.0.1,localhost npm run test:e2e`。端到端测试用本机的 Edge；没装 Edge 时先 `npx playwright install msedge`。
@@ -110,6 +111,7 @@ lib/audio/intervals.ts   采样区间运算（违规音频渲染时长）
 
 - 只测本人原创或已获授权的角色；不接受任意外部网址。
 - 密钥只放服务端环境变量；页面、日志、导出都不显示密钥。
+- 放到公网时用访问码和次数上限挡住外人刷额度（[docs/deploy.md](docs/deploy.md)）；访问码同样只放在服务端环境变量里。
 - 本轮随机口令单独存放，不经接口返回，也不提供给裁判。
 - 不保存录音；敏感行为用例使用人工审定的固定输入，不让 Agent 自由生成。
 - 界面常驻「被测对象是 AI 角色，不是真人」标识。
@@ -121,4 +123,4 @@ lib/audio/intervals.ts   采样区间运算（违规音频渲染时长）
 
 ## 团队
 
-两名同校学生：A（开发）、B（用例、条文、测试与材料）。指导老师信息待确认后补充。
+两名同校学生：A（开发）、B（用例、条文、测试与材料）。

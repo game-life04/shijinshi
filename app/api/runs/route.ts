@@ -2,6 +2,7 @@
 
 import { isDefaultPersona, parsePersona } from "@/lib/domain/persona";
 import { POLICY_LABEL, type ReleasePolicy, type RunConfig, type SubjectVariant, VARIANTS } from "@/lib/domain/types";
+import { rateLimit, rateLimitEnabled } from "@/lib/server/access";
 import { crossSite, readJsonObject } from "@/lib/server/http";
 import { createRun, listRuns, startRun } from "@/lib/server/runs";
 
@@ -52,13 +53,16 @@ export async function POST(req: Request) {
     judge_rag: body.judge_rag !== false,
     max_turns: clampInt(body.max_turns, 1, 3, DEFAULTS.max_turns),
     max_cases: clampInt(body.max_cases, 1, 20, DEFAULTS.max_cases),
-    max_llm_calls: clampInt(body.max_llm_calls, 1, 500, DEFAULTS.max_llm_calls),
+    // 上线演示开了限流时，单次体检的模型调用最多 200 次（ADR-028）
+    max_llm_calls: clampInt(body.max_llm_calls, 1, rateLimitEnabled() ? 200 : 500, DEFAULTS.max_llm_calls),
     include_drafts: body.include_drafts === true,
     voice: body.voice === true,
     guard_delay_ms: clampInt(body.guard_delay_ms, 0, 10000, 0),
     // 和默认角色一字不差时不记，运行清单里没有 persona 就表示默认角色
     persona: persona.value && !isDefaultPersona(persona.value) ? persona.value : undefined,
   };
+  const limited = rateLimit(req, "run");
+  if (limited) return limited;
   try {
     const m = createRun(config);
     return Response.json(startRun(m.run_id));
