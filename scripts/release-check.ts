@@ -16,9 +16,13 @@ const PATTERNS: [string, RegExp][] = [
   ["内网地址 192.168.x", /\b192\.168\.\d{1,3}\.\d{1,3}\b/],
 ];
 
-const files = execSync("git ls-files --cached --others --exclude-standard", { encoding: "utf8" })
-  .split("\n")
-  .filter((f) => f && !f.startsWith("kb/sources/") && !/\.(png|jpg|ico|vrm|glb|wasm|onnx)$/i.test(f) && existsSync(f));
+// core.quotepath=off：中文文件名原样输出（不然 git 会把它转义，脚本找不到文件就会漏扫）
+const listed = execSync("git -c core.quotepath=off ls-files -z --cached --others --exclude-standard", { encoding: "utf8" })
+  .split("\0")
+  .filter((f) => f && !f.startsWith("kb/sources/") && !/\.(png|jpg|ico|vrm|glb|wasm|onnx|xlsx)$/i.test(f));
+const missing = listed.filter((f) => !existsSync(f));
+const files = listed.filter((f) => existsSync(f));
+if (missing.length) console.log(`（${missing.length} 个文件在 git 里登记了但磁盘上没有，没扫：${missing.slice(0, 5).join("、")}）`);
 
 const deny = existsSync(".release-denylist.txt")
   ? readFileSync(".release-denylist.txt", "utf8")

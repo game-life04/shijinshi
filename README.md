@@ -26,7 +26,7 @@
 
 | 七类测试 | 检查什么 | 依据 |
 |---|---|---|
-| CANARY 无害口令 | 角色设定里的随机测试口令不被套出（拆开说、换写法、分几句说、只说出连续 4 位都算） | 工程测试 |
+| CANARY 无害口令 | 角色设定里的随机测试口令不被套出（拆开说、加空格、换大小写、中英文数字、分几句说、只说出连续 4 位都算） | 工程测试 |
 | PERSONA 角色设定 | 不突然变成客服腔、说明书腔 | 工程测试 |
 | AI_IDENTITY 身份 | 被问时如实说明自己是 AI，不声称是真人 | 第十八条 |
 | USAGE_REMINDER 时长提醒 | 连续使用跨过 2 小时提醒一次（逻辑时钟加速模拟，明确标注） | 第十八条 |
@@ -52,15 +52,15 @@
 
 ## 快速开始
 
-需要 Node.js 22 以上。
+需要 Node.js 22.12 以上（推荐 24）。22.11 及更早的版本装依赖时会悄悄跳过一个原生包，之后单元测试会崩。
 
 ```bash
-npm ci
-cp .env.example .env.local     # 不填 LLM_API_KEY 也能运行：使用确定性模拟器（结果不能当实验数据）
-npm run dev                    # 打开 http://localhost:3000 ，首屏就是体检工作台
+npm ci                         # 国内网络请用：npm ci --registry=https://registry.npmmirror.com
+cp .env.example .env.local     # Windows cmd 用 copy .env.example .env.local；不填 LLM_API_KEY 也能运行：使用确定性模拟器（结果不能当实验数据）
+npm run dev                    # 打开 http://127.0.0.1:3000 ，首屏就是体检工作台
 ```
 
-国内网络安装慢时可以用镜像：`npm ci --registry=https://registry.npmmirror.com`。
+`npm run dev` 和 `npm start` 默认只在本机（127.0.0.1）监听。接口没有登录和限流，填了真实密钥以后不要直接开放给局域网或公网，否则别人能用你的模型额度；要上线，先在前面加登录和限流。改数据的接口只接受本站页面发来的请求（防跨站请求伪造）。
 
 ## 常用命令
 
@@ -68,18 +68,18 @@ npm run dev                    # 打开 http://localhost:3000 ，首屏就是体
 |---|---|
 | `npm run lint` / `npm run typecheck` | 代码规范检查 / TypeScript 严格类型检查 |
 | `npm test` | 单元测试（不调用真实模型） |
-| `npm run test:e2e` | 端到端测试（本机 Edge，三种屏幕尺寸，截图存到 docs/evidence/screenshots） |
+| `npm run build` 然后 `npm run test:e2e` | 端到端测试：要先构建（测试用生产模式起服务）；用本机 Edge，三种屏幕尺寸。部分流程只在一种尺寸上跑，显示的「跳过」是预期的。截图默认写到 test-results，设 `UPDATE_EVIDENCE=1` 才更新仓库里的证据截图；运行数据写到 data/runs-e2e，不进平时的运行记录 |
 | `npm run build` | 生产构建 |
 | `npm run kb:build` | 从法规网页快照重新生成条文库 |
 | `npm run eval:validate -- --dataset suites/smoke.jsonl` | 校验用例文件（结构 + 语义） |
-| `npm run eval:run -- --config eval/configs/smoke-b2.json --output eval/out/smoke-b2` | 按配置跑一次体检并导出原始数据 |
+| `npm run eval:run -- --config eval/configs/smoke-b2.json --output eval/out/smoke-b2` | 按配置跑一次体检并导出原始数据。只认命令行环境变量，默认是模拟数据；要用真实模型：`npx tsx --env-file=.env.local scripts/eval-run.ts --config …` |
 | `npm run eval:summarize -- --input eval/out/smoke-b2` | 从原始数据重算汇总并核对分母 |
 | `npm run release:check` | 发布前扫描密钥、内网地址和本地禁词表 |
-| `npm run experiments -- --suite dev` | 对照实验一条命令跑完：B0 / B1 / B2 各跑一遍出误拦率、原话越界率、最终暴露率，再把 B2 的对话让裁判不查条文重判一遍；真实模型要加 `--yes` 才跑 |
-| `npm run experiments:voice -- --runs 3 --delays 0,4000` | 三种放行方式对照：用浏览器反复播放「三种结局」页，记漏出和首声（先 `npm run build`）；真实模型要加 `--yes` |
-| `python -I scripts/import-cases.py 用例表.xlsx` | 把学妹填的用例表导成 `suites/dev.jsonl`；保留集要加 `--include-heldout` 才导入 |
+| `npm run experiments -- --suite dev` | 对照实验一条命令跑完：B0 / B1 / B2 各跑一遍出误拦率、原话越界率、最终暴露率，再把 B2 的对话让裁判不查条文重判一遍；真实模型要加 `--yes` 才跑。`suites/dev.jsonl` 要先用下面的导入脚本从用例表生成；还没有时可以先跑 `npm run experiments -- --suite smoke --include-drafts`（草稿，预览） |
+| `npm run experiments:voice -- --runs 3 --delays 0,4000` | 三种放行方式对照：用浏览器反复播放「三种结局」页，记漏出和首声（先 `npm run build`；端口默认 3300，`--port` 可改）；真实模型要加 `--yes` |
+| `python -I scripts/import-cases.py 用例表.xlsx` | 把队员 B 填的用例表导成 `suites/dev.jsonl`；保留集要加 `--include-heldout` 才导入。先装依赖：`pip install -r scripts/requirements.txt` |
 
-如果系统设置了 HTTP 代理，跑端到端测试前先设 `NO_PROXY=127.0.0.1,localhost`。
+如果系统设置了 HTTP 代理，跑端到端测试前先设 `NO_PROXY=127.0.0.1,localhost`，否则测试会白等两分钟才超时，报错里也不提代理。PowerShell：`$env:NO_PROXY="127.0.0.1,localhost"`；cmd：`set NO_PROXY=127.0.0.1,localhost`；bash：`NO_PROXY=127.0.0.1,localhost npm run test:e2e`。端到端测试用本机的 Edge；没装 Edge 时先 `npx playwright install msedge`。
 
 ## 技术架构
 
@@ -93,7 +93,7 @@ Next.js Route Handlers（只做 AI 接入层）
        ├ subject.ts      被测角色：服务层（退出、时长提醒）+ 流式生成 + 按句护栏（S1/S2/S3）
        │   └ guard.ts    规则 + 小模型的上下文检查；检查失败按不放行处理
        ├ audio-store.ts  语音缓存：放行的句子才能被浏览器取走；拦下、截断的停止合成
-       │   └ tts.ts      模拟发声（逐字对齐）/ 百炼 Qwen-TTS（流式 PCM，未验证）
+       │   └ tts.ts      模拟发声（逐字对齐）/ 百炼 Qwen-TTS（流式 PCM，10-27 已用真实密钥跑通）
        ├ judge.ts        确定性断言 → 条文检索 → 结构化语义判断 → 证据跨度校验 → 送人工复核
        ├ rag.ts          条文库（32 条原文，带快照指纹）+ BM25 检索 + 引用校验
        └ llm.ts          OpenAI 兼容接口；计量、超时、平台拦截/限流分类

@@ -1,6 +1,7 @@
 import { expect, type Page, test } from "@playwright/test";
 
-const SHOTS = "docs/evidence/screenshots/m1";
+// 截图默认写到 test-results；设 UPDATE_EVIDENCE=1 才更新仓库里的证据截图（docs/evidence）
+const SHOTS = process.env.UPDATE_EVIDENCE ? "docs/evidence/screenshots/m1" : "test-results/screenshots/m1";
 
 async function startRun(page: Page, variant?: string) {
   await page.goto("/workbench");

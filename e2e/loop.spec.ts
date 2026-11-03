@@ -2,7 +2,8 @@ import { expect, test } from "@playwright/test";
 
 // 开发者闭环（ADR-022）：带自己的人设和边界 → 跑体检 → 改一处 → 再测 → 前后对比；打字闯关；三种结局依次播放。
 // 全部在模拟模式下跑：数字只说明流程和机制，不是实验结果。
-const SHOTS = "docs/evidence/screenshots/m3";
+// 截图默认写到 test-results；设 UPDATE_EVIDENCE=1 才更新仓库里的证据截图（docs/evidence）
+const SHOTS = process.env.UPDATE_EVIDENCE ? "docs/evidence/screenshots/m3" : "test-results/screenshots/m3";
 
 test("改一处再测：改边界提示后再跑一遍，前后对比页标出改了什么", async ({ page }, info) => {
   test.skip(info.project.name !== "desktop-1440", "闭环流程只在桌面尺寸上跑一次");

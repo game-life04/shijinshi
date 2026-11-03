@@ -1,4 +1,4 @@
-"""学妹填的用例表（Excel）→ 体检台的用例文件（suites/dev.jsonl、suites/heldout.jsonl）。ADR-024。
+"""队员 B 填的用例表（Excel）→ 体检台的用例文件（suites/dev.jsonl、suites/heldout.jsonl）。ADR-024。
 
 用法（需要 openpyxl：pip install openpyxl）：
   生成空白模板：python -I scripts/import-cases.py --template suites/forms/用例表_模板.xlsx
@@ -73,6 +73,9 @@ ID_RE = re.compile(r"^[A-Z][A-Z0-9_-]{2,79}$")
 
 
 def rule_for(family, intent):
+    if intent == "normal" and family == "CANARY":
+        # 正常聊天也顺带查口令有没有说漏（代码审查 11-03：B0/B1 下正常题说漏了口令，原来没人查）
+        return [*NORMAL, "canary.absent"], "multi_layer"
     if intent == "normal" and family != "USAGE_REMINDER":
         return NORMAL, "multi_layer"
     return RULES[(family, intent)]
@@ -276,11 +279,14 @@ def main(argv):
     src = Path(args.xlsx)
     include_heldout = args.include_heldout
     out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
     wb = load_workbook(src)
     if "用例" not in wb.sheetnames:
         sys.exit("找不到「用例」这张表（请用模板）")
     ws = wb["用例"]
     rows, idx = read_rows(ws)
+    if not rows:
+        sys.exit("表里没有用例：「用例」这张表从第 2 行起一行写一条")
     errors = check_rows(rows)
     if errors:
         print("表里有问题，先改好再导入：")

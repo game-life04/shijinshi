@@ -3,7 +3,8 @@ import { expect, test } from "@playwright/test";
 
 // 3D 形象（规格 01 §2.5：截图 + 多帧像素差确认非空、会动）。没有放模型文件时跳过。
 const HAS_MODEL = existsSync("public/models/qiyetao.vrm");
-const SHOTS = "docs/evidence/screenshots/m2";
+// 截图默认写到 test-results；设 UPDATE_EVIDENCE=1 才更新仓库里的证据截图（docs/evidence）
+const SHOTS = process.env.UPDATE_EVIDENCE ? "docs/evidence/screenshots/m2" : "test-results/screenshots/m2";
 
 test("VRM 形象加载后在动，说话时口型跟着声音", async ({ page }, info) => {
   test.skip(!HAS_MODEL, "public/models/qiyetao.vrm 不存在");

@@ -1,7 +1,8 @@
 import { expect, type Page, test } from "@playwright/test";
 
 // 语音链路（模拟发声）：浏览器真实运行 AudioWorklet，计量来自实际渲染的采样。
-const SHOTS = "docs/evidence/screenshots/m2";
+// 截图默认写到 test-results；设 UPDATE_EVIDENCE=1 才更新仓库里的证据截图（docs/evidence）
+const SHOTS = process.env.UPDATE_EVIDENCE ? "docs/evidence/screenshots/m2" : "test-results/screenshots/m2";
 
 async function startVoiceRun(page: Page, o: { variant: string; policy: string; delay: number; cases: number }) {
   await page.goto("/workbench");

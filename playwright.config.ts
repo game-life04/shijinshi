@@ -20,6 +20,7 @@ export default defineConfig({
     url: "http://127.0.0.1:3100/workbench",
     reuseExistingServer: false,
     timeout: 120_000,
-    env: { LLM_API_KEY: "" },
+    // 运行数据写到 data/runs-e2e，不进平时的「运行记录」
+    env: { LLM_API_KEY: "", SHIJINSHI_RUNS_SUBDIR: "runs-e2e" },
   },
 });
