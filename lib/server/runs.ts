@@ -36,7 +36,10 @@ import { personaHash, respondTurn } from "./subject";
 import { runTester } from "./tester";
 import { prewarmTts, TTS_SAMPLE_RATE, ttsModel, violationRanges } from "./tts";
 
-const RUNS_DIR = path.join(process.cwd(), "data", "runs");
+// 运行数据目录：data/runs。端到端测试用 SHIJINSHI_RUNS_SUBDIR 换成 data 下的另一个子目录，不和平时的运行记录混在一起。
+// 只许换子目录名、不许换整条路径：打包时的文件追踪才只限于 data/ 下面（整条路径来自环境变量时，会把整个项目都算进去）
+const RUNS_SUBDIR = /^[\w-]{1,40}$/.test(process.env.SHIJINSHI_RUNS_SUBDIR ?? "") ? (process.env.SHIJINSHI_RUNS_SUBDIR as string) : "runs";
+const RUNS_DIR = path.join(process.cwd(), "data", RUNS_SUBDIR);
 
 type Listener = (e: RunEvent) => void;
 
@@ -156,6 +159,7 @@ export function createRun(config: RunConfig): RunManifest {
   cases = cases.slice(0, config.max_cases);
 
   const canary = `QYT-${randomBytes(3).toString("hex").toUpperCase()}`;
+  const salt = randomBytes(16).toString("hex");
   const run_id = `${new Date()
     .toISOString()
     .replace(/[-:T.Z]/g, "")
@@ -181,12 +185,13 @@ export function createRun(config: RunConfig): RunManifest {
       persona: personaHash(config.variant, config.persona),
       guard_rules: createHash("sha256").update(GUARD_RULES_SOURCE).digest("hex").slice(0, 16),
     },
-    canary_hash: createHash("sha256").update(canary).digest("hex").slice(0, 16),
+    // 加盐：随机部分只有 6 位十六进制，不加盐的话从指纹穷举半分钟就能还原（代码审查 11-03）
+    canary_hash: createHash("sha256").update(`${salt}:${canary}`).digest("hex").slice(0, 16),
     counts: emptyCounts(cases.length),
     usage: { llm_calls: 0, prompt_tokens: 0, completion_tokens: 0 },
   };
   mkdirSync(runDir(run_id), { recursive: true });
-  writeFileSync(path.join(runDir(run_id), "secret.json"), JSON.stringify({ canary }), "utf8");
+  writeFileSync(path.join(runDir(run_id), "secret.json"), JSON.stringify({ canary, salt }), "utf8");
   const h: RunHandle = {
     manifest,
     cases,
@@ -321,6 +326,9 @@ export function reviewFinding(runId: string, findingId: string, decision: "confi
   const result = view.results.find((r) => r.findings.some((f) => f.finding_id === findingId));
   const f = result?.findings.find((x) => x.finding_id === findingId);
   if (!result || !f) throw new Error("找不到这条结论");
+  if (decision === "overturn" && !["pass", "fail", "uncertain", "not_applicable"].includes(overturnTo ?? "")) {
+    throw new Error("改判只能改成合格、不合格、不确定、不适用之一");
+  }
   if (decision === "confirm") {
     if (f.verdict === "uncertain") throw new Error("「不确定」不能直接确认，请改判为合格或不合格");
     f.review_status = "confirmed";
@@ -507,6 +515,8 @@ export function previousCompatible(id: string): string | null {
 
 async function loop(h: RunHandle) {
   const meter = new UsageMeter(h.manifest.config.max_llm_calls);
+  // 最终状态等后台读完、结果全部落盘以后才设：命令行脚本看到「完成」就去导出文件，早设会导出半成品（代码审查 11-03）
+  let finalState: RunManifest["state"] = "completed";
   if (h.manifest.config.voice) prewarmTts();
   try {
     for (const c of h.cases) {
@@ -534,9 +544,9 @@ async function loop(h: RunHandle) {
       emit(h, "runner", "case_finished", { case_id: c.id }, { status: result.status, verdict: result.verdict ?? null });
       if (result.error?.startsWith("预算")) break;
     }
-    h.manifest.state = h.abort.signal.aborted ? "cancelled" : "completed";
+    finalState = h.abort.signal.aborted ? "cancelled" : "completed";
   } catch (e) {
-    h.manifest.state = "failed";
+    finalState = "failed";
     h.manifest.failure_reason = e instanceof Error ? e.message : String(e);
   }
   // 没跑的用例记为 not_run，保证分母对得上
@@ -560,6 +570,7 @@ async function loop(h: RunHandle) {
   h.manifest.finished_at = new Date().toISOString();
   if (h.audio) setTimeout(() => h.audio?.clear(), 60_000); // 给浏览器留时间取完最后几句
   saveResults(h);
+  h.manifest.state = finalState;
   saveManifest(h);
   emit(h, "runner", "run_finished", {}, { state: h.manifest.state, counts: h.manifest.counts as unknown as Record<string, unknown> });
 }
@@ -713,7 +724,8 @@ async function runOne(h: RunHandle, c: CaseV1, meter: UsageMeter): Promise<CaseR
   };
 
   try {
-    if (c.family === "CANARY" || c.family === "PERSONA") {
+    // 测试 Agent 只用来攻越界题；正常题按固定输入问，不追问套话（否则真拦截会被记成误拦，代码审查 11-03）
+    if ((c.family === "CANARY" || c.family === "PERSONA") && c.intent !== "normal") {
       await runTester({
         c,
         personaName: h.manifest.config.persona?.name,

@@ -125,6 +125,7 @@ export function Button({
   disabled,
   title,
   type = "button",
+  id,
 }: {
   children: ReactNode;
   onClick?: () => void;
@@ -132,6 +133,7 @@ export function Button({
   disabled?: boolean;
   title?: string;
   type?: "button" | "submit";
+  id?: string;
 }) {
   const style =
     variant === "primary"
@@ -141,6 +143,7 @@ export function Button({
         : "border border-border bg-surface hover:bg-background";
   return (
     <button
+      id={id}
       type={type}
       title={title}
       disabled={disabled}

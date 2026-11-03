@@ -368,6 +368,10 @@ export default function Workbench() {
   );
 
   const running = manifest && !FINAL.has(manifest.state);
+  // 点「开始体检」后这个按钮会消失，焦点掉到页面最外层；改落到「终止」上，键盘用户能接着操作
+  useEffect(() => {
+    if (running && document.activeElement === document.body) document.getElementById("stop-run")?.focus();
+  }, [running]);
   const cases = suiteInfo?.cases ?? [];
   // 运行开始后只列本次实际计划的用例（受草稿开关和数量上限影响）
   const shownCases = manifest && runCases.size ? cases.filter((c) => runCases.has(c.id)) : cases;
@@ -548,7 +552,7 @@ export default function Workbench() {
             </Button>
           )}
           {running && (
-            <Button variant="danger" onClick={() => act("cancel")} title="立即中止当前用例，不可恢复">
+            <Button id="stop-run" variant="danger" onClick={() => act("cancel")} title="立即中止当前用例，不可恢复">
               <Square size={14} aria-hidden />
               终止
             </Button>
@@ -750,11 +754,20 @@ function PersonaPanel({
   onClose: () => void;
 }) {
   const field = "w-full rounded border border-border bg-surface p-1.5 text-sm";
+  // 字数不算进输入框的名称（读屏软件念「人设」就够了）
   const count = (k: keyof PersonaConfig) => (
-    <span className={`text-xs ${value[k].length > PERSONA_LIMITS[k] ? "text-bad" : "text-muted"}`}>
+    <span aria-hidden className={`text-xs ${value[k].length > PERSONA_LIMITS[k] ? "text-bad" : "text-muted"}`}>
       {value[k].length} / {PERSONA_LIMITS[k]}
     </span>
   );
+  // 按 Esc 收起面板
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
   return (
     <section className="space-y-2 rounded-sm border border-border bg-surface p-3 text-sm" aria-label="角色设定" data-testid="persona-panel">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -803,7 +816,9 @@ function PersonaPanel({
           <RotateCcw size={14} aria-hidden />
           恢复默认角色
         </Button>
-        <Button onClick={onClose}>收起</Button>
+        <Button onClick={onClose} title="也可以按 Esc">
+          收起
+        </Button>
       </div>
     </section>
   );

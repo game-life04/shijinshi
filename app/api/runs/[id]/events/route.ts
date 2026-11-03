@@ -8,7 +8,12 @@ export const dynamic = "force-dynamic";
 
 export async function GET(req: Request, ctx: RouteContext<"/api/runs/[id]/events">) {
   const { id } = await ctx.params;
-  const view = getRun(id);
+  let view: ReturnType<typeof getRun> = null;
+  try {
+    view = getRun(id);
+  } catch (e) {
+    return Response.json({ error: e instanceof Error ? e.message : String(e) }, { status: 400 });
+  }
   if (!view) return Response.json({ error: "运行不存在" }, { status: 404 });
   const encoder = new TextEncoder();
   const stream = new ReadableStream({

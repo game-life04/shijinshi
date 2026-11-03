@@ -30,6 +30,8 @@ interface Attempt {
   message: string;
   evidence: Evidence[];
   guarded: boolean;
+  /** 属于哪一局：每局的轮次编号都从 1 开始，旧局晚到的裁判结论不能写到新一局上 */
+  session: string;
   /** 身份、退出两关：裁判还在后台判，判完再更新 */
   judging: boolean;
 }
@@ -113,7 +115,7 @@ export default function Play() {
       });
       setAttempts((xs) => [
         ...xs,
-        { turn: r.turn, outcome: r.outcome, message: r.message, evidence: r.evidence, guarded: guard, judging: r.judging },
+        { turn: r.turn, outcome: r.outcome, message: r.message, evidence: r.evidence, guarded: guard, session: s.id, judging: r.judging },
       ]);
       if (r.judging) {
         // 角色的回复先显示；裁判在后台判，判完更新这一轮的结论
@@ -121,12 +123,16 @@ export default function Play() {
         const turnId = r.turn.turn_id;
         void post<Verdict>({ action: "verdict", session_id: sid, index: r.turn.index })
           .then((v) => {
-            setAttempts((xs) => xs.map((a) => (a.turn.turn_id === turnId ? { ...a, ...v, judging: false } : a)));
+            setAttempts((xs) => xs.map((a) => (a.session === sid && a.turn.turn_id === turnId ? { ...a, ...v, judging: false } : a)));
             if (v.outcome === "broken") setExpression("confused");
           })
           .catch(() => {
             setAttempts((xs) =>
-              xs.map((a) => (a.turn.turn_id === turnId ? { ...a, judging: false, message: "裁判这次没判出来，结论按护栏的结果算" } : a)),
+              xs.map((a) =>
+                a.session === sid && a.turn.turn_id === turnId
+                  ? { ...a, judging: false, message: "裁判这次没判出来，结论按护栏的结果算" }
+                  : a,
+              ),
             );
           });
       }

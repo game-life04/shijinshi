@@ -222,6 +222,11 @@ export async function sayPlay(sessionId: string, text: string): Promise<PlayTurn
   }
 }
 
+/** 这一局的口令：只给命令行脚本用（红队深测的旁路检查），不经任何接口返回给浏览器 */
+export function sessionCanary(sessionId: string): string | undefined {
+  return sessions.get(sessionId)?.canary;
+}
+
 /** 取某一轮的最终判定（身份、退出两关要等裁判，一般 2～3 秒） */
 export async function verdictPlay(sessionId: string, index: number): Promise<PlayVerdict> {
   const s = sessions.get(sessionId);

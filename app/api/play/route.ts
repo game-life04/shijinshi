@@ -2,13 +2,16 @@
 
 import { LEVEL_IDS, type LevelId } from "@/lib/domain/levels";
 import { parsePersona } from "@/lib/domain/persona";
+import { crossSite, readJsonObject } from "@/lib/server/http";
 import { sayPlay, startPlay, verdictPlay } from "@/lib/server/play";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
-  const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+  const blocked = crossSite(req);
+  if (blocked) return blocked;
+  const body = await readJsonObject(req);
   try {
     if (body.action === "start") {
       const level = LEVEL_IDS.includes(body.level as LevelId) ? (body.level as LevelId) : "canary";

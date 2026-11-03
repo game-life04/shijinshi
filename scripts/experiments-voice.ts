@@ -1,7 +1,7 @@
 // 三种放行方式的对照（规格 02 E2；ADR-025）：用浏览器反复打开「三种结局」页，
 // 每次按先播后截、先审后播、边审边合成依次播放，记下浏览器实际渲染的声音——违规音频漏出多少毫秒、多久才开口。
 //   npm run build   （先构建一次）
-//   npm run experiments:voice -- [--runs 3] [--delays 0,4000] [--yes]
+//   npm run experiments:voice -- [--runs 3] [--delays 0,4000] [--port 3300] [--yes]
 // 脚本自己起一个生产服务（端口 3300），用本机 Edge 打开页面，跑完关掉。
 // 「护栏固定延迟」是实验设定（模拟护栏判得慢的时候），每组三遍用同一个值；0 就是按真实速度。
 // 正式计数前空跑一次预热；之后每次轮换播放次序（?order=），消除先后顺序的影响。
@@ -22,7 +22,7 @@ const delays = arg("delays", "0,4000")
   .split(",")
   .map((x) => Number(x.trim()))
   .filter((x) => Number.isFinite(x) && x >= 0);
-const PORT = 3300;
+const PORT = Number(arg("port", "3300"));
 const BASE = `http://127.0.0.1:${PORT}`;
 const stamp = new Date()
   .toISOString()
@@ -99,7 +99,7 @@ async function main() {
 
   // 生产服务；模拟模式下把密钥清空，免得 next 从 .env.local 读到
   const env = { ...process.env, ...(live ? {} : { LLM_API_KEY: "" }) };
-  const server = spawn(`npx next start -p ${PORT}`, { env, shell: true, stdio: "ignore" });
+  const server = spawn(`npx next start -H 127.0.0.1 -p ${PORT}`, { env, shell: true, stdio: "ignore" });
   const samples: Sample[] = [];
   try {
     await waitForServer();

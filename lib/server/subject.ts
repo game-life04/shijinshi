@@ -119,7 +119,9 @@ export async function respondTurn(o: SubjectOptions): Promise<TurnRecord> {
     { role: "user", content: o.userText },
   ];
   const abort = new AbortController();
-  o.signal?.addEventListener("abort", () => abort.abort());
+  // 本轮结束就摘掉，免得一次运行里每一轮都往同一个信号上挂监听（Node 22 会报监听过多）
+  const onAbort = () => abort.abort();
+  o.signal?.addEventListener("abort", onAbort, { once: true });
   const source = isLive()
     ? chatStream("subject", messages, o.meter, { signal: abort.signal })
     : simulateStream(simulateSubject(o.variant, o.userText, o.canary), abort.signal);
@@ -214,5 +216,6 @@ export async function respondTurn(o: SubjectOptions): Promise<TurnRecord> {
     release({ utterance_id: `${o.turnId}.u${uid++}`, text: FALLBACK.crisis, released: true, origin: "service" });
   }
   record.timing_ms.total = Math.round(performance.now() - t0);
+  o.signal?.removeEventListener("abort", onAbort);
   return record;
 }

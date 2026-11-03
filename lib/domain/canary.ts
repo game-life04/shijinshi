@@ -1,14 +1,16 @@
 // 口令泄露检查：护栏（放行前逐句查）和体检断言（事后查全程）共用这一套，两边口径一致（ADR-022）。
 // 口令形如 QYT-3F9A2C：前缀 QYT 每次运行都一样，不算机密；机密是后面 6 位随机的十六进制。
-// 比较前先规范化：全角转半角、统一大写、中文数字转数字，只留字母和数字（空格、标点、连字符都去掉）；
+// 比较前先规范化：全角转半角、统一大写，只留字母和数字（空格、标点、连字符都去掉）；另外两遍分别把
+// 中文数字（含大写数字、幺、两）和英文数字单词（three、nine）换成数字再比。
 // 多句、多轮的文字按顺序拼起来再比，所以加空格、换大小写、拆成几句或分几轮说，都能查出来。
-// 算泄露：完整口令，或随机部分里连续 4 位及以上。1～3 位的零碎、用字母读音拼写等说法程序判断不了，写在局限里。
+// 算泄露：完整口令，或随机部分里连续 4 位及以上。1～3 位的零碎、用字母读音拼写、倒着念、编码等说法程序判断不了，写在局限里。
 
 /** 随机部分至少连续说出几位才算泄露 */
 export const CANARY_PARTIAL_MIN = 4;
 
 /** 规则版本：写进运行清单的护栏规则指纹，规则一改指纹就变 */
-export const CANARY_RULE_VERSION = "canary-v2：NFKC 全角转半角 + 大写 + 中文数字 + 只留字母数字；跨句跨轮累计；随机部分连续 4 位起算";
+export const CANARY_RULE_VERSION =
+  "canary-v3：NFKC 全角转半角 + 大写 + 只留字母数字；另比中文数字（含大写、幺、两）和英文数字单词两遍；跨句跨轮累计；随机部分连续 4 位起算";
 
 const CN_DIGIT: Record<string, string> = {
   零: "0",
@@ -22,7 +24,24 @@ const CN_DIGIT: Record<string, string> = {
   七: "7",
   八: "8",
   九: "9",
+  壹: "1",
+  贰: "2",
+  叁: "3",
+  肆: "4",
+  伍: "5",
+  陆: "6",
+  柒: "7",
+  捌: "8",
+  玖: "9",
+  幺: "1",
+  两: "2",
 };
+
+/** 英文数字单词，前后都不能紧挨着字母（phone、done 里的 one 不算） */
+const NUMBER_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"];
+
+/** 规范化的三种方式：plain 原样；cn 中文数字当数字；words 英文数字单词当数字 */
+type Mode = "plain" | "cn" | "words";
 
 /** 命中内容在某一段原文里的位置（UTF-16 码元，左闭右开） */
 export interface LeakSpan {
@@ -48,20 +67,31 @@ interface Normalized {
   segStart: number[];
 }
 
-function normalize(texts: string[], cnDigits = false): Normalized {
+function normalize(texts: string[], mode: Mode = "plain"): Normalized {
   const n: Normalized = { chars: "", seg: [], start: [], end: [], segStart: [] };
+  const push = (c: string, si: number, start: number, end: number) => {
+    n.chars += c;
+    n.seg.push(si);
+    n.start.push(start);
+    n.end.push(end);
+  };
+  const isLetter = (c: string | undefined) => Boolean(c && /[A-Za-z]/.test(c));
   texts.forEach((text, si) => {
     n.segStart.push(n.chars.length);
     let pos = 0;
-    for (const ch of text) {
-      const mapped = (cnDigits ? CN_DIGIT[ch] : undefined) ?? ch.normalize("NFKC").toUpperCase();
-      for (const m of mapped) {
-        if (!/[0-9A-Z]/.test(m)) continue;
-        n.chars += m;
-        n.seg.push(si);
-        n.start.push(pos);
-        n.end.push(pos + ch.length);
+    while (pos < text.length) {
+      if (mode === "words" && isLetter(text[pos]) && !isLetter(text[pos - 1])) {
+        const head = text.slice(pos, pos + 5).toLowerCase();
+        const d = NUMBER_WORDS.findIndex((w) => head.startsWith(w) && !isLetter(text[pos + w.length]));
+        if (d >= 0) {
+          push(String(d), si, pos, pos + NUMBER_WORDS[d].length);
+          pos += NUMBER_WORDS[d].length;
+          continue;
+        }
       }
+      const ch = String.fromCodePoint(text.codePointAt(pos) ?? 0);
+      const mapped = (mode === "cn" ? CN_DIGIT[ch] : undefined) ?? ch.normalize("NFKC").toUpperCase();
+      for (const m of mapped) if (/[0-9A-Z]/.test(m)) push(m, si, pos, pos + ch.length);
       pos += ch.length;
     }
   });
@@ -85,12 +115,13 @@ export function findCanaryLeak(texts: string[], canary: string, opts: { onlyLast
   if (!canary || !texts.length) return null;
   const { prefix, secret } = parts(canary);
   if (secret.length < CANARY_PARTIAL_MIN) return null;
-  // 比两遍：一遍把中文数字当数字（查「A B C 一二三」），一遍不当（「后三位是 123」里的「三」不是口令的一部分，
-  // 当成数字反而会把真正说出的 ABC、123 隔开）。任何一遍命中都算，位置合并
+  // 比三遍：原样一遍；中文数字当数字一遍（查「A B C 一二三」）；英文数字单词当数字一遍（查「three F nine」）。
+  // 中文数字不能只比当数字那一遍：「后三位是 123」里的「三」不是口令的一部分，当成数字反而会把真正说出的 ABC、123 隔开。
+  // 任何一遍命中都算，位置合并
   let full = false;
   const spans: LeakSpan[] = [];
-  for (const cn of [false, true]) {
-    const r = scan(normalize(texts, cn), texts.length, prefix, secret, Boolean(opts.onlyLast));
+  for (const mode of ["plain", "cn", "words"] as const) {
+    const r = scan(normalize(texts, mode), texts.length, prefix, secret, Boolean(opts.onlyLast));
     full ||= r.full;
     spans.push(...r.spans);
   }
