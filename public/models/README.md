@@ -3,7 +3,14 @@
 把琪叶桃的 VRM 模型放在这里，文件名 `qiyetao.vrm`（也可以用环境变量 `NEXT_PUBLIC_VRM_URL` 指定别的地址，改了要重新构建）。
 
 - 用 VRoid Studio 导出 VRM 0.x 或 1.0 都可以；需要有「aa」口型、「blink」眨眼和「surprised」惊讶表情（VRoid 默认就有）。
-- 仓库里的 `qiyetao.vrm` 是 3.8 MB 的压缩版：用 `scripts/shrink-vrm.py` 从 VRoid 导出的 19.3 MB 版本压出来（ADR-023、ADR-027）。表情变形只留 VRM 表情绑定的 14 个，而且只存动了的顶点；2048 的贴图缩到 1024，贴图改存 WebP（颜色贴图有损、每张看得见的像素 PSNR 不低于 40 dB，法线等数据贴图无损）；顶点序号、骨骼序号换成够用的最小整数，蒙皮权重存 16 位。网格形状、表情、骨骼、材质参数逐个比对和导出版一致，Khronos 官方 glTF 校验器 0 个错误。换了新导出版也照这样压一遍再提交，大文件进了 Git 历史就删不掉。
+- 仓库里的 `qiyetao.vrm` 是 3.9 MB 的白发版（ADR-030）：先用 `scripts/restyle-vrm.mts` 从 VRoid 导出的 19.3 MB 版本出白发版（白发、圆瞳孔和新高光、加粗的上眼线、浅色眉毛，眼睛往鼻梁收一点、瞳孔放大，刘海正中那一缕摆正，头发加墨线），再用 `scripts/shrink-vrm.py` 压（ADR-023、ADR-027）：
+
+  ```
+  npx tsx scripts/restyle-vrm.mts 原始导出版.vrm 白发版.vrm
+  python -I scripts/shrink-vrm.py 白发版.vrm public/models/qiyetao.vrm
+  ```
+
+  压缩时表情变形只留 VRM 表情绑定的 14 个，而且只存动了的顶点；2048 的贴图缩到 1024，贴图改存 WebP（颜色贴图有损、每张看得见的像素 PSNR 不低于 40 dB，法线等数据贴图无损）；顶点序号、骨骼序号换成够用的最小整数，蒙皮权重存 16 位。网格形状、表情、骨骼、材质参数逐个比对和白发版一致，Khronos 官方 glTF 校验器 0 个错误。换了新导出版也照这样先出白发版、再压一遍再提交，大文件进了 Git 历史就删不掉。
 - 贴图用了 WebP，模型里声明了必需扩展 `EXT_texture_webp`：three.js 的加载器和现在的主流浏览器都支持；不支持这个扩展的老工具打不开这个文件，要编辑模型请用 VRoid 原始导出版。
 - 放进来以后要重新 `npm run build`（生产模式只提供构建时就在 public 里的文件）。
 - 没有这个文件时，工作台自动换成平面示意形象，并在形象下方写明原因。

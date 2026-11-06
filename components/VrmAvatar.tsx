@@ -5,6 +5,7 @@
 // 模型文件不存在、浏览器不支持 WebGL、加载失败时，交给外层换成平面示意形象，并说明原因。
 
 import { useEffect, useRef } from "react";
+import { seeThroughBangs } from "@/lib/client/vrm-see-through";
 import type { Expression } from "./FaceAvatar";
 
 export interface VrmAvatarProps {
@@ -43,7 +44,8 @@ export default function VrmAvatar({ url, mouth, expression, onFail, onLoaded }: 
       const { VRMLoaderPlugin, VRMUtils } = await import("@pixiv/three-vrm");
       if (disposed) return;
 
-      const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      // 带模板缓冲：眼睛透过刘海要用（lib/client/vrm-see-through.ts）
+      const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, stencil: true });
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
       renderer.setClearColor(0x000000, 0);
       host.appendChild(renderer.domElement);
@@ -92,6 +94,8 @@ export default function VrmAvatar({ url, mouth, expression, onFail, onLoaded }: 
       VRMUtils.removeUnnecessaryVertices(gltf.scene);
       VRMUtils.combineSkeletons(gltf.scene);
       VRMUtils.rotateVRM0(vrm);
+      // 刘海搭在眼睛上的地方，眼睛隔着头发淡淡透出来（ADR-030）
+      seeThroughBangs(THREE, renderer, vrm.scene);
 
       // 放下手臂（默认是 T 字姿势），镜头对准胸口以上
       const bone = (name: Parameters<NonNullable<typeof vrm.humanoid>["getNormalizedBoneNode"]>[0]) =>

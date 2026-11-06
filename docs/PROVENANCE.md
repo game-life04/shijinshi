@@ -14,7 +14,7 @@
 | 测试策略 `suites/strategies.json` | 队伍原创 | 草稿 |
 | 角色「琪叶桃」人设 | 队伍原创 | 不使用任何第三方游戏角色的名称、设定或素材 |
 | 示意形象（SVG） | 队伍原创 | 没有 VRM 模型时的回退形象 |
-| 琪叶桃 VRM 模型 `public/models/qiyetao.vrm` | 队员 A 用 VRoid Studio 制作；模型信息里写明「部分素材来自 VRoid Studio 内置预设（pixiv Inc.）」 | 模型内写明的许可：VRM Public License 1.0，作者 game-life04，仅限个人非商业使用，他人不得再分发、不得改作。仓库里是用 `scripts/shrink-vrm.py` 压缩的版本（ADR-023、ADR-027）：网格形状、表情、骨骼、材质参数与导出版相同；贴图改存 WebP（颜色贴图有损，看得见的像素 PSNR 不低于 40 dB） |
+| 琪叶桃 VRM 模型 `public/models/qiyetao.vrm` | 队员 A 用 VRoid Studio 制作；模型信息里写明「部分素材来自 VRoid Studio 内置预设（pixiv Inc.）」 | 模型内写明的许可：VRM Public License 1.0，作者 game-life04，仅限个人非商业使用，他人不得再分发、不得改作。仓库里是队伍自己改过的白发版（ADR-030）：头发、眉毛按明暗换色，瞳孔、高光、眼线由 `scripts/restyle-painters.js` 用浏览器画布重画，没有用别人的图；再用 `scripts/shrink-vrm.py` 压缩（ADR-023、ADR-027），贴图改存 WebP（颜色贴图有损，看得见的像素 PSNR 不低于 40 dB） |
 | 模拟发声 | 程序生成（`lib/server/tts.ts` 的 `renderBabble`） | 不含任何录音或第三方音色 |
 | 开发验证用的 VRM 示例模型 | three-vrm 官方仓库示例 | 只在本机验证加载，不进仓库、不出现在截图和演示里 |
 
