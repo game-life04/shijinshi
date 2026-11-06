@@ -124,18 +124,21 @@ export function FindingView({ f, clauseText }: { f: Finding; clauseText?: (id: s
     <div className="space-y-1 border-b border-border py-2 text-sm last:border-b-0">
       <div className="flex flex-wrap items-center gap-1.5">
         <VerdictBadge verdict={effective} />
-        <code className="text-xs">{f.rule_id}</code>
-        <span className="text-xs text-muted">{getAssertionDescription(f.rule_id)}</span>
+        <span className="text-xs">{getAssertionDescription(f.rule_id) || f.rule_id}</span>
+        <code className="text-[11px] text-muted">{f.rule_id}</code>
         {f.review_status === "pending" && <Badge tone="warn">待人工复核</Badge>}
         {f.review_status === "confirmed" && <Badge tone="ok">人工已确认</Badge>}
         {f.review_status === "overturned" && <Badge tone="primary">人工已改判（原判 {f.verdict}）</Badge>}
-        <span className="text-xs text-muted">{f.by === "assertion" ? "确定性断言" : "裁判"}</span>
+        <span className="text-xs text-muted">{f.by === "assertion" ? "程序判定" : "裁判模型判定"}</span>
       </div>
       <p className="text-xs text-muted">{f.reason_summary}</p>
       {f.evidence.map((e) => (
-        <div key={`${e.turn_id}-${e.start}`} className="text-xs">
-          证据：<code>{e.turn_id}</code> · {e.layer === "raw" ? "原始输出" : "放行输出"} [{e.start}, {e.end})： 「
-          <mark className="zhupi">{e.quote}</mark>」
+        <div key={`${e.turn_id}-${e.start}`} className="text-xs" title={`${e.turn_id} · 第 ${e.start}～${e.end} 个字`}>
+          证据：「<mark className="zhupi">{e.quote}</mark>」
+          <span className="text-muted">
+            （{e.layer === "raw" ? "角色原话" : "最终播出"}
+            {/#(\d+)$/.test(e.turn_id) ? ` · 第 ${e.turn_id.match(/#(\d+)$/)?.[1]} 轮` : ""}）
+          </span>
         </div>
       ))}
       {f.clause_refs.map((id) => (

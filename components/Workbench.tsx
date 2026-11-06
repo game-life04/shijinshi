@@ -30,12 +30,14 @@ import {
   VARIANTS,
 } from "@/lib/domain/types";
 import Avatar from "./Avatar";
+import { CaseCard, ChatIntro, ChatTurn, ChatTyping } from "./Chat";
+import CheckList from "./CheckList";
 import type { Expression } from "./FaceAvatar";
 import LatencyWaterfall, { latestTiming } from "./LatencyWaterfall";
 import { LayerStrip } from "./Layers";
 import type { Phase } from "./StatusRing";
-import { FindingView, TurnView } from "./Transcript";
-import { Badge, Button, CaseBadge, Metric, Panel } from "./ui";
+import { FindingView } from "./Transcript";
+import { Badge, Button, CaseBadge, Metric, Panel, VerdictBadge } from "./ui";
 
 interface CaseSummary {
   id: string;
@@ -51,6 +53,8 @@ interface Status {
   models: Record<string, string>;
   suites: { id: string; file: string; errors: string[]; cases: CaseSummary[] }[];
   kb: { clauses: number; hash: string };
+  /** 测试 Agent 的已审核策略（对话里写它这一轮用的套路） */
+  strategies?: { id: string; title: string; description?: string }[];
 }
 interface RunView {
   manifest: RunManifest;
@@ -94,6 +98,8 @@ export default function Workbench() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [tab, setTab] = useState<"cases" | "dialog" | "evidence">("cases");
+  /** 用户自己点过某道题，就停在那道题；否则对话跟着正在跑的题走 */
+  const pinnedRef = useRef(false);
 
   const speakingRef = useRef(false);
   const speakTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -210,7 +216,7 @@ export default function Workbench() {
     (e: RunEvent) => {
       setEvents((prev) => (prev.some((x) => x.seq === e.seq) ? prev : [...prev, e]));
       onVoiceEvent(e);
-      if (e.type === "case_started" && e.case_id) setSelected((s) => s ?? e.case_id ?? null);
+      if (e.type === "case_started" && e.case_id && !pinnedRef.current) setSelected(e.case_id);
       const voiced = voiceRunRef.current === e.run_id;
       if (e.type === "run_started" || e.type === "case_started" || e.type === "judging") setPhase("listen");
       else if (e.type === "turn_started") setPhase("think");
@@ -264,6 +270,7 @@ export default function Workbench() {
     setResults([]);
     setRunCases(new Set());
     setSelected(null);
+    pinnedRef.current = false;
     try {
       const m = await api<RunManifest>("/api/runs", {
         method: "POST",
@@ -376,6 +383,14 @@ export default function Workbench() {
   // 运行开始后只列本次实际计划的用例（受草稿开关和数量上限影响）
   const shownCases = manifest && runCases.size ? cases.filter((c) => runCases.has(c.id)) : cases;
   const counts = manifest?.counts;
+  const selectedCase = cases.find((c) => c.id === selected);
+  const strategyTitle = (id?: string) =>
+    !id ? undefined : id === "CASE_INPUT" ? "题目原句" : (status?.strategies?.find((x) => x.id === id)?.title ?? id);
+  const pick = (id: string) => {
+    pinnedRef.current = true;
+    setSelected(id);
+    setTab("dialog");
+  };
 
   if (loadError) {
     return (
@@ -597,19 +612,21 @@ export default function Workbench() {
         ))}
       </div>
 
-      <div className="grid min-h-0 flex-1 gap-2 lg:grid-cols-[minmax(220px,0.8fr)_minmax(0,1.6fr)_minmax(0,1.3fr)]">
+      {/* 大屏上三栏正好占满剩下的高度，各自滚动：用例多了也不会把对话框、证据框拉成一大片空白 */}
+      <div className="grid min-h-0 flex-1 gap-2 lg:grid-cols-[minmax(220px,0.8fr)_minmax(0,1.6fr)_minmax(0,1.3fr)] lg:grid-rows-[minmax(0,1fr)]">
         {/* 左：角色 + 用例进度 */}
-        <div className={`${panelClass("cases")} min-h-0 flex-col gap-2`}>
+        <div className={`${panelClass("cases")} min-h-0 flex-col gap-2 lg:overflow-y-auto`}>
           <div className="rounded-sm border border-border bg-surface p-3">
             <Avatar mouth={mouth} expression={expression} phase={phase} />
-            {manifest && (
-              <div className="mt-2 border-t border-border pt-2">
-                <LatencyWaterfall timing={timing} />
-              </div>
-            )}
+            <div className="mt-2 border-t border-border pt-2">
+              <LatencyWaterfall timing={timing} />
+            </div>
             {manifest?.config.voice && <AudioMeters stats={audioStats} />}
           </div>
-          <Panel title={`用例进度${manifest ? `（${manifest.counts.planned} 例）` : ""}`} className="min-h-[12rem] flex-1">
+          <Panel
+            title={`用例进度${manifest ? `（${manifest.counts.planned} 例）` : ""}`}
+            className="min-h-[12rem] flex-1 lg:shrink-0 lg:basis-[12rem]"
+          >
             <ul className="space-y-1">
               {shownCases.map((c) => {
                 const s = caseState.get(c.id);
@@ -617,17 +634,16 @@ export default function Workbench() {
                   <li key={c.id}>
                     <button
                       type="button"
-                      onClick={() => {
-                        setSelected(c.id);
-                        setTab("dialog");
-                      }}
+                      onClick={() => pick(c.id)}
                       className={`flex w-full items-center justify-between gap-2 rounded px-2 py-1 text-left text-xs ${selected === c.id ? "bg-primary-soft" : "hover:bg-background"}`}
                     >
                       <span className="min-w-0">
-                        <span className="block truncate font-mono">{c.id}</span>
-                        <span className="block truncate text-muted">
+                        <span className="block truncate text-[13px]">
                           {FAMILY_LABEL[c.family]}
-                          {c.intent ? ` · ${INTENT_LABEL[c.intent]}` : ""}
+                          {c.intent ? <span className="text-muted"> · {INTENT_LABEL[c.intent]}题</span> : null}
+                        </span>
+                        <span className="block truncate font-mono text-[11px] text-muted">
+                          {c.id}
                           {c.approval !== "approved" ? " · 草稿" : ""}
                           {c.modality === "voice" ? " · 语音" : ""}
                         </span>
@@ -641,16 +657,53 @@ export default function Workbench() {
           </Panel>
         </div>
 
-        {/* 中：对话 */}
-        <Panel title={selected ? `对话 · ${selected}` : "对话"} className={`${panelClass("dialog")} min-h-[16rem]`}>
-          {!manifest && <p className="text-sm text-muted">选好配置后点「开始体检」。左侧点任一用例可以看它的对话和证据。</p>}
-          {manifest && !selected && <p className="text-sm text-muted">等待第一个用例开始……</p>}
+        {/* 中：对话（聊天记录的样子；还没开始时是一段示例） */}
+        <Panel
+          title={
+            selected ? (
+              <>
+                对话 · {selectedCase ? FAMILY_LABEL[selectedCase.family] : selected}
+                <span className="ml-1.5 font-mono text-[11px] font-normal text-muted">{selected}</span>
+              </>
+            ) : (
+              "对话"
+            )
+          }
+          className={`${panelClass("dialog")} min-h-[16rem] lg:min-h-0`}
+        >
+          {!manifest && <ChatIntro name={persona.name} strategies={status.strategies} />}
+          {manifest && !selected && <ChatTyping phase="listen" name={persona.name} />}
           {selected && (
             <>
-              <p className="mb-1 text-xs text-muted">期望：{cases.find((c) => c.id === selected)?.expected}</p>
+              {selectedCase && (
+                <CaseCard
+                  expected={selectedCase.expected}
+                  tags={[
+                    FAMILY_LABEL[selectedCase.family],
+                    ...(selectedCase.intent ? [`${INTENT_LABEL[selectedCase.intent]}题`] : []),
+                    selectedCase.approval === "approved" ? "已审核" : "草稿",
+                    ...(selectedCase.modality === "voice" ? ["语音题"] : []),
+                  ]}
+                />
+              )}
               {(selectedResult?.turns ?? liveTurns).map((t) => (
-                <TurnView key={t.turn_id} turn={t} evidence={selectedResult?.findings.flatMap((f) => f.evidence) ?? []} />
+                <ChatTurn
+                  key={t.turn_id}
+                  turn={t}
+                  evidence={selectedResult?.findings.flatMap((f) => f.evidence) ?? []}
+                  name={persona.name}
+                  strategy={strategyTitle(t.strategy_id)}
+                />
               ))}
+              {running && !selectedResult && <ChatTyping phase={phase} name={persona.name} />}
+              {selectedResult?.status === "completed" && selectedResult.verdict && (
+                <p className="mt-3 flex items-center justify-center gap-2 text-xs text-muted">
+                  <span aria-hidden>——</span>
+                  这道题聊完了
+                  <VerdictBadge verdict={selectedResult.verdict} />
+                  <span aria-hidden>——</span>
+                </p>
+              )}
               {selectedResult?.status === "not_run" && (
                 <p className="text-sm text-muted">未执行：{selectedResult.error ?? "运行提前结束"}</p>
               )}
@@ -662,7 +715,7 @@ export default function Workbench() {
         {/* 右：结论、证据、工具调用 */}
         <Panel
           title="结论与证据"
-          className={`${panelClass("evidence")} min-h-[16rem]`}
+          className={`${panelClass("evidence")} min-h-[16rem] lg:min-h-0`}
           actions={
             manifest && FINAL.has(manifest.state) ? (
               <span className="flex flex-wrap gap-2">
@@ -682,7 +735,15 @@ export default function Workbench() {
             ) : null
           }
         >
-          {!selectedResult && <p className="text-sm text-muted">用例跑完后，这里显示每条检查的结论、原文证据和依据条文。</p>}
+          <CheckList
+            cases={shownCases}
+            state={caseState}
+            name={persona.name}
+            started={Boolean(manifest)}
+            selected={selected}
+            compact={Boolean(selectedResult)}
+            onPick={pick}
+          />
           {selectedResult?.status === "completed" && manifest && (
             <div className="mb-2 space-y-1 border-b border-border pb-2">
               <LayerStrip layers={caseLayers(selectedResult, GUARDED_VARIANTS.includes(manifest.config.variant))} />
@@ -696,13 +757,11 @@ export default function Workbench() {
           ))}
           {toolSteps.length > 0 && (
             <div className="mt-2">
-              <h3 className="text-xs font-semibold">测试 Agent 的工具调用</h3>
+              <h3 className="text-xs font-semibold">测试 Agent 怎么出的招</h3>
               <ol className="mt-1 space-y-1 text-xs">
-                {toolSteps.map((s) => (
-                  <li key={s.seq} className="rounded bg-background p-1.5">
-                    <code>{String(s.data?.tool ?? s.type)}</code>{" "}
-                    {s.data?.args ? <code className="text-muted">{JSON.stringify(s.data.args)}</code> : null}
-                    <div className="text-muted">{String(s.data?.result ?? "")}</div>
+                {toolSteps.map((s, i) => (
+                  <li key={s.seq} className="rounded bg-background p-1.5" title={String(s.data?.tool ?? s.type)}>
+                    <ToolStep n={i + 1} step={s} strategyTitle={strategyTitle} />
                   </li>
                 ))}
               </ol>
@@ -715,7 +774,7 @@ export default function Workbench() {
       <div className="flex flex-wrap items-center gap-x-6 gap-y-1 rounded-sm border border-border bg-surface px-3 py-2">
         <Metric label="运行状态" value={manifest ? stateLabel(manifest.state) : null} />
         <Metric
-          label="对账（计划 = 完成 + 拦截 + 出错 + 取消 + 未执行）"
+          label="题数对账（计划 = 做完 + 平台拦截 + 出错 + 取消 + 没跑）"
           value={
             counts
               ? `${counts.planned} = ${counts.completed} + ${counts.provider_blocked} + ${counts.error} + ${counts.cancelled} + ${counts.not_run}`
@@ -880,32 +939,49 @@ function AudioMeters({ stats }: { stats: AudioStats }) {
   return (
     <div className="mt-2 space-y-1 border-t border-border pt-2 text-xs" data-testid="audio-meters">
       <div className="flex items-center justify-between gap-1">
-        <span className="font-semibold">语音计量（浏览器渲染层）</span>
+        <span className="font-semibold" title="浏览器里实际放出来的声音，一个采样一个采样地数">
+          声音这边
+        </span>
         {stats.level && <Badge tone={stats.level === "live" ? "ok" : "warn"}>{stats.level === "live" ? "真实合成" : "模拟发声"}</Badge>}
       </div>
       <dl className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5">
-        <dt className="text-muted">违规音频渲染</dt>
+        <dt className="text-muted">违规的声音漏出</dt>
         <dd data-testid="leak-meter">
           {stats.cuts.length
-            ? `${Math.round(leak * 10) / 10} ms（${stats.cuts.length} 次截断，${upper ? "含句级上界" : "按字精确定位"}）`
+            ? `${Math.round(leak * 10) / 10} 毫秒（${stats.cuts.length} 次截断，${upper ? "有的按整句算上限" : "按字精确定位"}）`
             : "— 还没有截断"}
         </dd>
-        <dt className="text-muted">首声等待</dt>
+        <dt className="text-muted">开口要等</dt>
         <dd data-testid="first-audio-meter">
-          {stats.firstLast !== undefined ? `最近 ${stats.firstLast} ms · 中位数 ${stats.firstMedian} ms（${stats.firstCount} 轮）` : "—"}
-          {stats.guardLast !== undefined && <span className="text-muted"> · 其中护栏判定 {stats.guardLast} ms</span>}
+          {stats.firstLast !== undefined ? `最近 ${stats.firstLast} 毫秒 · 一般 ${stats.firstMedian} 毫秒（${stats.firstCount} 轮）` : "—"}
+          {stats.guardLast !== undefined && <span className="text-muted"> · 其中护栏 {stats.guardLast} 毫秒</span>}
         </dd>
-        <dt className="text-muted">停止响应</dt>
+        <dt className="text-muted">叫停到没声</dt>
         <dd>
           {lastCut?.cancel_to_stop_ms != null
-            ? `≤ ${lastCut.cancel_to_stop_ms} ms · 口型归零 ${lastCut.cancel_to_mouth_zero_ms ?? "—"} ms`
+            ? `≤ ${lastCut.cancel_to_stop_ms} 毫秒 · 嘴型 ${lastCut.cancel_to_mouth_zero_ms ?? "—"} 毫秒停下`
             : "—"}
         </dd>
       </dl>
-      {stats.timeouts > 0 && (
-        <p className="text-warn">有 {stats.timeouts} 轮没等到浏览器的播放结果（标签页被关闭或切走），这些轮不计量。</p>
-      )}
+      {stats.timeouts > 0 && <p className="text-warn">有 {stats.timeouts} 轮没等到浏览器回报（标签页被关掉或切走了），这几轮不算。</p>}
     </div>
+  );
+}
+
+/** 测试 Agent 的一步：出招（对角色说一句话）、查条文、收手 */
+function ToolStep({ n, step, strategyTitle }: { n: number; step: RunEvent; strategyTitle: (id?: string) => string | undefined }) {
+  const args = (step.data?.args ?? {}) as { strategy_id?: string; message?: string; query?: string; reason?: string };
+  const result = String(step.data?.result ?? "");
+  let head: string;
+  if (args.message !== undefined) head = `第 ${n} 步 · ${strategyTitle(args.strategy_id) ?? "出招"}：「${args.message}」`;
+  else if (args.query !== undefined) head = `第 ${n} 步 · 查条文：${args.query}`;
+  else if (args.reason !== undefined) head = `第 ${n} 步 · 收手：${args.reason}`;
+  else head = `第 ${n} 步 · ${String(step.data?.tool ?? step.type)}`;
+  return (
+    <>
+      <div>{head}</div>
+      {result && <div className="text-muted">{result}</div>}
+    </>
   );
 }
 

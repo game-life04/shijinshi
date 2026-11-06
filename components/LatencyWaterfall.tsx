@@ -8,6 +8,15 @@
 // 服务端各段和浏览器首声是两个时钟，中间差一次事件推送（本机实测几毫秒），所以「达」是估算，界面上写明。
 
 import type { RunEvent } from "@/lib/domain/types";
+import { duration } from "./Chat";
+
+/** 四步说人话（ADR-031）：字还是「想、审、合、达」，名字和说明换成大白话 */
+const STEPS: [string, string, string][] = [
+  ["想", "想好第一句", "角色把回答的第一句想出来"],
+  ["审", "护栏把关", "护栏看这一句能不能说；为了不说错话多等的这一下"],
+  ["合", "变成声音", "把放行的话合成第一段声音"],
+  ["达", "传到耳边", "声音送到浏览器、放出来（按浏览器的时间估）"],
+];
 
 export interface TurnTiming {
   turn_id: string;
@@ -77,18 +86,18 @@ interface Row {
 
 function rowsOf(t: TurnTiming): Row[] {
   const rows: Row[] = [];
-  if (t.think !== undefined) rows.push({ key: "think", char: "想", label: "生成第一句", from: 0, to: t.think });
+  if (t.think !== undefined) rows.push({ key: "think", char: "想", label: "想好第一句", from: 0, to: t.think });
   // 被拦下的一轮，放行的是兜底句，它本身不带护栏耗时；从第一句生成好到放行，仍然都是「审」
   if (t.guarded && t.think !== undefined && t.release !== undefined)
-    rows.push({ key: "check", char: "审", label: "护栏判定", from: t.think, to: t.release, accent: true });
+    rows.push({ key: "check", char: "审", label: "护栏把关", from: t.think, to: t.release, accent: true });
   if (t.voice && t.ttsStart !== undefined && t.tts !== undefined)
-    rows.push({ key: "tts", char: "合", label: "合成第一段声音", from: t.ttsStart, to: t.ttsStart + t.tts });
+    rows.push({ key: "tts", char: "合", label: "变成声音", from: t.ttsStart, to: t.ttsStart + t.tts });
   if (t.voice && t.firstAudio !== undefined && t.release !== undefined) {
     const ready = Math.max(t.release, t.ttsStart !== undefined && t.tts !== undefined ? t.ttsStart + t.tts : t.release);
     rows.push({
       key: "deliver",
       char: "达",
-      label: "送到浏览器并出声",
+      label: "传到耳边",
       from: Math.min(ready, t.firstAudio),
       to: t.firstAudio,
       note: "估算",
@@ -99,10 +108,30 @@ function rowsOf(t: TurnTiming): Row[] {
 
 export default function LatencyWaterfall({ timing }: { timing: TurnTiming | null }) {
   if (!timing) {
+    // 还没跑完第一轮：先把四步各是什么摆出来
     return (
-      <p className="text-xs text-muted" data-testid="latency-waterfall">
-        跑完第一轮后，这里拆开显示时间花在哪几段。
-      </p>
+      <figure className="space-y-1 text-xs" data-testid="latency-waterfall">
+        <figcaption className="font-semibold" style={{ fontFamily: "var(--font-serif)" }}>
+          从对方说完，到她开口
+        </figcaption>
+        <ol className="space-y-0.5">
+          {STEPS.map(([char, label, note]) => (
+            <li key={char} className="grid grid-cols-[1.1rem_1fr] items-baseline gap-1.5">
+              <span
+                className={`text-sm leading-none ${char === "审" ? "text-primary" : "text-muted"}`}
+                style={{ fontFamily: "var(--font-kai)" }}
+              >
+                {char}
+              </span>
+              <span>
+                {label}
+                <span className="text-muted"> · {note}</span>
+              </span>
+            </li>
+          ))}
+        </ol>
+        <p className="text-[11px] text-muted">第一句话说出口以后，这里拆开算每一步各花了多久。</p>
+      </figure>
     );
   }
   const rows = rowsOf(timing);
@@ -113,15 +142,13 @@ export default function LatencyWaterfall({ timing }: { timing: TurnTiming | null
     <figure className="space-y-1 text-xs" data-testid="latency-waterfall">
       <figcaption className="flex items-baseline justify-between gap-2">
         <span className="font-semibold" style={{ fontFamily: "var(--font-serif)" }}>
-          这一轮的时间花在哪
+          {timing.voice ? "最近一轮：从对方说完到她开口" : "最近一轮：从对方说完到她回第一句"}
         </span>
-        <span className="font-mono tabular-nums">
-          {timing.voice ? "首声" : "首句放行"} {end !== undefined ? `${Math.round(end)} ms` : "待测"}
-        </span>
+        <span className="shrink-0 whitespace-nowrap font-mono tabular-nums">{end !== undefined ? duration(end) : "待测"}</span>
       </figcaption>
       <ol className="space-y-1">
         {rows.map((r) => (
-          <li key={r.key} className="grid grid-cols-[1.1rem_1fr_3.6rem] items-center gap-1.5" title={r.label}>
+          <li key={r.key} className="grid grid-cols-[1.1rem_1fr_4.4rem] items-center gap-1.5" title={r.label}>
             <span className={`text-sm leading-none ${r.accent ? "text-primary" : "text-muted"}`} style={{ fontFamily: "var(--font-kai)" }}>
               {r.char}
             </span>
@@ -133,16 +160,15 @@ export default function LatencyWaterfall({ timing }: { timing: TurnTiming | null
               />
             </span>
             <span className="text-right font-mono tabular-nums text-muted">
-              {Math.round(r.to - r.from)}
-              {r.note ? "≈" : ""}
+              {r.note ? "约 " : ""}
+              {duration(r.to - r.from)}
             </span>
           </li>
         ))}
       </ol>
       <p className="text-[11px] leading-snug text-muted">
-        {timing.guarded ? "朱红一段是「审」：守分寸花掉的时间。" : "这个配置没有护栏，不经过「审」。"}
-        {timing.voice ? "「达」用浏览器计时估算。" : ""}
-        {timing.voice && timing.ttsStart === timing.think ? "边审边合成，合成和审同时进行。" : ""}
+        {timing.guarded ? "红色那段是护栏在把关：为了不说错话，多等的这一下。" : "这个配置没有护栏，话不经检查就说出口。"}
+        {timing.voice && timing.ttsStart === timing.think ? "边审边合成：护栏看的同时，声音已经在合成了。" : ""}
       </p>
     </figure>
   );

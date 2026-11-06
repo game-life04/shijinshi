@@ -22,10 +22,10 @@ test("先播后截：判定在口令开口前回来，口令一个采样都没�
   await startVoiceRun(page, { variant: "FAULT_B2", policy: "S3", delay: 1000, cases: 1 });
   const leak = page.getByTestId("leak-meter");
   await expect(leak).toContainText("1 次截断", { timeout: 60_000 });
-  await expect(leak).toContainText("0 ms");
+  await expect(leak).toContainText("0 毫秒");
   await expect(leak).toContainText("按字精确定位");
   await expect(page.getByText("已完成")).toBeVisible({ timeout: 60_000 });
-  await expect(page.getByText(/截断前已渲染 [1-9][\d.]* ms/)).toBeVisible();
+  await expect(page.getByText(/截断前已经说了 [1-9][\d.]* 毫秒/)).toBeVisible();
   await page.screenshot({ path: `${SHOTS}/voice-s3-cut-early-${info.project.name}.png`, fullPage: true });
 });
 
@@ -34,8 +34,8 @@ test("先播后截：判定晚于口令开口，漏出时长大于 0，停止和
   await startVoiceRun(page, { variant: "FAULT_B2", policy: "S3", delay: 4000, cases: 1 });
   const leak = page.getByTestId("leak-meter");
   await expect(leak).toContainText("1 次截断", { timeout: 60_000 });
-  expect(ms(await leak.textContent(), /([\d.]+) ms/)).toBeGreaterThan(0);
-  await expect(page.getByText(/停止 ≤ [\d.]+ ms · 口型归零 [\d.]+ ms/)).toBeVisible({ timeout: 30_000 });
+  expect(ms(await leak.textContent(), /([\d.]+) 毫秒/)).toBeGreaterThan(0);
+  await expect(page.getByText(/叫停后 ≤ [\d.]+ 毫秒没声，嘴型 [\d.]+ 毫秒停下/)).toBeVisible({ timeout: 30_000 });
   await page.screenshot({ path: `${SHOTS}/voice-s3-leak-${info.project.name}.png`, fullPage: true });
 
   // 报告里写明计量口径和逐次截断
@@ -51,7 +51,7 @@ test("先审后播：违规句不放行、不合成，首声等待有数", async
   await startVoiceRun(page, { variant: "FAULT_B2", policy: "S1", delay: 0, cases: 2 });
   await expect(page.getByText("已完成")).toBeVisible({ timeout: 90_000 });
   await expect(page.getByTestId("leak-meter")).toContainText("还没有截断");
-  expect(ms(await page.getByTestId("first-audio-meter").textContent(), /最近 ([\d.]+) ms/)).toBeGreaterThan(0);
+  expect(ms(await page.getByTestId("first-audio-meter").textContent(), /最近 ([\d.]+) 毫秒/)).toBeGreaterThan(0);
   await expect(page.getByText("护栏拦下，未放行").first()).toBeVisible();
   await page.screenshot({ path: `${SHOTS}/voice-s1-${info.project.name}.png`, fullPage: true });
 });

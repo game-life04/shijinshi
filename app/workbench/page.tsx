@@ -3,7 +3,7 @@ import Workbench from "@/components/Workbench";
 
 export default function WorkbenchPage() {
   return (
-    <AppShell active="/workbench">
+    <AppShell active="/workbench" fill>
       <Workbench />
     </AppShell>
   );

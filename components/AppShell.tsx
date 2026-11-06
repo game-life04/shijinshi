@@ -27,9 +27,10 @@ export function BrandSeal({ size = 34 }: { size?: number }) {
   );
 }
 
-export default function AppShell({ children, active }: { children: ReactNode; active?: string }) {
+/** fill：大屏上整页正好一屏高，里面的面板各自滚动（工作台用）；手机上照常整页往下滑 */
+export default function AppShell({ children, active, fill = false }: { children: ReactNode; active?: string; fill?: boolean }) {
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className={`flex min-h-screen flex-col ${fill ? "lg:h-dvh lg:min-h-0" : ""}`}>
       <header className="flex flex-wrap items-center gap-x-5 gap-y-1 border-b border-border bg-surface px-4 py-2">
         <Link href="/workbench" className="flex items-center gap-2" aria-label="分寸 · AI 语音角色安全体检台">
           <BrandSeal />
@@ -60,7 +61,7 @@ export default function AppShell({ children, active }: { children: ReactNode; ac
           被测对象是 AI 角色，不是真人 · 角色回复由 AI 生成
         </span>
       </header>
-      <main className="flex min-h-0 flex-1 flex-col">{children}</main>
+      <main className={`flex min-h-0 flex-1 flex-col ${fill ? "lg:overflow-hidden" : ""}`}>{children}</main>
     </div>
   );
 }

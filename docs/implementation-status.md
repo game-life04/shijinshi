@@ -67,6 +67,7 @@
 | 模型二次压缩到 3.8 MB（ADR-027） | A | — | 内部验证 | `scripts/shrink-vrm.py` 第二版；官方 glTF 校验器、渲染截图对比、4G 计时；`e2e/vrm.spec.ts` |
 | 上线演示的访问码和次数上限（ADR-028） | A | 部署决定 | 内部验证 | `proxy.ts`、`lib/server/access.ts`、`/login`；`tests/unit/access.test.ts`；在生产构建上用请求和 Edge 逐项核对；步骤见 `docs/deploy.md`，没有部署 |
 | 琪叶桃改白发、圆瞳孔，眼睛透过刘海（ADR-030） | A | 主视觉定稿 | 内部验证 | `scripts/restyle-vrm.mts`、`scripts/restyle-painters.js`、`lib/client/vrm-see-through.ts`；官方 glTF 校验器 0 错误；端到端重跑通过，fps=136；`docs/evidence` 截图 11-06 已重拍 |
+| 工作台说人话：聊天式对话、这次查七样、耗时说明（ADR-031） | A | — | 内部验证 | `components/Chat.tsx`、`components/CheckList.tsx`、`components/LatencyWaterfall.tsx`；端到端重跑通过；1440、1280、390 三种宽度截图 |
 
 ## 已知缺口与下一步
 
