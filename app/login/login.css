@@ -1,0 +1,445 @@
+/*
+ * 登录页版式（ADR-032）。普通样式表（项目的 Next 配置把所有 .css 交给 Tailwind 当普通样式处理，CSS 模块用不了），所有选择器都挂在 .login-page 下面。颜色、字体只用 globals.css 的设计变量。三种版式：
+ *   大屏 wide：≥1200 宽、≥640 高、宽高比 ≥16:10。背景铺满（左右居中裁、上下顶对齐），画面上的字按 1920×1080 的画面坐标乘 --s 排，卡片在右下
+ *   分栏 split：≥900 宽、宽高比 ≥1:1（平板横放、窄笔记本）。左边画面（脸附近的裁切图），右边一栏纸
+ *   上下 stack：其余（手机、平板竖放）。上面画面，下面一道纸（像文档封面的腰封）
+ * 朱红只用在按钮、提醒、朱批、印章（ADR-021）：画面和纸之间的「文武线」一粗一细都是墨色；不加阴影、不加发光。
+ */
+
+/* ---------- 上下（默认） ---------- */
+.login-page {
+  position: relative;
+  min-height: 100svh;
+  display: grid;
+  grid-template-rows: minmax(240px, 1fr) auto;
+}
+.login-page .art {
+  position: relative;
+  overflow: hidden;
+  background: var(--background);
+}
+.login-page .img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: 50% 40%;
+  display: block;
+}
+.login-page .stage {
+  display: none;
+}
+.login-page .card {
+  position: relative;
+  background: var(--surface);
+  padding: 22px 16px calc(16px + env(safe-area-inset-bottom));
+}
+.login-page .card > * {
+  max-width: 400px;
+  margin-left: auto;
+  margin-right: auto;
+}
+.login-page .card::before,
+.login-page .card::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+}
+.login-page .card::before {
+  top: 0;
+  border-top: 2px solid var(--foreground);
+}
+.login-page .card::after {
+  top: 5px;
+  border-top: 1px solid var(--foreground);
+}
+
+/* ---------- 分栏 ---------- */
+@media (min-width: 900px) and (min-aspect-ratio: 1 / 1) {
+  .login-page {
+    grid-template-rows: none;
+    grid-template-columns: 1fr 440px;
+    height: 100svh;
+    min-height: 560px;
+  }
+  .login-page .card {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 32px 40px;
+  }
+  .login-page .card > * {
+    width: 100%;
+    max-width: 360px;
+  }
+  .login-page .card::before {
+    inset: 0 auto 0 0;
+    border-top: 0;
+    border-left: 2px solid var(--foreground);
+  }
+  .login-page .card::after {
+    inset: 0 auto 0 5px;
+    border-top: 0;
+    border-left: 1px solid var(--foreground);
+  }
+}
+
+/* ---------- 大屏 ---------- */
+@media (min-width: 1200px) and (min-height: 640px) and (min-aspect-ratio: 16 / 10) {
+  .login-page {
+    --s: max(calc(100vw / 1920), calc(100vh / 1080));
+    display: block;
+    height: 100svh;
+    overflow: hidden;
+  }
+  .login-page .art {
+    position: absolute;
+    inset: 0;
+  }
+  .login-page .img {
+    object-position: 50% 0%;
+  }
+  .login-page .stage {
+    display: block;
+    position: absolute;
+    left: 50%;
+    top: 0;
+    width: calc(1920 * var(--s));
+    height: calc(1080 * var(--s));
+    translate: -50% 0;
+    pointer-events: none;
+  }
+  .login-page .stage > * {
+    position: absolute;
+    margin: 0;
+  }
+  .login-page .col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  .login-page .col > span {
+    display: block;
+    width: var(--box);
+    height: var(--step);
+    line-height: var(--box);
+    text-align: center;
+  }
+  .login-page .title {
+    --box: calc(200 * var(--s));
+    --step: calc(218 * var(--s));
+    left: calc(150 * var(--s));
+    top: calc(228 * var(--s));
+    font: 700 var(--box) / 1 var(--font-serif);
+    letter-spacing: 0;
+  }
+  .login-page .sub {
+    --box: calc(30 * var(--s));
+    --step: calc(44 * var(--s));
+    left: calc(392 * var(--s));
+    top: calc(208 * var(--s));
+    font: var(--box) / 1 var(--font-kai);
+  }
+  .login-page .subCol > span:first-child {
+    font: calc(26 * var(--s)) / 1 var(--font-serif);
+  }
+  /* 和 BrandSeal 一样的画法（朱底、宣纸色楷体字、圆角 3、字号 = 边长 × 0.4），略微歪一点 */
+  .login-page .bigSeal {
+    left: calc(207 * var(--s));
+    top: calc(690 * var(--s));
+    width: calc(86 * var(--s));
+    height: calc(86 * var(--s));
+    rotate: -2deg;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    border-radius: calc(3 * var(--s));
+    background: var(--primary);
+    color: var(--surface);
+    font: calc(34.4 * var(--s)) / 1 var(--font-kai);
+  }
+  .login-page .quote {
+    --box: calc(32 * var(--s));
+    --step: calc(37 * var(--s));
+    right: calc(254 * var(--s));
+    top: calc(82 * var(--s));
+    display: flex;
+    flex-direction: row-reverse;
+    gap: calc(14 * var(--s));
+    font: var(--box) / 1 var(--font-kai);
+  }
+  /* 「小秘密」旁边的朱批：右边一道波浪线（第 5～7 个字） */
+  .login-page .quoteCol1 {
+    position: relative;
+  }
+  .login-page .quoteCol1::after {
+    content: "";
+    position: absolute;
+    right: calc(-9 * var(--s));
+    top: calc(4 * var(--step));
+    height: calc(3 * var(--step));
+    width: calc(8 * var(--s));
+    background: var(--primary);
+    mask:
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='12' viewBox='0 0 8 12'%3E%3Cpath d='M4 0 Q8 3 4 6 Q0 9 4 12' fill='none' stroke='black' stroke-width='1.6'/%3E%3C/svg%3E")
+      repeat-y center / 100% calc(12 * var(--s));
+  }
+  .login-page .who {
+    --box: calc(22 * var(--s));
+    --step: calc(28 * var(--s));
+    right: calc(196 * var(--s));
+    top: calc(84 * var(--s));
+    font: var(--box) / 1 var(--font-kai);
+    color: var(--muted);
+  }
+  .login-page .card {
+    position: absolute;
+    right: clamp(24px, 3.4vw, 64px);
+    bottom: clamp(24px, 4.4vh, 56px);
+    display: block;
+    width: clamp(352px, 20vw, 400px);
+    padding: 26px 28px 18px;
+    border: 1px solid var(--border);
+    border-top: 0;
+  }
+  .login-page .card > * {
+    max-width: none;
+  }
+  .login-page .card::before {
+    inset: 0 0 auto 0;
+    border-left: 0;
+    border-top: 2px solid var(--foreground);
+  }
+  .login-page .card::after {
+    inset: 5px 0 auto 0;
+    border-left: 0;
+    border-top: 1px solid var(--foreground);
+  }
+}
+/* 矮屏（1280×720、1366×768、浏览器里的 1440×900）：卡片收紧，台词和卡片之间才留得出空 */
+@media (min-width: 1200px) and (min-height: 640px) and (max-height: 800px) and (min-aspect-ratio: 16 / 10) {
+  .login-page .card {
+    padding: 22px 24px 14px;
+  }
+  .login-page .head {
+    margin-bottom: 12px;
+  }
+  .login-page .form {
+    gap: 10px;
+  }
+  .login-page .input {
+    height: 40px;
+  }
+  .login-page .ai {
+    margin-top: 10px;
+    padding-top: 8px;
+  }
+}
+
+/* ---------- 卡片里面 ---------- */
+.login-page .head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.login-page .brandName,
+.login-page .loginTitle {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-weight: 600;
+  line-height: 1.2;
+}
+.login-page .brandName {
+  font-size: 20px;
+  letter-spacing: 0.2em;
+}
+.login-page .loginTitle {
+  margin-left: auto;
+  font-size: 16px;
+  letter-spacing: 0.3em;
+  color: var(--muted);
+}
+.login-page .brandSub {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+@media (min-width: 1200px) and (min-height: 640px) and (min-aspect-ratio: 16 / 10) {
+  .login-page .brand {
+    display: none;
+  }
+  .login-page .loginTitle {
+    margin-left: 0;
+    font-size: 22px;
+    color: var(--foreground);
+  }
+}
+.login-page .form {
+  display: grid;
+  gap: 14px;
+  margin: 0;
+}
+.login-page .field {
+  display: grid;
+  gap: 6px;
+}
+.login-page .label {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 14px;
+  font-weight: 500;
+}
+.login-page .label label {
+  cursor: pointer;
+}
+.login-page .label small {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+}
+/* 四边 border 色和卡片只差 1.4 倍，看不出框；底边用 muted（5.3 倍），框的位置才看得清（WCAG 1.4.11） */
+.login-page .input {
+  height: 44px;
+  width: 100%;
+  padding: 0 12px;
+  font: inherit;
+  font-size: 16px;
+  color: var(--foreground);
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-bottom-color: var(--muted);
+  border-radius: 4px;
+}
+.login-page .input:hover {
+  border-color: var(--muted);
+}
+.login-page .input:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+.login-page .input[aria-invalid="true"] {
+  border-color: var(--bad);
+}
+.login-page .btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 44px;
+  border: 0;
+  border-radius: 4px;
+  background: var(--primary);
+  color: var(--surface);
+  font: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.5em;
+  text-indent: 0.5em;
+  text-decoration: none;
+  cursor: pointer;
+}
+.login-page .btnLong {
+  letter-spacing: 0.1em;
+  text-indent: 0.1em;
+}
+/* 已登录：进入工作台 + 退出 */
+.login-page .actions {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+}
+.login-page .btnGhost {
+  height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--border);
+  border-bottom-color: var(--muted);
+  border-radius: 4px;
+  background: var(--background);
+  color: var(--foreground);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+.login-page .btnGhost:hover {
+  border-color: var(--muted);
+}
+.login-page .btnGhost:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.login-page .btn:hover {
+  opacity: 0.9;
+}
+.login-page .btn:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+/* 按钮下面一格：平时写「登录一次管几天」，出错时换成出错原因（卡片高度不变，不会顶到台词） */
+.login-page .status {
+  display: block;
+  margin: 0;
+  min-height: 21px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+.login-page .err {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--bad);
+}
+.login-page .notice {
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--foreground);
+}
+.login-page .err svg {
+  flex: none;
+  margin-top: 3px;
+}
+.login-page .note {
+  margin: 0 0 14px;
+  font-size: 14px;
+  line-height: 1.7;
+}
+.login-page .ai {
+  margin: 14px 0 0;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+.login-page .ai b {
+  display: block;
+  font-weight: 500;
+  color: var(--foreground);
+}
+
+/* Windows 高对比度：不放背景图和画面上的字，只留卡片 */
+@media (forced-colors: active) {
+  .login-page .art,
+  .login-page .stage {
+    display: none;
+  }
+  .login-page {
+    display: block;
+  }
+  .login-page .card {
+    position: static;
+    width: auto;
+    max-width: 420px;
+    margin: 40px auto;
+    border: 1px solid CanvasText;
+  }
+  .login-page .brand {
+    display: block;
+  }
+}

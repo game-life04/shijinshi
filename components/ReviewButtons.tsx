@@ -4,6 +4,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { toLoginIfExpired } from "@/lib/client/session-expired";
 import type { Verdict } from "@/lib/domain/types";
 import { Button } from "./ui";
 
@@ -22,6 +23,7 @@ export default function ReviewButtons({ runId, findingId, verdict }: { runId: st
     });
     setBusy(false);
     if (!res.ok) {
+      if (toLoginIfExpired(res.status)) return;
       setError((await res.json().catch(() => ({}))).error ?? "复核失败");
       return;
     }

@@ -1,12 +1,15 @@
 // 实时事件流：先补发已有事件，再推送新事件；运行结束后关闭。
 
 import type { RunEvent } from "@/lib/domain/types";
+import { requireSession } from "@/lib/server/auth";
 import { getRun, subscribe } from "@/lib/server/runs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request, ctx: RouteContext<"/api/runs/[id]/events">) {
+  const denied = requireSession(req);
+  if (denied) return denied;
   const { id } = await ctx.params;
   let view: ReturnType<typeof getRun> = null;
   try {

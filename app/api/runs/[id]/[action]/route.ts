@@ -1,5 +1,6 @@
 // 暂停 / 继续 / 终止。暂停只阻止派发新用例；终止立即中止当前用例，不可恢复。
 
+import { requireSession } from "@/lib/server/auth";
 import { crossSite } from "@/lib/server/http";
 import { cancelRun, pauseRun, resumeRun } from "@/lib/server/runs";
 
@@ -8,6 +9,8 @@ export const runtime = "nodejs";
 const ACTIONS = { pause: pauseRun, resume: resumeRun, cancel: cancelRun } as const;
 
 export async function POST(req: Request, ctx: RouteContext<"/api/runs/[id]/[action]">) {
+  const denied = requireSession(req);
+  if (denied) return denied;
   const blocked = crossSite(req);
   if (blocked) return blocked;
   const { id, action } = await ctx.params;

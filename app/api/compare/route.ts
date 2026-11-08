@@ -1,11 +1,14 @@
 // 比较两次运行（同一套件版本、同一数据等级才可比）。
 
+import { requireSession } from "@/lib/server/auth";
 import { compareRuns } from "@/lib/server/runs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
+  const denied = requireSession(req);
+  if (denied) return denied;
   const url = new URL(req.url);
   const a = url.searchParams.get("a");
   const b = url.searchParams.get("b");

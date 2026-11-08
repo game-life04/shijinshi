@@ -1,67 +1,26 @@
-// 页面外框：顶部是「分寸」印章、导航（主要视图）和常驻的 AI 标识。
+// 页面外框（服务端组件）：外框本身在 AppFrame；这里把当前登录的账号和「退出」放进顶栏（ADR-032）。各页面照旧从这里引。
+// 顺手做页面的兜底检查（11-06 安全复核）：除登录页外所有页面都包在这里，要登录却没有有效会话就跳登录页，配置有问题就说明原因。
+// 平时 proxy 已经拦过，这里只在 matcher 哪天写错时起作用。先读 cookie 再看配置，原因见 lib/server/session.ts。
+// 出错页 app/error.tsx 是客户端组件，不能读 cookie，直接用 AppFrame，不显示账号。
 
-import { Clapperboard, ListChecks, ScrollText, Settings, SquareTerminal, Swords } from "lucide-react";
-import Link from "next/link";
+import { headers } from "next/headers";
+import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
+import { authConfig, openButNotLocal } from "@/lib/server/auth";
+import { getSession } from "@/lib/server/session";
+import AccountMenu from "./AccountMenu";
+import AppFrame from "./AppFrame";
 
-const NAV = [
-  { href: "/workbench", label: "体检工作台", icon: SquareTerminal },
-  { href: "/play", label: "打字闯关", icon: Swords },
-  { href: "/fates", label: "三种结局", icon: Clapperboard },
-  { href: "/suites", label: "用例库", icon: ListChecks },
-  { href: "/runs", label: "运行记录", icon: ScrollText },
-  { href: "/settings", label: "设置", icon: Settings },
-];
+export { BrandSeal } from "./AppFrame";
 
-/** 「分寸」两个字竖排在一方朱红印里 */
-export function BrandSeal({ size = 34 }: { size?: number }) {
+export default async function AppShell({ children, active, fill }: { children: ReactNode; active?: string; fill?: boolean }) {
+  const session = await getSession();
+  const config = authConfig();
+  if (config.mode === "broken" || openButNotLocal((await headers()).get("host"))) redirect("/login?error=config");
+  if (config.mode === "accounts" && !session) redirect("/login");
   return (
-    <span
-      aria-hidden
-      className="inline-flex shrink-0 flex-col items-center justify-center rounded-[3px] bg-primary leading-none text-surface"
-      style={{ width: size, height: size, fontFamily: "var(--font-kai)", fontSize: size * 0.4 }}
-    >
-      <span>分</span>
-      <span>寸</span>
-    </span>
-  );
-}
-
-/** fill：大屏上整页正好一屏高，里面的面板各自滚动（工作台用）；手机上照常整页往下滑 */
-export default function AppShell({ children, active, fill = false }: { children: ReactNode; active?: string; fill?: boolean }) {
-  return (
-    <div className={`flex min-h-screen flex-col ${fill ? "lg:h-dvh lg:min-h-0" : ""}`}>
-      <header className="flex flex-wrap items-center gap-x-5 gap-y-1 border-b border-border bg-surface px-4 py-2">
-        <Link href="/workbench" className="flex items-center gap-2" aria-label="分寸 · AI 语音角色安全体检台">
-          <BrandSeal />
-          <span className="flex flex-col leading-tight">
-            <span className="text-lg tracking-[0.2em]" style={{ fontFamily: "var(--font-serif)" }}>
-              分寸
-            </span>
-            <span className="hidden text-[11px] text-muted sm:inline">AI 语音角色安全体检台</span>
-          </span>
-        </Link>
-        <nav aria-label="主导航" className="no-print flex flex-wrap gap-1">
-          {NAV.map(({ href, label, icon: Icon }) => (
-            <Link
-              key={href}
-              href={href}
-              aria-current={active === href ? "page" : undefined}
-              className={`inline-flex items-center gap-1 border-b-2 px-2 py-1 text-sm ${active === href ? "border-primary text-foreground" : "border-transparent text-muted hover:text-foreground"}`}
-            >
-              <Icon size={15} aria-hidden />
-              {label}
-            </Link>
-          ))}
-        </nav>
-        <span
-          className="ml-auto rounded-sm border border-border px-2 py-0.5 text-xs text-muted"
-          title="依据《人工智能生成合成内容标识办法》与拟人化互动管理办法第十八条"
-        >
-          被测对象是 AI 角色，不是真人 · 角色回复由 AI 生成
-        </span>
-      </header>
-      <main className={`flex min-h-0 flex-1 flex-col ${fill ? "lg:overflow-hidden" : ""}`}>{children}</main>
-    </div>
+    <AppFrame active={active} fill={fill} account={<AccountMenu />}>
+      {children}
+    </AppFrame>
   );
 }

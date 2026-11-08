@@ -3,6 +3,7 @@
 import { isDefaultPersona, parsePersona } from "@/lib/domain/persona";
 import { POLICY_LABEL, type ReleasePolicy, type RunConfig, type SubjectVariant, VARIANTS } from "@/lib/domain/types";
 import { rateLimit, rateLimitEnabled } from "@/lib/server/access";
+import { requireSession } from "@/lib/server/auth";
 import { crossSite, readJsonObject } from "@/lib/server/http";
 import { createRun, listRuns, startRun } from "@/lib/server/runs";
 
@@ -30,6 +31,9 @@ function clampInt(v: unknown, min: number, max: number, fallback: number) {
 }
 
 export async function POST(req: Request) {
+  // proxy 之外再核一次会话，以后 matcher 写错了也不会漏放（ADR-032）
+  const denied = requireSession(req);
+  if (denied) return denied;
   const blocked = crossSite(req);
   if (blocked) return blocked;
   const body = (await readJsonObject(req)) as Partial<RunConfig>;
@@ -71,6 +75,8 @@ export async function POST(req: Request) {
   }
 }
 
-export async function GET() {
+export async function GET(req: Request) {
+  const denied = requireSession(req);
+  if (denied) return denied;
   return Response.json(listRuns());
 }

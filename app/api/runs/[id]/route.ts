@@ -1,9 +1,12 @@
+import { requireSession } from "@/lib/server/auth";
 import { getRun } from "@/lib/server/runs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET(_req: Request, ctx: RouteContext<"/api/runs/[id]">) {
+export async function GET(req: Request, ctx: RouteContext<"/api/runs/[id]">) {
+  const denied = requireSession(req);
+  if (denied) return denied;
   const { id } = await ctx.params;
   try {
     const view = getRun(id);

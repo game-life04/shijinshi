@@ -98,7 +98,8 @@ async function main() {
   mkdirSync(outDir, { recursive: true });
 
   // 生产服务；模拟模式下把密钥清空，免得 next 从 .env.local 读到
-  const env = { ...process.env, ...(live ? {} : { LLM_API_KEY: "" }) };
+  // 账号相关的三个变量置空：开发机 .env.local 里配了账号时，这台只给脚本用的服务也不要求登录（只在本机监听）
+  const env = { ...process.env, AUTH_ACCOUNTS: "", SESSION_SECRET: "", ACCESS_CODE: "", ...(live ? {} : { LLM_API_KEY: "" }) };
   const server = spawn(`npx next start -H 127.0.0.1 -p ${PORT}`, { env, shell: true, stdio: "ignore" });
   const samples: Sample[] = [];
   try {

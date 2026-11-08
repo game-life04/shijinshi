@@ -14,4 +14,4 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - 只写仓库里查得到的事实，每句事实后面用 HTML 注释写出处（文件路径，或 `kb/clauses.jsonl` 里的条文 id）。查不到的写【待补】，不要编数字、调查、新闻、论文，也不要替别的工具下结论。
 - 条文照 `kb/clauses.jsonl` 原文引用。模拟数据和草稿题跑出来的数字（比如 `docs/pilot-log.md`）不当实验结果写。
 - 草稿只写到 `docs/writing/drafts/`；不改代码，不改 `docs/decisions.md`、`docs/implementation-status.md` 这些记录，不读 `.env*`。
-- 不写任何真人姓名（队员写「队员 A」「队员 B」）、单位、密钥、访问码、服务器地址、画师名。
+- 不写任何真人姓名（队员写「队员 A」「队员 B」）、单位、密钥、账号和密码、服务器地址、画师名。

@@ -3,11 +3,12 @@
 // 页面渲染出错时显示（Next 的 error 文件约定，必须是客户端组件）：说清楚发生了什么，给出重试和回工作台两个出口；
 // 已经跑完的运行都落了盘，出错不会丢结果（规格 01 §2.3：每个异常状态都要有可执行的恢复操作）。
 // 生产环境里服务端错误的原文不会传到浏览器，只显示一个编号，方便到服务端日志里对上。
+// 外框用 AppFrame 而不是 AppShell：客户端组件读不了 cookie，出错页的顶栏不显示账号（ADR-032）。
 
 import { RotateCcw, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import { useEffect } from "react";
-import AppShell from "@/components/AppShell";
+import AppFrame from "@/components/AppFrame";
 import { Button } from "@/components/ui";
 
 export default function ErrorPage({ error, retry }: { error: Error & { digest?: string }; retry: () => void }) {
@@ -15,7 +16,7 @@ export default function ErrorPage({ error, retry }: { error: Error & { digest?: 
     console.error(error);
   }, [error]);
   return (
-    <AppShell>
+    <AppFrame>
       <div role="alert" className="mx-auto mt-16 max-w-md space-y-3 rounded-sm border border-border bg-surface p-6 text-center text-sm">
         <h1 className="flex items-center justify-center gap-1.5 text-lg font-semibold">
           <TriangleAlert size={18} className="text-primary" aria-hidden />
@@ -38,6 +39,6 @@ export default function ErrorPage({ error, retry }: { error: Error & { digest?: 
           </Link>
         </div>
       </div>
-    </AppShell>
+    </AppFrame>
   );
 }

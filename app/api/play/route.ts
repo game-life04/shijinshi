@@ -3,6 +3,7 @@
 import { LEVEL_IDS, type LevelId } from "@/lib/domain/levels";
 import { parsePersona } from "@/lib/domain/persona";
 import { rateLimit } from "@/lib/server/access";
+import { requireSession } from "@/lib/server/auth";
 import { crossSite, readJsonObject } from "@/lib/server/http";
 import { sayPlay, startPlay, verdictPlay } from "@/lib/server/play";
 
@@ -10,6 +11,9 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
+  // proxy 之外再核一次会话，以后 matcher 写错了也不会漏放（ADR-032）
+  const denied = requireSession(req);
+  if (denied) return denied;
   const blocked = crossSite(req);
   if (blocked) return blocked;
   const body = await readJsonObject(req);

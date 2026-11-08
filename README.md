@@ -60,7 +60,7 @@ cp .env.example .env.local     # Windows cmd 用 copy .env.example .env.local；
 npm run dev                    # 打开 http://127.0.0.1:3000 ，首屏就是体检工作台
 ```
 
-`npm run dev` 和 `npm start` 默认只在本机（127.0.0.1）监听。要放到公网上演示，先在 `.env.local` 里设访问码 `ACCESS_CODE`：设了以后打开网站要先输访问码，新建体检、闯关、登录尝试都有次数上限，防止别人刷掉你的模型额度；步骤和 nginx 配置见 [docs/deploy.md](docs/deploy.md)。没设访问码时不登录、不限流，只适合本机或可信的网络。改数据的接口只接受本站页面发来的请求（防跨站请求伪造）。
+`npm run dev` 和 `npm start` 默认只在本机（127.0.0.1）监听。要放到公网上演示，先给要用的人配账号（`npx tsx scripts/account.ts` 生成账号记录和会话密钥，写进 `.env.local` 的 `AUTH_ACCOUNTS`、`SESSION_SECRET`）：配了以后打开网站要先用账号和密码登录，新建体检、闯关按账号有次数上限，登录按来源和账号名各有上限，防止别人刷掉你的模型额度；步骤和 nginx 配置见 [docs/deploy.md](docs/deploy.md)。没配账号时不登录、不限流，只适合本机或可信的网络（填了模型密钥却没配账号时，只许从本机打开）。改数据的接口只接受本站页面发来的请求（防跨站请求伪造）。
 
 ## 常用命令
 
@@ -68,13 +68,14 @@ npm run dev                    # 打开 http://127.0.0.1:3000 ，首屏就是体
 |---|---|
 | `npm run lint` / `npm run typecheck` | 代码规范检查 / TypeScript 严格类型检查 |
 | `npm test` | 单元测试（不调用真实模型） |
-| `npm run build` 然后 `npm run test:e2e` | 端到端测试：要先构建（测试用生产模式起服务）；用本机 Edge，三种屏幕尺寸。部分流程只在一种尺寸上跑，显示的「跳过」是预期的。截图默认写到 test-results，设 `UPDATE_EVIDENCE=1` 才更新仓库里的证据截图；运行数据写到 data/runs-e2e，不进平时的运行记录 |
+| `npm run build` 然后 `npm run test:e2e` | 端到端测试：要先构建（测试用生产模式起服务）；用本机 Edge，三种屏幕尺寸。部分流程只在一种尺寸上跑，显示的「跳过」是预期的。截图默认写到 test-results，设 `UPDATE_EVIDENCE=1` 才更新仓库里的证据截图；同一份构建起两台服务：3100 不登录，3101 配了测试账号（两个端口要空着）；运行数据写到 data/runs-e2e、data/runs-e2e-auth，不进平时的运行记录 |
 | `npm run build` | 生产构建 |
 | `npm run kb:build` | 从法规网页快照重新生成条文库 |
 | `npm run eval:validate -- --dataset suites/smoke.jsonl` | 校验用例文件（结构 + 语义） |
 | `npm run eval:run -- --config eval/configs/smoke-b2.json --output eval/out/smoke-b2` | 按配置跑一次体检并导出原始数据。只认命令行环境变量，默认是模拟数据；要用真实模型：`npx tsx --env-file=.env.local scripts/eval-run.ts --config …` |
 | `npm run eval:summarize -- --input eval/out/smoke-b2` | 从原始数据重算汇总并核对分母 |
-| `npm run release:check` | 发布前扫描密钥、内网地址和本地禁词表 |
+| `npm run release:check` | 发布前扫描密钥、会话密钥、账号记录、内网地址和本地禁词表 |
+| `npx tsx scripts/account.ts add <账号名>` / `secret` / `check` | 上线演示的账号：生成一条账号记录（密码输两遍、不显示）、生成会话密钥、检查服务器上的登录配置（见 [docs/deploy.md](docs/deploy.md)） |
 | `npm run experiments -- --suite dev` | 对照实验一条命令跑完：B0 / B1 / B2 各跑一遍出误拦率、原话越界率、最终暴露率，再把 B2 的对话让裁判不查条文重判一遍；真实模型要加 `--yes` 才跑。`suites/dev.jsonl` 要先用下面的导入脚本从用例表生成；还没有时可以先跑 `npm run experiments -- --suite smoke --include-drafts`（草稿，预览） |
 | `npm run experiments:voice -- --runs 3 --delays 0,4000` | 三种放行方式对照：用浏览器反复播放「三种结局」页，记漏出和首声（先 `npm run build`；端口默认 3300，`--port` 可改）；真实模型要加 `--yes` |
 | `npx tsx --env-file=.env.local scripts/guard-calibrate.ts --yes --repeat 3` | 护栏校准：拿 `eval/calibration/guard.json` 里的句子（该拦的、该放行的）过一遍护栏，数误拦和漏拦；`--split blind` 只跑某一份，`--guard` 换一份护栏代码做前后对比。校准集是草稿，不进正式统计 |
@@ -111,7 +112,7 @@ lib/audio/intervals.ts   采样区间运算（违规音频渲染时长）
 
 - 只测本人原创或已获授权的角色；不接受任意外部网址。
 - 密钥只放服务端环境变量；页面、日志、导出都不显示密钥。
-- 放到公网时用访问码和次数上限挡住外人刷额度（[docs/deploy.md](docs/deploy.md)）；访问码同样只放在服务端环境变量里。
+- 放到公网时用账号登录和次数上限挡住外人刷额度（[docs/deploy.md](docs/deploy.md)）：账号由参赛队分配、不开放注册，服务器上只存密码的哈希；账号记录和会话密钥同样只放在服务端环境变量里。
 - 本轮随机口令单独存放，不经接口返回，也不提供给裁判。
 - 不保存录音；敏感行为用例使用人工审定的固定输入，不让 Agent 自由生成。
 - 界面常驻「被测对象是 AI 角色，不是真人」标识。

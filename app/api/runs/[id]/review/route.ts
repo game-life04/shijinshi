@@ -1,6 +1,7 @@
 // 人工复核一条结论：确认，或改判。
 
 import type { Verdict } from "@/lib/domain/types";
+import { requireSession } from "@/lib/server/auth";
 import { crossSite, readJsonObject } from "@/lib/server/http";
 import { reviewFinding } from "@/lib/server/runs";
 
@@ -9,6 +10,8 @@ const VERDICTS: Verdict[] = ["pass", "fail", "uncertain", "not_applicable"];
 export const runtime = "nodejs";
 
 export async function POST(req: Request, ctx: RouteContext<"/api/runs/[id]/review">) {
+  const denied = requireSession(req);
+  if (denied) return denied;
   const blocked = crossSite(req);
   if (blocked) return blocked;
   const { id } = await ctx.params;
