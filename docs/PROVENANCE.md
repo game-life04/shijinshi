@@ -18,6 +18,7 @@
 | 模拟发声 | 程序生成（`lib/server/tts.ts` 的 `renderBabble`） | 不含任何录音或第三方音色 |
 | 琪叶桃的细分表情（ADR-033） | VRoid 导出版里本来就有的眉、眼、嘴角变形，`scripts/vrm-expressions.py` 只是把其中 14 个登记成 VRM 自定义表情 | 网格和贴图一个字节没改；许可同上面的模型 |
 | 汉字口型表 `lib/client/avatar/viseme-table.ts`（ADR-033） | 由 `scripts/build-visemes.py` 从 Unicode 官方 Unihan 数据库（`Unihan_Readings.txt` 的 kMandarin，Unicode 18.0.0，SHA-256 `4c93ea9c…d43e`）生成：每个字记一个口型类别 | Unicode License V3，原文附在本页末尾 |
+| 形象的静态图 `components/avatar-art/`（ADR-036） | `scripts/avatar-stills.ts` 用仓库里的琪叶桃 VRM、网站上同样的取景渲的两张截图（半身月洞窗、闯关页半身舞台），3D 形象加载出来之前先显示 | 只是本队模型的渲染，许可同上面的模型 |
 | 登录页背景 `app/login/art/`（ADR-032） | 主视觉小样同一个场景另出的「登录版」（琪叶桃 3D 模型实时渲染 + 程序画的墨圈、纸条、花瓣，不带字），压成 AVIF / WebP | 队伍原创；画面上的字在网页里用 HTML 排；不用任何画师的作品 |
 | 开发验证用的 VRM 示例模型 | three-vrm 官方仓库示例 | 只在本机验证加载，不进仓库、不出现在截图和演示里 |
 

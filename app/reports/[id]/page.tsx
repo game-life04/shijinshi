@@ -22,22 +22,32 @@ import { FindingView, findingSpans } from "@/components/Transcript";
 import { Badge, CaseBadge, IssueSeal, TallySeal } from "@/components/ui";
 import {
   clauseNo,
+  duration,
   familyClauses,
+  findingTitle,
   INTENT_FULL,
+  isVoiceInputSkip,
   LAW_EFFECTIVE,
   LAW_FULL,
   LAW_SHORT,
+  leakHow,
   modelName,
   modelsLine,
+  notRunReason,
   PLAIN,
   POLICY_SHOW,
   VARIANT_SHORT,
+  VOICE,
+  VOICE_HOW,
 } from "@/components/wording";
+import { getAssertionDescription } from "@/lib/domain/labels";
 import { type CaseLayers, caseLayers, passTally } from "@/lib/domain/layers";
 import { DEFAULT_PERSONA } from "@/lib/domain/persona";
 import { type CaseResult, FAMILY_LABEL, type Family, GUARDED_VARIANTS, type UtteranceAudio } from "@/lib/domain/types";
+import { canReview } from "@/lib/server/auth";
 import { getClause } from "@/lib/server/rag";
 import { getReport, previousCompatible } from "@/lib/server/runs";
+import { getSession } from "@/lib/server/session";
 import { loadStrategies } from "@/lib/server/tester";
 
 export const dynamic = "force-dynamic";
@@ -69,6 +79,12 @@ const NOT_TESTABLE = [
 ];
 
 const FAMILY_ORDER = Object.keys(FAMILY_LABEL) as Family[];
+
+/** 句子编号「SMOKE_CANARY_001#1.u0」→「第 1 轮第 1 句」（题号在同一行的悬停里，评审 R27） */
+function uttLabel(id: string): string {
+  const m = /#(\d+)\.u(\d+)$/.exec(id);
+  return m ? `${id.split("#")[0]} 第 ${m[1]} 轮第 ${Number(m[2]) + 1} 句` : id;
+}
 
 /** 这一例里被护栏拦下（或放出去以后被截）的句子，以及换成了什么 */
 function stopsOf(r: CaseResult): { text: string; instead?: string; cut: boolean }[] {
@@ -121,6 +137,8 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
   const c = m.counts;
   const clauseText = (cid: string) => getClause(cid)?.text;
   const finished = ["completed", "cancelled", "failed"].includes(m.state);
+  // 复核按钮只给能复核的账号（设了 AUTH_REVIEWERS 时；没设、没配账号时谁都能，评审 R31）
+  const reviewer = canReview((await getSession())?.account);
   const sourceClause = getClause("anthropomorphic-2026:18");
   const simulated = m.data_level !== "live";
   // 语音计量汇总（只统计浏览器实际上报的轮次）
@@ -149,6 +167,9 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
 
   // ② 总检结论
   const unfinished = c.planned - c.completed;
+  /** 没跑的语音输入题（本版不测，评审 R29）；全是草稿时「草稿」只在页头说一次 */
+  const voiceSkipped = results.filter((r) => r.status === "not_run" && isVoiceInputSkip(r.error)).length;
+  const allDraft = results.length > 0 && results.every((r) => r.approval !== "approved");
   const helped = guarded ? rows.filter((x) => x.r.status === "completed" && x.r.verdict === "pass" && helpedBy(x.layers)) : [];
   const helpedByFamily = FAMILY_ORDER.map((f) => [f, helped.filter((x) => x.r.family === f).length] as const).filter(([, n]) => n > 0);
   const judgeUnsure = simulated
@@ -198,7 +219,9 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
             <Badge tone={m.data_level === "live" ? "ok" : "warn"}>
               {m.data_level === "live" ? "真实模型数据" : "模拟数据：不能作为实验结果"}
             </Badge>
-            {m.preview && <Badge tone="warn">含草稿用例：预览，不计入正式统计</Badge>}
+            {m.preview && (
+              <Badge tone="warn">{allDraft ? "这套题都是草稿：结果只作预览，不计入正式统计" : "含草稿用例：预览，不计入正式统计"}</Badge>
+            )}
             <Badge tone="muted">AI 辅助生成；自查辅助，不是合规认证</Badge>
           </div>
           <p className="text-xs text-muted">
@@ -230,7 +253,8 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
             <div className="min-w-0 flex-1 space-y-1">
               <p>
                 计划 {c.planned} 题：合格 {c.pass}、不合格 {c.fail}、不确定 {c.uncertain}、不适用 {c.not_applicable}
-                {unfinished ? `、没跑完 ${unfinished}` : ""}。没跑完、出错的都算在分母里，不算通过。
+                {unfinished ? `、没跑完 ${unfinished}${voiceSkipped ? `（其中 ${voiceSkipped} 道是语音输入题，本版不测）` : ""}` : ""}
+                。没跑完、出错的都算在分母里，不算通过。
               </p>
               {helped.length > 0 && (
                 <p>
@@ -295,23 +319,24 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
               </ul>
             </div>
           )}
-          {pendingNos.length > 0 && (
+          {pendingReview.length > 0 && (
             <div>
               <h3 className="text-xs font-semibold text-muted">待人工复核（{pendingReview.length} 条结论）</h3>
-              <ul className="mt-1 space-y-1.5">
-                {rows
-                  .filter((x) => pendingNos.includes(x.no))
-                  .slice(0, 3)
-                  .map((x) => (
-                    <li key={x.r.case_id} className="space-y-0.5 text-xs">
-                      <a className="link" href={`#case-${x.no}`}>
-                        第 {x.no} 例 · {FAMILY_LABEL[x.r.family]}
-                      </a>
-                      <LayerStrip layers={x.layers} />
-                    </li>
-                  ))}
+              <ul className="mt-1 space-y-0.5 text-xs">
+                {rows.flatMap((x) =>
+                  x.r.findings
+                    .filter((f) => f.review_status === "pending")
+                    .map((f) => (
+                      <li key={f.finding_id}>
+                        <a className="link" href={`#case-${x.no}`}>
+                          第 {x.no} 例 · {FAMILY_LABEL[x.r.family]}
+                        </a>
+                        <span className="text-muted"> · {findingTitle(f.rule_id, getAssertionDescription(f.rule_id)).title}</span>
+                      </li>
+                    )),
+                )}
               </ul>
-              {pendingNos.length > 3 && <p className="mt-1 text-xs text-muted">另外 {pendingNos.length - 3} 例见上面总检结论里的列表。</p>}
+              {!reviewer && <p className="mt-1 text-xs text-muted">这个账号只能看；复核由参赛队的复核账号做。</p>}
             </div>
           )}
         </section>
@@ -395,10 +420,15 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
                     <span className="font-semibold">第 {no} 例</span>
                     <span>{FAMILY_LABEL[r.family]}</span>
                     {r.intent && <span className="text-xs text-muted">{INTENT_FULL[r.intent]}</span>}
-                    {r.approval !== "approved" && <span className="text-xs text-muted">草稿</span>}
+                    {r.approval !== "approved" && !allDraft && <span className="text-xs text-muted">草稿</span>}
                     <CaseBadge status={r.status} verdict={r.verdict} />
+                    {pending && (
+                      <span className="text-xs text-warn">
+                        还有 {r.findings.filter((f) => f.review_status === "pending").length} 条待复核，复核完这题才有结论
+                      </span>
+                    )}
                     <span className="font-mono text-[11px] text-muted">{r.case_id}</span>
-                    {r.error && <span className="text-xs text-muted">{r.error}</span>}
+                    {r.error && <span className="text-xs text-muted">{notRunReason(r.error)}</span>}
                   </span>
                   {r.status === "completed" && <LayerStrip layers={layers} />}
                 </summary>
@@ -416,9 +446,14 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
                     {r.findings.map((f) => (
                       <div key={f.finding_id}>
                         <FindingView f={f} clauseText={clauseText} simulated={simulated} />
-                        {finished && f.review_status === "pending" && (
+                        {finished && reviewer && f.review_status === "pending" && (
                           <div className="no-print">
                             <ReviewButtons runId={m.run_id} findingId={f.finding_id} verdict={f.verdict} />
+                          </div>
+                        )}
+                        {finished && reviewer && (f.review_status === "confirmed" || f.review_status === "overturned") && (
+                          <div className="no-print">
+                            <ReviewButtons runId={m.run_id} findingId={f.finding_id} verdict={f.verdict} reviewed />
                           </div>
                         )}
                       </div>
@@ -533,22 +568,25 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
           {m.config.voice && (
             <section className="rounded-sm border border-border bg-surface p-3">
               <h3 className="mb-1 font-semibold">语音计量（浏览器渲染层）</h3>
-              <p className="mb-2 text-xs text-muted">
-                口径：违规音频渲染时长 = 违规内容的采样区间 ∩ 浏览器 AudioWorklet 实际渲染过的采样区间（规格 02
-                §4.2），由服务端用浏览器上报的区间计算； 首声等待 = 浏览器收到本轮输入事件 → 第一个非静音采样被渲染；停止响应是「收到截断 →
-                确认已丢弃旧音频」的上界。 都不是扬声器实听的数字。
-                {audioLevel === "simulation" ? "本次是模拟发声，按字精确定位；数字只说明机制，不能当实验结果。" : ""}
-              </p>
+              <div className="mb-2 text-xs text-muted">
+                <p>怎么量的：</p>
+                <ol className="list-decimal pl-5">
+                  {VOICE_HOW.map((x) => (
+                    <li key={x}>{x}</li>
+                  ))}
+                </ol>
+                {audioLevel === "simulation" && <p>本次是模拟发声，按字算；数字只说明机制，不能当实验结果。</p>}
+              </div>
               <dl className="grid gap-x-4 gap-y-1 text-sm sm:grid-cols-2">
                 <dt className="text-muted">已计量的轮次</dt>
                 <dd>
                   {played.length} / {audioTurns.length}
                   {audioTurns.length > played.length ? "（其余轮次没有浏览器上报，不计量）" : ""}
                 </dd>
-                <dt className="text-muted">首声等待</dt>
+                <dt className="text-muted">{VOICE.first}</dt>
                 <dd>
                   {firsts.length
-                    ? `中位数 ${firsts[firsts.length >> 1]} ms，最小 ${firsts[0]} ms，最大 ${firsts.at(-1)} ms（${firsts.length} 轮）`
+                    ? `一般 ${duration(firsts[firsts.length >> 1])}，最快 ${duration(firsts[0])}，最慢 ${duration(firsts.at(-1) ?? 0)}（${firsts.length} 轮）`
                     : "待测"}
                 </dd>
                 <dt className="text-muted">截断次数</dt>
@@ -559,22 +597,24 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
                   <thead className="text-muted">
                     <tr>
                       <th className="py-1">句子</th>
-                      <th>违规音频渲染</th>
-                      <th>定位精度</th>
-                      <th>截断前已渲染</th>
-                      <th>停止响应</th>
-                      <th>口型归零</th>
+                      <th>{VOICE.leak}</th>
+                      <th>怎么算</th>
+                      <th>{VOICE.before}</th>
+                      <th>{VOICE.stop}</th>
+                      <th>{VOICE.mouth}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {cuts.map((u) => (
                       <tr key={u.utterance_id} className="border-t border-border">
-                        <td className="py-1 font-mono">{u.utterance_id}</td>
-                        <td>{u.leak_rendered_ms ?? "—"} ms</td>
-                        <td>{u.violation_level === "char" ? "按字精确" : "句级上界"}</td>
-                        <td>{u.rendered_ms} ms</td>
-                        <td>≤ {u.cancel_to_stop_ms ?? "—"} ms</td>
-                        <td>{u.cancel_to_mouth_zero_ms ?? "—"} ms</td>
+                        <td className="py-1" title={u.utterance_id}>
+                          {uttLabel(u.utterance_id)}
+                        </td>
+                        <td>{u.leak_rendered_ms != null ? duration(u.leak_rendered_ms) : "—"}</td>
+                        <td>{leakHow(u.violation_level === "char" ? "char" : "sentence_upper_bound")}</td>
+                        <td>{duration(u.rendered_ms)}</td>
+                        <td>≤ {u.cancel_to_stop_ms != null ? duration(u.cancel_to_stop_ms) : "—"}</td>
+                        <td>{u.cancel_to_mouth_zero_ms != null ? duration(u.cancel_to_mouth_zero_ms) : "—"}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -608,7 +648,8 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
               <a className="link" href={sourceClause?.source_url} target="_blank" rel="noreferrer">
                 湖南省人民政府网转载页
               </a>
-              （页面注明来源为国家互联网信息办公室网站），快照 SHA-256 <span className="font-mono">{sourceClause?.snapshot_sha256}</span>。
+              （页面注明来源为国家互联网信息办公室网站），快照 SHA-256{" "}
+              <span className="font-mono break-all">{sourceClause?.snapshot_sha256}</span>。
             </p>
           </section>
         </section>

@@ -12,16 +12,23 @@ const ORDER = Object.keys(FAMILY_LABEL) as Family[];
 
 type CellState = { status?: string; verdict?: string };
 
+// 格子（评审 R44，和 R19 的章法一致）：合格朱红框、不合格墨块带 ✕、不确定虚线框带 ?、不适用细框带一道斜线、
+// 没出结果（出错、平台拒答、终止、没跑）灰格、还没跑的空框（边框用 muted，看得见）
 function cellClass(s: CellState | undefined) {
   if (s?.status === "completed") {
     if (s.verdict === "pass") return "border-2 border-primary";
-    if (s.verdict === "fail") return "bg-foreground";
-    if (s.verdict === "uncertain") return "border border-dashed border-warn";
-    return "border border-border";
+    if (s.verdict === "fail") return "bg-foreground text-surface";
+    if (s.verdict === "uncertain") return "border border-dashed border-warn text-warn";
+    return "border border-muted text-muted";
   }
   if (s?.status === "running") return "border border-primary bg-primary-soft motion-safe:animate-pulse";
-  if (s?.status) return "border border-border bg-sunken"; // 出错、平台拦截、取消、没跑
-  return "border border-border";
+  if (s?.status) return "border border-muted bg-sunken"; // 出错、平台拒答、终止、没跑
+  return "border border-muted";
+}
+
+function cellMark(s: CellState | undefined): string {
+  if (s?.status !== "completed") return "";
+  return s.verdict === "fail" ? "✕" : s.verdict === "uncertain" ? "?" : s.verdict === "not_applicable" ? "／" : "";
 }
 
 /** 格子的说明。读屏念的名字不带题号（题号在左边的列表按钮里，免得同一道题有两个同名按钮），鼠标悬停时带题号 */
@@ -62,13 +69,13 @@ export default function CheckList({
           const mine = cases.filter((c) => c.family === f);
           if (compact && mine.length === 0) return null; // 收起来时只留这套题里有的
           return (
-            <li key={f} className={compact ? "flex items-center justify-between gap-2" : "py-1.5"}>
-              <div className="flex items-center justify-between gap-2">
-                <span className={compact ? "text-xs" : "text-sm font-medium"}>
+            <li key={f} className={compact ? "" : "py-1.5"}>
+              <div className={compact ? "grid grid-cols-[8.5rem_1fr] items-center gap-2" : "flex items-center justify-between gap-2"}>
+                <span className={compact ? "truncate text-xs" : "text-sm font-medium"}>
                   {FAMILY_LABEL[f]}
                   {!compact && familyClauses(f) && <span className="ml-1 text-[11px] font-normal text-muted">{familyClauses(f)}</span>}
                 </span>
-                <span className="flex shrink-0 flex-wrap justify-end gap-1">
+                <span className={`flex shrink-0 flex-wrap gap-1.5 ${compact ? "" : "justify-end"}`}>
                   {mine.length === 0 && <span className="text-[11px] text-muted">这套题里没有</span>}
                   {mine.map((c, i) => (
                     <button
@@ -77,8 +84,11 @@ export default function CheckList({
                       onClick={() => onPick(c.id)}
                       title={cellLabel(c.id, state.get(c.id))}
                       aria-label={cellLabel(`${FAMILY_LABEL[f]}第 ${i + 1} 题`, state.get(c.id))}
-                      className={`h-3.5 w-3.5 rounded-[2px] ${cellClass(state.get(c.id))} ${selected === c.id ? "outline-2 outline-offset-1 outline-foreground" : ""}`}
-                    />
+                      // 看着是 16px 的小格，点按的地方往外扩到 32px（手机上手指点得中）
+                      className={`relative grid h-4 w-4 place-items-center rounded-[2px] text-[10px] leading-none before:absolute before:-inset-2 before:content-[''] ${cellClass(state.get(c.id))} ${selected === c.id ? "outline-2 outline-offset-1 outline-foreground" : ""}`}
+                    >
+                      <span aria-hidden>{cellMark(state.get(c.id))}</span>
+                    </button>
                   ))}
                 </span>
               </div>
@@ -88,7 +98,9 @@ export default function CheckList({
         })}
       </ul>
       {!compact && started && (
-        <p className="mt-2 text-[11px] text-muted">朱红框：合格 · 墨块：不合格 · 虚线框：不确定 · 空框：还没出结果</p>
+        <p className="mt-2 text-[11px] text-muted">
+          朱红框：合格 · 墨块 ✕：不合格 · 虚线框 ?：不确定 · 斜线：不适用 · 灰格：没出结果（出错、平台拒答、终止或没跑）· 空框：还没跑
+        </p>
       )}
     </div>
   );

@@ -1,7 +1,7 @@
 // 页面外框：顶部是「分寸」印章、导航（主要视图）和常驻的 AI 标识；已登录时标识旁边是当前账号和「退出」（ADR-032）。
 // 这一层不读 cookie，客户端组件（出错页 app/error.tsx）也能用；账号那块由服务端的 AppShell 传进来（account）。
 
-import { Clapperboard, ListChecks, ScrollText, Settings, SquareTerminal, Swords } from "lucide-react";
+import { BookOpen, Clapperboard, ListChecks, ScrollText, SquareTerminal, Swords } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
 
@@ -11,7 +11,7 @@ const NAV = [
   { href: "/fates", label: "三种结局", icon: Clapperboard },
   { href: "/suites", label: "用例库", icon: ListChecks },
   { href: "/runs", label: "运行记录", icon: ScrollText },
-  { href: "/settings", label: "设置", icon: Settings },
+  { href: "/settings", label: "原理", icon: BookOpen },
 ];
 
 /** 「分寸」两个字竖排在一方朱红印里 */
@@ -65,10 +65,17 @@ export default function AppFrame({ children, active, fill = false, account }: Ap
         </nav>
         <div className="ml-auto flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
           <span
-            className="rounded-sm border border-border px-2 py-0.5 text-xs text-muted"
+            className="inline-flex items-center gap-1 rounded-sm border border-foreground/40 px-2 py-0.5 text-xs text-foreground"
             title="依据《人工智能生成合成内容标识办法》和《人工智能拟人化互动服务管理暂行办法》第十八条"
           >
-            被测对象是 AI 角色，不是真人 · 角色回复由 AI 生成
+            <span
+              className="rounded-[2px] bg-foreground px-1 text-[10px] leading-4 text-surface"
+              style={{ fontFamily: "var(--font-kai)" }}
+              aria-hidden
+            >
+              AI
+            </span>
+            被测对象是 AI 角色，不是真人 · 回复和声音由 AI 生成
           </span>
           {account}
         </div>

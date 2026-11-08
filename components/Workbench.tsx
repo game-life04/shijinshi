@@ -14,8 +14,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePerformer } from "@/lib/client/avatar/stage";
 import { EXPIRED_MESSAGE, toLoginIfExpired } from "@/lib/client/session-expired";
 import { VoicePlayer } from "@/lib/client/voice-player";
+import { withRecommendedClauses } from "@/lib/domain/fix-hints";
 import { caseLayers } from "@/lib/domain/layers";
-import { DEFAULT_PERSONA, isDefaultPersona, PERSONA_LIMITS, PERSONA_STORAGE_KEY, type PersonaConfig } from "@/lib/domain/persona";
+import {
+  DEFAULT_PERSONA,
+  isDefaultPersona,
+  PERSONA_LIMITS,
+  PERSONA_STORAGE_KEY,
+  type PersonaConfig,
+  parsePersona,
+} from "@/lib/domain/persona";
 import {
   type CaseIntent,
   type CaseResult,
@@ -40,9 +48,12 @@ import type { Phase } from "./StatusRing";
 import { FindingView, findingSpans } from "./Transcript";
 import { Badge, Button, CaseBadge, Metric, Panel, VerdictBadge } from "./ui";
 import {
+  duration,
   LAW_EFFECTIVE,
   LAW_FULL,
+  leakHow,
   modelName,
+  notRunReason,
   PLAIN,
   POLICY_SHORT,
   POLICY_SHOW,
@@ -132,7 +143,7 @@ export default function Workbench() {
   const [selected, setSelected] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [tab, setTab] = useState<"cases" | "dialog" | "evidence">("cases");
+  const [tab, setTab] = useState<"cases" | "dialog" | "evidence">("dialog");
   /** 用户自己点过某道题，就停在那道题；否则对话跟着正在跑的题走 */
   const pinnedRef = useRef(false);
 
@@ -218,6 +229,12 @@ export default function Workbench() {
       // 存不下就只在这次页面里有效
     }
   };
+
+  // 任何设置或设定改了，上一次的出错提示就不再适用（评审 R46：改好以后旧红条不消失）
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 依赖就是这些设置本身，变了就清
+  useEffect(() => {
+    setActionError(null);
+  }, [persona, variant, policy, suite, includeDrafts, maxCases, maxTurns, maxCalls, guardDelay, voice, judgeRag]);
 
   const loadStatus = useCallback(() => {
     setLoadError(null);
@@ -486,6 +503,16 @@ export default function Workbench() {
     if (running && document.activeElement === document.body) document.getElementById("stop-run")?.focus();
   }, [running]);
   const cases = suiteInfo?.cases ?? [];
+  /** 设定哪里不合格（和服务端同一套检查，评审 R46） */
+  const personaProblem = parsePersona(persona).error;
+  /** 「开始体检」点不了的原因 */
+  const startBlocked = personaProblem
+    ? `角色设定：${personaProblem}`
+    : cases.length && Math.min(maxCases, cases.filter((c) => includeDrafts || c.approval === "approved").length) === 0
+      ? "这套题都是草稿：勾上「包含草稿」才能跑"
+      : null;
+  /** 这套题全是草稿：「草稿」只在套件那儿说一次，不在每道题上重复（评审 R29） */
+  const allDraft = cases.length > 0 && cases.every((c) => c.approval !== "approved");
   /** 按现在的设置会跑几题（草稿开关、数量上限） */
   const plannedCount = Math.min(maxCases, cases.filter((c) => includeDrafts || c.approval === "approved").length);
   /** 模拟模式下，不确定的题里有几题是模拟裁判判不了（它不做语义判断，R16） */
@@ -594,25 +621,29 @@ export default function Workbench() {
             className="inline-flex h-8 max-w-full items-center gap-1 rounded px-1.5 text-xs text-muted hover:bg-background hover:text-foreground"
           >
             <ChevronDown size={14} className={`shrink-0 transition-transform ${settingsOpen ? "rotate-180" : ""}`} aria-hidden />
-            实验设置
+            <span className="shrink-0 whitespace-nowrap">实验设置</span>
             {!settingsOpen && (
               <span className="truncate">
-                ：{suite} {plannedCount} 题 · {POLICY_SHORT[policy]} · {maxTurns} 轮{includeDrafts ? " · 含草稿" : ""}
-                {guardDelay ? ` · 护栏延迟 ${guardDelay} ms` : ""}
+                ：{suite} {plannedCount} 题{allDraft ? "（都是草稿，结果只作预览）" : includeDrafts ? " · 含草稿" : ""} ·{" "}
+                {POLICY_SHORT[policy]} · {maxTurns} 轮{guardDelay ? ` · 护栏延迟 ${guardDelay} ms` : ""}
               </span>
             )}
           </button>
           <div className="ml-auto flex flex-wrap items-center gap-2">
             <Badge
               tone={status.live ? "ok" : "warn"}
-              title={status.live ? "使用真实云端模型，会产生调用费用" : "没有配置 LLM_API_KEY：使用确定性模拟器，结果不能当实验数据"}
+              title={
+                status.live
+                  ? "使用真实云端模型，会产生调用费用"
+                  : "没配模型密钥：现在用的是模拟器，回答按固定规则生成，只能演示流程，数字不能当实验结果"
+              }
             >
               {status.live ? "真实模型" : "模拟数据（非真实模型）"}
             </Badge>
             {!running && (
               <Button
                 onClick={() => void start(true)}
-                disabled={busy}
+                disabled={busy || Boolean(personaProblem)}
                 title="演示用的是「故意出错」的角色：故意设成会越界（说口令、自称真人、挽留），用来看护栏怎么拦；开语音，只跑四道题"
               >
                 <Clapperboard size={14} aria-hidden />
@@ -620,11 +651,17 @@ export default function Workbench() {
               </Button>
             )}
             {!running && (
-              <Button variant="primary" onClick={() => void start()} disabled={busy || !suiteInfo || suiteInfo.errors.length > 0}>
+              <Button
+                variant="primary"
+                onClick={() => void start()}
+                disabled={busy || !suiteInfo || suiteInfo.errors.length > 0 || Boolean(personaProblem) || plannedCount === 0}
+                title={startBlocked ?? undefined}
+              >
                 <Play size={14} aria-hidden />
                 开始体检
               </Button>
             )}
+            {!running && startBlocked && <span className="text-xs text-bad">{startBlocked}</span>}
             {manifest?.state === "running" && (
               <Button onClick={() => act("pause")} title="当前用例跑完后暂停，不再派发新用例">
                 <Pause size={14} aria-hidden />
@@ -752,17 +789,6 @@ export default function Workbench() {
 
       {manifest && <RunStrip manifest={manifest} events={events} current={currentFamily} prevRunId={prevRunId} simUnsure={simUnsure} />}
 
-      {personaOpen && (
-        <PersonaPanel
-          value={persona}
-          disabled={Boolean(running)}
-          onChange={updatePersona}
-          onClose={() => setPersonaOpen(false)}
-          live={status.live}
-          model={modelName(status.models.subject ?? "")}
-        />
-      )}
-
       {!includeDrafts && approvedCount === 0 && (
         <p className="rounded border border-warn/50 bg-warn-soft px-3 py-1.5 text-xs">
           这个套件还没有经过人工审核的用例。正式运行只接受已审核用例；要先看效果，请勾选「包含草稿（预览）」。
@@ -797,175 +823,195 @@ export default function Workbench() {
       </div>
 
       {/* 大屏上三栏正好占满剩下的高度，各自滚动：用例多了也不会把对话框、证据框拉成一大片空白 */}
-      <div className="grid min-h-0 flex-1 gap-2 lg:grid-cols-[minmax(220px,0.8fr)_minmax(0,1.6fr)_minmax(0,1.3fr)] lg:grid-rows-[minmax(0,1fr)]">
-        {/* 左：角色 + 用例进度 */}
-        <div className={`${panelClass("cases")} min-h-0 flex-col gap-2 lg:overflow-y-auto`}>
-          <div className="rounded-sm border border-border bg-surface p-3">
-            <Avatar performer={performer} mouth={mouth} phase={phase} silent={!voice} />
-            <div className="mt-2 border-t border-border pt-2">
-              <LatencyWaterfall timing={timing} simulated={!status.live} />
+      {/* 角色设定：大屏上盖在三栏上面（抽屉），不把三栏往下挤；手机上排在页面里（评审 R34） */}
+      <div className="relative flex min-h-0 flex-1 flex-col gap-2">
+        {personaOpen && (
+          <PersonaPanel
+            value={persona}
+            disabled={Boolean(running)}
+            onChange={updatePersona}
+            onClose={() => setPersonaOpen(false)}
+            live={status.live}
+            model={modelName(status.models.subject ?? "")}
+            problem={personaProblem}
+          />
+        )}
+        <div className="grid min-h-0 flex-1 gap-2 lg:grid-cols-[minmax(220px,0.8fr)_minmax(0,1.6fr)_minmax(0,1.3fr)] lg:grid-rows-[minmax(0,1fr)]">
+          {/* 左：角色 + 用例进度 */}
+          <div className={`${panelClass("cases")} min-h-0 flex-col gap-2 lg:overflow-y-auto`}>
+            <div className="rounded-sm border border-border bg-surface p-3">
+              <Avatar performer={performer} mouth={mouth} phase={phase} silent={!voice} subjectName={persona.name} />
+              <div className="mt-2 border-t border-border pt-2">
+                <LatencyWaterfall timing={timing} simulated={!status.live} />
+              </div>
+              {manifest?.config.voice && <AudioMeters stats={audioStats} />}
             </div>
-            {manifest?.config.voice && <AudioMeters stats={audioStats} />}
+            <Panel
+              title={`用例进度${manifest ? `（${manifest.counts.planned} 例）` : ""}`}
+              className="min-h-[12rem] flex-1 lg:shrink-0 lg:basis-[12rem]"
+            >
+              <ul className="space-y-1">
+                {shownCases.map((c) => {
+                  const s = caseState.get(c.id);
+                  return (
+                    <li key={c.id}>
+                      <button
+                        type="button"
+                        onClick={() => pick(c.id)}
+                        className={`flex w-full items-center justify-between gap-2 rounded px-2 py-1 text-left text-xs ${selected === c.id ? "bg-sunken" : "hover:bg-background"}`}
+                      >
+                        <span className="min-w-0">
+                          <span className="block truncate text-[13px]">
+                            {FAMILY_LABEL[c.family]}
+                            {c.intent ? <span className="text-muted"> · {INTENT_LABEL[c.intent]}题</span> : null}
+                          </span>
+                          <span className="block truncate font-mono text-[11px] text-muted">
+                            {c.id}
+                            {c.approval !== "approved" && !allDraft ? " · 草稿" : ""}
+                            {c.modality === "voice" ? " · 语音 · 本版不测" : ""}
+                          </span>
+                        </span>
+                        {manifest ? <CaseBadge status={s?.status ?? "queued"} verdict={s?.verdict} /> : null}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </Panel>
           </div>
+
+          {/* 中：对话（聊天记录的样子；还没开始时是一段示例） */}
           <Panel
-            title={`用例进度${manifest ? `（${manifest.counts.planned} 例）` : ""}`}
-            className="min-h-[12rem] flex-1 lg:shrink-0 lg:basis-[12rem]"
+            title={
+              selected ? (
+                <>
+                  对话 · {selectedCase ? FAMILY_LABEL[selectedCase.family] : selected}
+                  <span className="ml-1.5 font-mono text-[11px] font-normal text-muted">{selected}</span>
+                </>
+              ) : (
+                "对话"
+              )
+            }
+            className={`${panelClass("dialog")} min-h-[16rem] lg:min-h-0`}
           >
-            <ul className="space-y-1">
-              {shownCases.map((c) => {
-                const s = caseState.get(c.id);
-                return (
-                  <li key={c.id}>
-                    <button
-                      type="button"
-                      onClick={() => pick(c.id)}
-                      className={`flex w-full items-center justify-between gap-2 rounded px-2 py-1 text-left text-xs ${selected === c.id ? "bg-sunken" : "hover:bg-background"}`}
-                    >
-                      <span className="min-w-0">
-                        <span className="block truncate text-[13px]">
-                          {FAMILY_LABEL[c.family]}
-                          {c.intent ? <span className="text-muted"> · {INTENT_LABEL[c.intent]}题</span> : null}
-                        </span>
-                        <span className="block truncate font-mono text-[11px] text-muted">
-                          {c.id}
-                          {c.approval !== "approved" ? " · 草稿" : ""}
-                          {c.modality === "voice" ? " · 语音" : ""}
-                        </span>
-                      </span>
-                      {manifest ? <CaseBadge status={s?.status ?? "queued"} verdict={s?.verdict} /> : null}
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
+            {!manifest && <ChatIntro name={persona.name} strategies={status.strategies} />}
+            {manifest && !selected && <ChatTyping phase="listen" name={persona.name} />}
+            {selected && (
+              <>
+                {selectedCase && (
+                  <CaseCard
+                    plain={
+                      PLAIN[selectedCase.family](persona.name) +
+                      (selectedCase.family === "PERSONA" && !isDefaultPersona(persona)
+                        ? `语气按你的设定看：「${persona.persona.split(/[。\n]/)[0].slice(0, 40)}」。`
+                        : "")
+                    }
+                    expected={selectedCase.expected}
+                    tags={[
+                      FAMILY_LABEL[selectedCase.family],
+                      ...(selectedCase.intent ? [`${INTENT_LABEL[selectedCase.intent]}题`] : []),
+                      ...(allDraft ? [] : [selectedCase.approval === "approved" ? "已审核" : "草稿"]),
+                      ...(selectedCase.modality === "voice" ? ["语音题 · 本版不测"] : []),
+                    ]}
+                  />
+                )}
+                {(selectedResult?.turns ?? liveTurns).map((t) => (
+                  <ChatTurn
+                    key={t.turn_id}
+                    turn={t}
+                    evidence={selectedResult ? findingSpans(selectedResult.findings) : []}
+                    name={persona.name}
+                    strategy={strategyTitle(t.strategy_id)}
+                    live={!selectedResult && openTurns.has(t.turn_id)}
+                    simulated={!status.live}
+                  />
+                ))}
+                {running && !selectedResult && <ChatTyping phase={dialogPhase} name={persona.name} />}
+                {selectedResult?.status === "completed" && selectedResult.verdict && (
+                  <p className="mt-3 flex items-center justify-center gap-2 text-xs text-muted">
+                    <span aria-hidden>——</span>
+                    这道题聊完了
+                    <VerdictBadge verdict={selectedResult.verdict} />
+                    <span aria-hidden>——</span>
+                  </p>
+                )}
+                {selectedResult?.status === "not_run" && (
+                  <p className="text-sm text-muted">没跑：{notRunReason(selectedResult.error) ?? "运行提前结束"}</p>
+                )}
+                {selectedResult?.error && selectedResult.status !== "not_run" && <p className="text-sm text-bad">{selectedResult.error}</p>}
+              </>
+            )}
+          </Panel>
+
+          {/* 右：结论、证据、工具调用 */}
+          <Panel
+            title={manifest ? "结论与证据" : "这次查七样"}
+            className={`${panelClass("evidence")} min-h-[16rem] lg:min-h-0`}
+            actions={
+              manifest && FINAL.has(manifest.state) ? (
+                <span className="flex flex-wrap gap-2">
+                  <Link className="text-xs link" href={`/reports/${manifest.run_id}`}>
+                    打开体检单
+                  </Link>
+                  {prevRunId && (
+                    <Link className="text-xs link" href={`/compare?a=${prevRunId}&b=${manifest.run_id}`} data-testid="compare-link">
+                      和上一次比
+                    </Link>
+                  )}
+                </span>
+              ) : null
+            }
+          >
+            <CheckList
+              cases={shownCases}
+              state={caseState}
+              name={persona.name}
+              started={Boolean(manifest)}
+              selected={selected}
+              compact={Boolean(selectedResult)}
+              onPick={pick}
+            />
+            {selectedResult?.status === "completed" && manifest && (
+              <div className="mb-2 space-y-1 border-b border-border pb-2">
+                <LayerStrip layers={caseLayers(selectedResult, GUARDED_VARIANTS.includes(manifest.config.variant))} />
+                <p className="text-xs text-muted">
+                  角色原话：{caseLayers(selectedResult, GUARDED_VARIANTS.includes(manifest.config.variant)).raw.note}
+                </p>
+              </div>
+            )}
+            {selectedResult?.findings.map((f) => (
+              <FindingView key={f.finding_id} f={f} simulated={!status?.live} />
+            ))}
+            {toolSteps.length > 0 && (
+              <div className="mt-2">
+                <h3 className="text-xs font-semibold">测试 Agent 怎么出的招</h3>
+                <p className="text-[11px] text-muted">第 1 轮是题目原句；之后每一步都是测试 Agent 调用一次工具（函数调用）。</p>
+                <ol className="mt-1 space-y-1 text-xs">
+                  {toolSteps.map((s, i) => (
+                    <li key={s.seq} className="rounded bg-background p-1.5">
+                      <ToolStep
+                        turn={
+                          1 +
+                          toolSteps.slice(0, i + 1).filter((x) => (x.data?.args as { message?: string } | null)?.message !== undefined)
+                            .length
+                        }
+                        step={s}
+                        strategyTitle={strategyTitle}
+                      />
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            )}
           </Panel>
         </div>
-
-        {/* 中：对话（聊天记录的样子；还没开始时是一段示例） */}
-        <Panel
-          title={
-            selected ? (
-              <>
-                对话 · {selectedCase ? FAMILY_LABEL[selectedCase.family] : selected}
-                <span className="ml-1.5 font-mono text-[11px] font-normal text-muted">{selected}</span>
-              </>
-            ) : (
-              "对话"
-            )
-          }
-          className={`${panelClass("dialog")} min-h-[16rem] lg:min-h-0`}
-        >
-          {!manifest && <ChatIntro name={persona.name} strategies={status.strategies} />}
-          {manifest && !selected && <ChatTyping phase="listen" name={persona.name} />}
-          {selected && (
-            <>
-              {selectedCase && (
-                <CaseCard
-                  plain={PLAIN[selectedCase.family](persona.name)}
-                  expected={selectedCase.expected}
-                  tags={[
-                    FAMILY_LABEL[selectedCase.family],
-                    ...(selectedCase.intent ? [`${INTENT_LABEL[selectedCase.intent]}题`] : []),
-                    selectedCase.approval === "approved" ? "已审核" : "草稿",
-                    ...(selectedCase.modality === "voice" ? ["语音题"] : []),
-                  ]}
-                />
-              )}
-              {(selectedResult?.turns ?? liveTurns).map((t) => (
-                <ChatTurn
-                  key={t.turn_id}
-                  turn={t}
-                  evidence={selectedResult ? findingSpans(selectedResult.findings) : []}
-                  name={persona.name}
-                  strategy={strategyTitle(t.strategy_id)}
-                  live={!selectedResult && openTurns.has(t.turn_id)}
-                  simulated={!status.live}
-                />
-              ))}
-              {running && !selectedResult && <ChatTyping phase={dialogPhase} name={persona.name} />}
-              {selectedResult?.status === "completed" && selectedResult.verdict && (
-                <p className="mt-3 flex items-center justify-center gap-2 text-xs text-muted">
-                  <span aria-hidden>——</span>
-                  这道题聊完了
-                  <VerdictBadge verdict={selectedResult.verdict} />
-                  <span aria-hidden>——</span>
-                </p>
-              )}
-              {selectedResult?.status === "not_run" && (
-                <p className="text-sm text-muted">未执行：{selectedResult.error ?? "运行提前结束"}</p>
-              )}
-              {selectedResult?.error && selectedResult.status !== "not_run" && <p className="text-sm text-bad">{selectedResult.error}</p>}
-            </>
-          )}
-        </Panel>
-
-        {/* 右：结论、证据、工具调用 */}
-        <Panel
-          title="结论与证据"
-          className={`${panelClass("evidence")} min-h-[16rem] lg:min-h-0`}
-          actions={
-            manifest && FINAL.has(manifest.state) ? (
-              <span className="flex flex-wrap gap-2">
-                <Link className="text-xs link" href={`/reports/${manifest.run_id}`}>
-                  打开体检单
-                </Link>
-                {prevRunId && (
-                  <Link className="text-xs link" href={`/compare?a=${prevRunId}&b=${manifest.run_id}`} data-testid="compare-link">
-                    和上一次比
-                  </Link>
-                )}
-              </span>
-            ) : null
-          }
-        >
-          <CheckList
-            cases={shownCases}
-            state={caseState}
-            name={persona.name}
-            started={Boolean(manifest)}
-            selected={selected}
-            compact={Boolean(selectedResult)}
-            onPick={pick}
-          />
-          {selectedResult?.status === "completed" && manifest && (
-            <div className="mb-2 space-y-1 border-b border-border pb-2">
-              <LayerStrip layers={caseLayers(selectedResult, GUARDED_VARIANTS.includes(manifest.config.variant))} />
-              <p className="text-xs text-muted">
-                角色原话：{caseLayers(selectedResult, GUARDED_VARIANTS.includes(manifest.config.variant)).raw.note}
-              </p>
-            </div>
-          )}
-          {selectedResult?.findings.map((f) => (
-            <FindingView key={f.finding_id} f={f} simulated={!status?.live} />
-          ))}
-          {toolSteps.length > 0 && (
-            <div className="mt-2">
-              <h3 className="text-xs font-semibold">测试 Agent 怎么出的招</h3>
-              <p className="text-[11px] text-muted">第 1 轮是题目原句；之后每一步都是测试 Agent 调用一次工具（函数调用）。</p>
-              <ol className="mt-1 space-y-1 text-xs">
-                {toolSteps.map((s, i) => (
-                  <li key={s.seq} className="rounded bg-background p-1.5">
-                    <ToolStep
-                      turn={
-                        1 +
-                        toolSteps.slice(0, i + 1).filter((x) => (x.data?.args as { message?: string } | null)?.message !== undefined).length
-                      }
-                      step={s}
-                      strategyTitle={strategyTitle}
-                    />
-                  </li>
-                ))}
-              </ol>
-            </div>
-          )}
-        </Panel>
       </div>
-
       {/* 底部计量 */}
       <div className="flex flex-wrap items-center gap-x-6 gap-y-1 rounded-sm border border-border bg-surface px-3 py-2">
-        <Metric label="运行状态" value={manifest ? stateLabel(manifest.state) : null} />
+        <Metric label="运行状态" value={manifest ? stateLabel(manifest.state) : "还没开始"} />
         <Metric
-          label="题数对账（计划 = 做完 + 平台拦截 + 出错 + 取消 + 没跑）"
+          label={`题数对账（计划 = 做完 + 平台拒答 + 出错 + 终止 + ${running ? "排队" : "没跑"}）`}
+          hint="平台拒答：模型平台自己的内容审核挡下的，不算护栏的功劳"
           value={
             counts
               ? `${counts.planned} = ${counts.completed} + ${counts.provider_blocked} + ${counts.error} + ${counts.cancelled} + ${counts.not_run}`
@@ -979,10 +1025,12 @@ export default function Workbench() {
         <Metric label="模型调用" value={manifest ? `${manifest.usage.llm_calls} / ${manifest.config.max_llm_calls}` : null} />
         <Metric
           label="tokens（入/出）"
-          value={manifest && status.live ? `${manifest.usage.prompt_tokens} / ${manifest.usage.completion_tokens}` : null}
-          hint="模拟模式不产生 token"
+          value={!status.live ? "模拟不计" : manifest ? `${manifest.usage.prompt_tokens} / ${manifest.usage.completion_tokens}` : null}
+          hint="模拟模式不调用模型，没有 token"
         />
-        {manifest?.preview && <Badge tone="warn">含草稿用例：预览结果，不计入正式统计</Badge>}
+        {manifest?.preview && (
+          <Badge tone="warn">{allDraft ? "这套题都是草稿：结果只作预览，不计入正式统计" : "含草稿用例：预览结果，不计入正式统计"}</Badge>
+        )}
         {manifest?.failure_reason && <Badge tone="bad">{manifest.failure_reason}</Badge>}
       </div>
     </div>
@@ -999,11 +1047,14 @@ function PersonaPanel({
   onClose,
   live,
   model,
+  problem,
 }: {
   value: PersonaConfig;
   disabled: boolean;
   onChange: (p: PersonaConfig) => void;
   onClose: () => void;
+  /** 设定哪里不合格（和服务端同一套检查），就地写出来（评审 R46） */
+  problem?: string;
   /** 接没接真实模型：模拟模式下角色不读设定，要先说清（评审 R16） */
   live: boolean;
   /** 被测角色用的模型（评审 R20：测的是「设定 × 这个模型」，不是开发者线上的服务） */
@@ -1025,7 +1076,11 @@ function PersonaPanel({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
   return (
-    <section className="space-y-2 rounded-sm border border-border bg-surface p-3 text-sm" aria-label="角色设定" data-testid="persona-panel">
+    <section
+      className="space-y-2 rounded-sm border border-border bg-surface p-3 text-sm lg:absolute lg:inset-y-0 lg:left-0 lg:z-30 lg:w-[36rem] lg:max-w-full lg:overflow-y-auto lg:shadow-[0_8px_32px_rgba(0,0,0,0.18)]"
+      aria-label="角色设定"
+      data-testid="persona-panel"
+    >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="font-semibold" style={{ fontFamily: "var(--font-serif)" }}>
           角色设定
@@ -1037,6 +1092,11 @@ function PersonaPanel({
       {!live && (
         <p className="rounded-sm border border-dashed border-warn px-2 py-1 text-xs text-warn">
           模拟模式：角色用固定的句子回答，不读你的设定，改了设定结果也不会变；要看改设定的效果，需要接真实模型。
+        </p>
+      )}
+      {problem && (
+        <p role="alert" className="text-xs text-bad">
+          {problem}：改好以后才能开始体检。
         </p>
       )}
       <p className="text-xs text-muted">
@@ -1079,6 +1139,13 @@ function PersonaPanel({
         <Button onClick={() => onChange(DEFAULT_PERSONA)} disabled={disabled || isDefaultPersona(value)}>
           <RotateCcw size={14} aria-hidden />
           恢复默认角色
+        </Button>
+        <Button
+          onClick={() => onChange({ ...value, boundaries: withRecommendedClauses(value.boundaries) })}
+          disabled={disabled || withRecommendedClauses(value.boundaries) === value.boundaries}
+          title="把身份、告别、未成年、危机、内部代号五条推荐条款里还没有的，加到边界提示末尾（评审 R21）"
+        >
+          插入推荐边界条款
         </Button>
         <Button onClick={onClose} title="也可以按 Esc">
           收起
@@ -1153,18 +1220,20 @@ function AudioMeters({ stats }: { stats: AudioStats }) {
         <dt className="text-muted">违规的声音漏出</dt>
         <dd data-testid="leak-meter">
           {stats.cuts.length
-            ? `${Math.round(leak * 10) / 10} 毫秒（${stats.cuts.length} 次截断，${upper ? "有的按整句算上限" : "按字精确定位"}）`
+            ? `${duration(leak)}（${stats.cuts.length} 次截断，${upper ? "有的按整句算上限" : leakHow("char", stats.level === "simulation")}）`
             : "— 还没有截断"}
         </dd>
         <dt className="text-muted">开口要等</dt>
         <dd data-testid="first-audio-meter">
-          {stats.firstLast !== undefined ? `最近 ${stats.firstLast} 毫秒 · 一般 ${stats.firstMedian} 毫秒（${stats.firstCount} 轮）` : "—"}
-          {stats.guardLast !== undefined && <span className="text-muted"> · 其中护栏 {stats.guardLast} 毫秒</span>}
+          {stats.firstLast !== undefined
+            ? `最近 ${duration(stats.firstLast)} · 一般 ${duration(stats.firstMedian ?? stats.firstLast)}（${stats.firstCount} 轮）`
+            : "—"}
+          {stats.guardLast !== undefined && <span className="text-muted"> · 其中护栏 {duration(stats.guardLast)}</span>}
         </dd>
         <dt className="text-muted">叫停到没声</dt>
         <dd>
           {lastCut?.cancel_to_stop_ms != null
-            ? `≤ ${lastCut.cancel_to_stop_ms} 毫秒 · 嘴型 ${lastCut.cancel_to_mouth_zero_ms ?? "—"} 毫秒停下`
+            ? `≤ ${duration(lastCut.cancel_to_stop_ms)} · 嘴型 ${lastCut.cancel_to_mouth_zero_ms != null ? duration(lastCut.cancel_to_mouth_zero_ms) : "—"}停下`
             : "—"}
         </dd>
       </dl>

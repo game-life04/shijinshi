@@ -16,7 +16,7 @@ import { duration } from "./Chat";
 const STEPS: [string, string, string][] = [
   ["想", "想好第一句", "角色把回答的第一句想出来"],
   ["审", "护栏把关", "护栏看这一句能不能说；为了不说错话多等的这一下"],
-  ["合", "变成声音", "把放行的话合成第一段声音"],
+  ["合", "变成声音", "把要说的话合成第一段声音（边审边合成时，审的同时就开始合）"],
   ["达", "传到耳边", "声音送到浏览器、放出来（按浏览器的时间估）"],
 ];
 
@@ -29,6 +29,8 @@ export interface TurnTiming {
   tts?: number;
   firstAudio?: number;
   voice: boolean;
+  /** 放行方式（说明行按它写，评审 R37） */
+  policy?: string;
   /** 这次运行有没有护栏（B0、B1 没有「审」这一段） */
   guarded: boolean;
 }
@@ -72,6 +74,7 @@ export function timingOf(
     tts: typeof firstUtt?.tts_first_chunk_ms === "number" ? firstUtt.tts_first_chunk_ms : undefined,
     firstAudio: typeof pm?.data?.first_audio_ms === "number" ? (pm.data.first_audio_ms as number) : undefined,
     voice,
+    policy,
     guarded,
   };
 }
@@ -139,7 +142,7 @@ export default function LatencyWaterfall({ timing, simulated = false }: { timing
             </li>
           ))}
         </ol>
-        <p className="text-[11px] text-muted">第一句话说出口以后，这里拆开算每一步各花了多久。</p>
+        <p className="text-[11px] text-muted">第一句话说出口以后，这里拆开算每一步各花了多久。合、达两步要勾上「语音播放」才有。</p>
       </figure>
     );
   }
@@ -177,8 +180,13 @@ export default function LatencyWaterfall({ timing, simulated = false }: { timing
       </ol>
       <p className="text-[11px] leading-snug text-muted">
         {simulated ? "模拟用时：数字是模拟器给的，只说明每一步是什么。" : ""}
-        {timing.guarded ? "红色那段是护栏在把关：为了不说错话，多等的这一下。" : "这个配置没有护栏，话不经检查就说出口。"}
-        {timing.voice && timing.ttsStart === timing.think ? "边审边合成：护栏看的同时，声音已经在合成了。" : ""}
+        {!timing.guarded
+          ? "这个配置没有护栏，话不经检查就说出口。"
+          : timing.policy === "S3"
+            ? "先播后截：话先说出口，护栏在后面查，开口不用等，但越界的话可能先漏出去一截。"
+            : timing.voice && timing.policy === "S2"
+              ? "红色那段是护栏在把关；声音同时在合成，红段比「合」短时几乎不用多等。"
+              : "红色那段是护栏在把关：为了不说错话，多等的这一下。"}
       </p>
     </figure>
   );

@@ -321,7 +321,17 @@ export function listRuns(): RunManifest[] {
     .sort((a, b) => b.created_at.localeCompare(a.created_at));
 }
 
-export function reviewFinding(runId: string, findingId: string, decision: "confirm" | "overturn", overturnTo?: Verdict): RunView {
+/**
+ * 人工复核一条结论：确认、改判，或撤销上一次复核（回到待复核，评审 R31）。记下复核的账号和时间（没配账号时不记账号）。
+ * 计分规则不变：复核后按复核的结论重新汇总这一题和整次运行的计数。
+ */
+export function reviewFinding(
+  runId: string,
+  findingId: string,
+  decision: "confirm" | "overturn" | "undo",
+  overturnTo?: Verdict,
+  opts: { account?: string } = {},
+): RunView {
   const view = getRun(runId);
   if (!view) throw new Error("运行不存在");
   if (["queued", "running", "pausing", "cancelling"].includes(view.manifest.state)) throw new Error("运行结束后才能复核");
@@ -331,7 +341,13 @@ export function reviewFinding(runId: string, findingId: string, decision: "confi
   if (decision === "overturn" && !["pass", "fail", "uncertain", "not_applicable"].includes(overturnTo ?? "")) {
     throw new Error("改判只能改成合格、不合格、不确定、不适用之一");
   }
-  if (decision === "confirm") {
+  if (decision === "undo") {
+    if (f.review_status !== "confirmed" && f.review_status !== "overturned") throw new Error("这条结论还没复核过，没有可撤销的");
+    f.review_status = "pending";
+    delete f.reviewed_verdict;
+    delete f.reviewed_by;
+    delete f.reviewed_at;
+  } else if (decision === "confirm") {
     if (f.verdict === "uncertain") throw new Error("「不确定」不能直接确认，请改判为合格或不合格");
     f.review_status = "confirmed";
     f.reviewed_verdict = f.verdict;
@@ -339,6 +355,11 @@ export function reviewFinding(runId: string, findingId: string, decision: "confi
     if (!overturnTo || overturnTo === f.verdict) throw new Error("改判时要选一个不同的结论");
     f.review_status = "overturned";
     f.reviewed_verdict = overturnTo;
+  }
+  if (decision !== "undo") {
+    f.reviewed_at = new Date().toISOString();
+    if (opts.account) f.reviewed_by = opts.account;
+    else delete f.reviewed_by;
   }
   result.verdict = aggregate(result);
   view.manifest.counts = recount(view.manifest.counts.planned, view.results);
@@ -354,7 +375,7 @@ export function reviewFinding(runId: string, findingId: string, decision: "confi
     source: "review",
     monotonic_ms: 0,
     type: "finding_reviewed",
-    data: { finding_id: findingId, decision, verdict: f.reviewed_verdict ?? null },
+    data: { finding_id: findingId, decision, verdict: f.reviewed_verdict ?? null, by: opts.account ?? null },
   };
   appendFileSync(path.join(dir, "events.jsonl"), `${JSON.stringify(ev)}\n`, "utf8");
   return view;

@@ -212,6 +212,9 @@ export interface Finding {
   review_status: ReviewStatus;
   /** 人工复核后的判定（复核前为 undefined） */
   reviewed_verdict?: Verdict;
+  /** 谁复核的（配了账号时记账号名）、什么时候（评审 R31）；不影响计分 */
+  reviewed_by?: string;
+  reviewed_at?: string;
   reason_summary: string;
 }
 

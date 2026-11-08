@@ -2,13 +2,27 @@
 // 证据按 [start, end) 位置在原文里画朱批（红笔波浪线），用户能直接看到结论依据的是哪几个字。
 
 import { ChevronRight, Volume2 } from "lucide-react";
+import { fixHint } from "@/lib/domain/fix-hints";
 import { getAssertionDescription } from "@/lib/domain/labels";
 import { type Evidence, FAMILY_LABEL, type Finding, type TurnAudio, type TurnRecord, type Verdict } from "@/lib/domain/types";
 import { Badge, VerdictBadge } from "./ui";
-import { clauseNo, findingTitle, LAW_SHORT, withClauseNos } from "./wording";
+import { clauseNo, duration, findingTitle, LAW_SHORT, leakHow, VOICE, withClauseNos } from "./wording";
 
 /** 证据跨度；ok 表示它是合格结论的依据（画淡墨点线），否则是问题出处（画红波浪线） */
 export type MarkedEvidence = Evidence & { ok?: boolean };
+
+/** 复核时间按北京时间写：「11-17 20:30」 */
+const reviewTime = (iso: string) =>
+  new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  })
+    .format(new Date(iso))
+    .replace(/\//g, "-");
 
 const VERDICT_TEXT: Record<Verdict, string> = { pass: "合格", fail: "不合格", uncertain: "不确定", not_applicable: "不适用" };
 
@@ -89,16 +103,17 @@ export function AudioLine({ audio }: { audio: TurnAudio }) {
     <div className="text-xs text-muted">
       <p>
         <Volume2 size={12} className="mr-1 inline" aria-hidden />
-        语音（{audio.level === "simulation" ? "模拟发声" : `真实合成 ${audio.model}`}）：首声等待 {audio.first_audio_ms ?? "—"} ms · 已渲染{" "}
-        {Math.round(rendered)} ms
+        声音（{audio.level === "simulation" ? "模拟发声" : `真实合成 ${audio.model}`}）：{VOICE.first}{" "}
+        {audio.first_audio_ms != null ? duration(audio.first_audio_ms) : "—"} · 一共说了 {duration(rendered)}
       </p>
       {audio.utterances
         .filter((u) => u.violation)
         .map((u) => (
           <p key={u.utterance_id} className="text-bad">
-            截断 {u.utterance_id.split(".").at(-1)}：违规音频渲染 {u.leak_rendered_ms ?? "—"} ms（
-            {u.violation_level === "char" ? "按字精确定位" : "句级上界：没有字级时间戳，按整句算"}）· 截断前已渲染 {u.rendered_ms} ms · 停止
-            ≤ {u.cancel_to_stop_ms ?? "—"} ms · 口型归零 {u.cancel_to_mouth_zero_ms ?? "—"} ms
+            被截的那句：{VOICE.leak} {u.leak_rendered_ms != null ? duration(u.leak_rendered_ms) : "—"}（
+            {u.violation_level === "char" ? leakHow("char", audio.level === "simulation") : leakHow("sentence_upper_bound")}）·{" "}
+            {VOICE.before} {duration(u.rendered_ms)} · {VOICE.stop} ≤ {u.cancel_to_stop_ms != null ? duration(u.cancel_to_stop_ms) : "—"} ·{" "}
+            {VOICE.mouth} {u.cancel_to_mouth_zero_ms != null ? duration(u.cancel_to_mouth_zero_ms) : "—"}
           </p>
         ))}
     </div>
@@ -130,6 +145,12 @@ export function FindingView({
         {f.review_status === "pending" && !pendingPass && <Badge tone="warn">待人工复核</Badge>}
         {f.review_status === "confirmed" && <Badge tone="ok">人工已确认</Badge>}
         {f.review_status === "overturned" && <Badge tone="muted">人工已改判（原判 {VERDICT_TEXT[f.verdict]}）</Badge>}
+        {(f.review_status === "confirmed" || f.review_status === "overturned") && (f.reviewed_by || f.reviewed_at) && (
+          <span className="text-[11px] text-muted">
+            复核：{f.reviewed_by ?? "本机"}
+            {f.reviewed_at ? ` · ${reviewTime(f.reviewed_at)}` : ""}
+          </span>
+        )}
         <span className="text-xs text-muted">
           {f.by === "assertion" ? "程序判定" : simulated ? "模拟裁判（没有真的判）" : "裁判模型判定"}
         </span>
@@ -144,6 +165,7 @@ export function FindingView({
         </details>
       )}
       <p className="text-xs text-muted">{withClauseNos(f.reason_summary)}</p>
+      {(effective === "fail" || (effective === "uncertain" && !simulated)) && <FixLine ruleId={f.rule_id} />}
       {f.evidence.map((e) => (
         <div key={`${e.turn_id}-${e.start}`} className="text-xs" title={`${e.turn_id} · 第 ${e.start}～${e.end} 个字`}>
           证据：「
@@ -167,6 +189,23 @@ export function FindingView({
           <p className="mt-1 whitespace-pre-wrap rounded bg-background p-2">{clauseText?.(id) ?? "（条文原文见体检单末尾的附录）"}</p>
         </details>
       ))}
+    </div>
+  );
+}
+
+/** 没过的检查下面写一行「怎么改」（评审 R21）：改设定能修的给一句能直接复制的条款，要在服务端做的明说改提示词没用 */
+function FixLine({ ruleId }: { ruleId: string }) {
+  const h = fixHint(ruleId);
+  if (!h) return null;
+  return (
+    <div className="rounded-sm border-l-2 border-foreground/60 bg-background px-2 py-1 text-xs">
+      <p>
+        <span className="mr-1 rounded-sm border border-border px-1 text-[11px] text-muted">
+          {h.kind === "prompt" ? "改设定能修" : "要在服务端做"}
+        </span>
+        怎么改：{h.text}
+      </p>
+      {h.clause && <p className="mt-0.5 text-muted">可以直接加进边界提示：「{h.clause}」</p>}
     </div>
   );
 }

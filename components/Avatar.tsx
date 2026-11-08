@@ -10,7 +10,9 @@ import dynamic from "next/dynamic";
 import { useEffect, useRef, useState } from "react";
 import { type AvatarStage, useAvatarStage, usePerformer } from "@/lib/client/avatar/stage";
 import type { PerformContext, Performer } from "@/lib/client/avatar/types";
-import FaceAvatar, { type Expression } from "./FaceAvatar";
+import bustStill from "./avatar-art/qiyetao-bust.jpg";
+import stageStill from "./avatar-art/qiyetao-stage.jpg";
+import type { Expression } from "./FaceAvatar";
 import StatusRing, { type Phase, PhaseLegend } from "./StatusRing";
 import type { Framing } from "./VrmAvatar";
 
@@ -32,6 +34,8 @@ export interface AvatarProps {
   stage?: AvatarStage;
   /** 这一页不出声（文字运行、打字闯关）：「说」的说明不写「正在播放」 */
   silent?: boolean;
+  /** 被测角色的名字：换成开发者自己的角色时，形象仍是琪叶桃，只作示意（评审 R33） */
+  subjectName?: string;
 }
 
 /** 没改造的页面（三种结局）：状态环的几个阶段换成同名提示 */
@@ -62,6 +66,7 @@ export default function Avatar({
   context,
   stage: given,
   silent = false,
+  subjectName,
 }: AvatarProps) {
   const own = usePerformer(context ?? { page: "workbench" });
   const ownStage = useAvatarStage(performer ?? own, mouth, !given);
@@ -72,25 +77,41 @@ export default function Avatar({
   const [loaded, setLoaded] = useState(false);
   const status = (
     <p className="mt-1 text-center text-[11px] text-muted" data-testid="avatar-status">
-      琪叶桃 · {fallback ? `平面示意形象（${fallback}）` : loaded ? "VRM 3D 形象" : "正在加载 3D 形象……"} · AI 角色，非真人
+      <span className="mr-1 rounded-sm bg-foreground px-1 text-surface">AI 角色</span>
+      {subjectName && subjectName !== "琪叶桃" ? `形象：琪叶桃（示意）· 被测角色：${subjectName}` : "琪叶桃"} ·{" "}
+      {fallback ? `3D 形象没加载出来，先显示静态图（${fallback}）` : loaded ? "VRM 3D 形象" : "正在加载 3D 形象……"} · 不是真人
     </p>
+  );
+  // 静态图（评审 R48，scripts/avatar-stills.ts 用同一个模型、同样的取景渲的）：3D 出来之前先显示它，出来以后淡出；
+  // 加载失败就停在它上面，不再是一个空圆，也不再换成和琪叶桃对不上的平面示意形象
+  const still = (f: Framing) => (
+    // biome-ignore lint/performance/noImgElement: 很小的静态图，不需要 next/image 现场转码
+    <img
+      src={(f === "stage" ? stageStill : bustStill).src}
+      alt=""
+      aria-hidden
+      className={`pointer-events-none absolute inset-0 h-full w-full object-cover ${f === "stage" ? "object-bottom" : "object-center"} transition-opacity duration-500 ${loaded && !fallback ? "opacity-0" : "opacity-100"}`}
+    />
   );
   const figure = (f: Framing) =>
     fallback ? (
-      <FaceAvatar stage={stage} />
+      still(f)
     ) : (
-      <VrmAvatar
-        url={VRM_URL}
-        stage={stage}
-        framing={f}
-        onFail={setFallback}
-        onLoaded={() => {
-          setLoaded(true);
-          // 登场：她看见你了，闭眼一笑、点个头（只演一次）
-          if (!greeted.current) (performer ?? own).cue({ type: "react", kind: "greet" });
-          greeted.current = true;
-        }}
-      />
+      <>
+        {still(f)}
+        <VrmAvatar
+          url={VRM_URL}
+          stage={stage}
+          framing={f}
+          onFail={setFallback}
+          onLoaded={() => {
+            setLoaded(true);
+            // 登场：她看见你了，闭眼一笑、点个头（只演一次）
+            if (!greeted.current) (performer ?? own).cue({ type: "react", kind: "greet" });
+            greeted.current = true;
+          }}
+        />
+      </>
     );
 
   if (framing === "stage") {
@@ -111,7 +132,7 @@ export default function Avatar({
 
   return (
     <div className="flex flex-col items-center">
-      <div className="relative aspect-square w-full max-w-[15rem]">
+      <div className="short-screen-avatar relative aspect-square w-full max-w-[15rem]">
         <StatusRing phase={phase} stage={stage} />
         <div className="absolute inset-[6%] overflow-hidden rounded-full bg-sunken shadow-[inset_0_0_0_1px_var(--foreground)]">
           {figure("bust")}

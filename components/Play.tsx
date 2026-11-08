@@ -378,7 +378,7 @@ export default function Play() {
   return (
     <div className="grid min-h-0 flex-1 gap-2 p-2 lg:grid-cols-[minmax(300px,0.85fr)_minmax(0,1.5fr)] lg:grid-rows-[minmax(0,1fr)]">
       <aside className="flex h-[46vh] min-h-[300px] flex-col rounded-sm border border-border bg-surface p-2 lg:h-auto" aria-label="琪叶桃">
-        <Avatar performer={performer} stage={stage} phase={phase} framing="stage" silent />
+        <Avatar performer={performer} stage={stage} phase={phase} framing="stage" silent subjectName={name} />
       </aside>
 
       <section className="flex min-h-0 flex-col rounded-sm border border-border bg-surface" aria-label="闯关对话">

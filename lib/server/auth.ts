@@ -27,7 +27,15 @@ const ACCOUNT_RE = /^[a-z0-9][a-z0-9._-]{1,31}$/;
 export type AuthConfig =
   | { mode: "open" }
   | { mode: "broken"; reason: string }
-  | { mode: "accounts"; accounts: ReadonlyMap<string, string>; secret: string; ttlMs: number; warnings: string[] };
+  | {
+      mode: "accounts";
+      accounts: ReadonlyMap<string, string>;
+      secret: string;
+      ttlMs: number;
+      warnings: string[];
+      /** 能复核的账号（AUTH_REVIEWERS）；没设就是所有账号都能复核（评审 R31） */
+      reviewers?: ReadonlySet<string>;
+    };
 
 /** 读配置用的环境变量（默认就是 process.env；测试和 check 命令可以传别的） */
 type Env = Record<string, string | undefined>;
@@ -130,11 +138,32 @@ export function parseAuthConfig(env: Env): AuthConfig {
   if (legacy) warnings.push("ACCESS_CODE 已经停用，不起作用，可以删掉");
   if ((env.ACCESS_TTL_HOURS ?? "").trim()) warnings.push("ACCESS_TTL_HOURS 已改名为 SESSION_TTL_HOURS，旧名不生效");
   const ttlMs = Math.round(ttlHours(env.SESSION_TTL_HOURS, warnings) * HOUR);
-  return { mode: "accounts", accounts, secret, ttlMs, warnings };
+  // 能复核的账号：AUTH_REVIEWERS 写账号名，逗号或空格隔开。没设时所有账号都能复核（和以前一样）；
+  // 设了以后只有这几个账号看得到复核按钮，别的账号（比如发给评委的）只能看（评审 R31）
+  const rawReviewers = (env.AUTH_REVIEWERS ?? "").trim();
+  let reviewers: Set<string> | undefined;
+  if (rawReviewers) {
+    reviewers = new Set();
+    for (const item of rawReviewers.split(/[\s,]+/).filter(Boolean)) {
+      const name = normalizeAccount(item);
+      if (!name || !accounts.has(name))
+        warnings.push(`AUTH_REVIEWERS 里的 ${name ?? "（写法不对的名字）"} 不在 AUTH_ACCOUNTS 里，不起作用`);
+      else reviewers.add(name);
+    }
+  }
+  return { mode: "accounts", accounts, secret, ttlMs, warnings, ...(reviewers ? { reviewers } : {}) };
 }
 
 // 和配置有关的几个变量；按原始字符串缓存，proxy 每个请求都要用，不用每次重新解析
-const ENV_KEYS = ["AUTH_ACCOUNTS", "SESSION_SECRET", "ACCESS_CODE", "SESSION_TTL_HOURS", "AUTH_ALLOW_E2E_ACCOUNTS", "ACCESS_TTL_HOURS"];
+const ENV_KEYS = [
+  "AUTH_ACCOUNTS",
+  "SESSION_SECRET",
+  "ACCESS_CODE",
+  "SESSION_TTL_HOURS",
+  "AUTH_ALLOW_E2E_ACCOUNTS",
+  "ACCESS_TTL_HOURS",
+  "AUTH_REVIEWERS",
+];
 let cached: { key: string; config: AuthConfig } | undefined;
 // 每种配置在一个进程里只往日志写一次（proxy 和各个接口是不同的模块副本，记在 globalThis 上）。只记哈希，不留原文
 const g = globalThis as { __fencunAuthLogged?: Set<string> };
@@ -277,6 +306,16 @@ export function sessionCookie(value: string, maxAgeSeconds: number, secure: bool
 
 export function clearSessionCookie(secure: boolean): string {
   return sessionCookie("", 0, secure);
+}
+
+/**
+ * 这个账号能不能做人工复核（评审 R31）：没配账号时（本机、评委自己运行）能；配了账号、没设 AUTH_REVIEWERS 时所有账号都能；
+ * 设了 AUTH_REVIEWERS 时只有名单里的能。
+ */
+export function canReview(account: string | undefined): boolean {
+  const config = authConfig();
+  if (config.mode !== "accounts" || !config.reviewers) return true;
+  return account !== undefined && config.reviewers.has(account);
 }
 
 /** 没登录时接口回的 401；proxy 也用这一份 */

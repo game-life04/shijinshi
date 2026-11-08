@@ -9,12 +9,10 @@ import { GUARD_RULE_LABEL, type TurnAudio, type TurnRecord } from "@/lib/domain/
 import type { Phase } from "./StatusRing";
 import { type MarkedEvidence, PartText, releasedParts } from "./Transcript";
 import { BlockSeal } from "./ui";
-import { guardReason } from "./wording";
+import { duration, guardReason, leakHow, VOICE } from "./wording";
 
-/** 不到 1 秒写毫秒，1 秒以上写秒 */
-export function duration(ms: number): string {
-  return ms < 1000 ? `${Math.round(ms)} 毫秒` : `${(ms / 1000).toFixed(ms < 10_000 ? 2 : 1)} 秒`;
-}
+// 时长的写法和语音指标的叫法都在 wording.ts（评审 R27：三页一套）；duration 从这里转出去，别的组件照旧能引
+export { duration } from "./wording";
 
 /** 头像：一枚小圆印 */
 export function Chop({ char, tone }: { char: string; tone: "ink" | "zhu" }) {
@@ -198,16 +196,17 @@ function ChatAudio({ audio }: { audio: TurnAudio }) {
     <div className="flex flex-col items-end gap-0.5 text-[11px] text-muted">
       <span>
         <Volume2 size={11} className="mr-0.5 inline" aria-hidden />
-        {audio.first_audio_ms != null ? `开口等了 ${duration(audio.first_audio_ms)}` : "开口时间没量到"} · 说了 {duration(said)}（
+        {audio.first_audio_ms != null ? `${VOICE.first} ${duration(audio.first_audio_ms)}` : "开口时间没量到"} · 说了 {duration(said)}（
         {audio.level === "simulation" ? "模拟发声" : `真实合成 ${audio.model}`}）
       </span>
       {audio.utterances
         .filter((u) => u.violation)
         .map((u) => (
           <span key={u.utterance_id} className="text-bad">
-            被截的那句：违规的声音漏出 {u.leak_rendered_ms ?? "—"} 毫秒（
-            {u.violation_level === "char" ? "按字精确定位" : "没有逐字时间，按整句算上限"}）· 截断前已经说了 {Math.round(u.rendered_ms)}{" "}
-            毫秒 · 叫停后 ≤ {u.cancel_to_stop_ms ?? "—"} 毫秒没声，嘴型 {u.cancel_to_mouth_zero_ms ?? "—"} 毫秒停下
+            被截的那句：{VOICE.leak} {u.leak_rendered_ms != null ? duration(u.leak_rendered_ms) : "—"}（
+            {u.violation_level === "char" ? leakHow("char", audio.level === "simulation") : "没有逐字时间，按整句算上限"}）· {VOICE.before}{" "}
+            {duration(u.rendered_ms)} · 叫停后 ≤ {u.cancel_to_stop_ms != null ? duration(u.cancel_to_stop_ms) : "—"}没声，嘴型{" "}
+            {u.cancel_to_mouth_zero_ms != null ? duration(u.cancel_to_mouth_zero_ms) : "—"}停下
           </span>
         ))}
     </div>

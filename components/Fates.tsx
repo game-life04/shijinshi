@@ -1,11 +1,14 @@
 "use client";
 
 // 三种结局（ADR-022）：同一个故障注入角色、同一句话，依次用三种放行策略各跑一遍，一遍播完再播下一遍（不同时放）。
-// 每一遍都按浏览器实际渲染的声音计量：违规音频漏出多少毫秒、多久才开口。数字全部来自这次实测；没跑的写「待测」。
+// 每一遍都按浏览器实际渲染的声音计量：违规的声音漏出多少、多久才开口。数字全部来自这次实测；没跑的写「待测」。
 //   先播后截（S3）：先说再审。护栏判得慢时，口令已经念出来一截才被截住；
 //   先审后播（S1）：整句审完才开始合成。不漏，但要等护栏审完、再等合成；
 //   边审边合成（S2，默认）：审的同时合成，审过才放出声音。不漏，开口比先审后播早。
 // 「护栏固定延迟」是实验设定（模拟护栏判定慢的时候），三遍用同一个值，标在结果旁边；不是真实模型的延迟。
+// 评审第三批（ADR-036）：每张卡一条时间轴（R11），标出想、审、开口、截断，三张卡同一把尺子；指标叫法和工作台一样（R27）。
+// 时间轴只用现有的事件：服务端的时刻（想好、审完、截断）按服务端时钟，开口按浏览器时钟，中间差一次事件推送，标「约」。
+// 卡片上的 data-* 属性给实验脚本读（scripts/experiments-voice.ts），取值一个都不改；只改看得见的字。
 
 import { Play as PlayIcon, Square } from "lucide-react";
 import Link from "next/link";
@@ -13,11 +16,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { usePerformer } from "@/lib/client/avatar/stage";
 import { EXPIRED_MESSAGE, toLoginIfExpired } from "@/lib/client/session-expired";
 import { VoicePlayer } from "@/lib/client/voice-player";
-import { POLICY_LABEL, type ReleasePolicy, type RunEvent, type RunManifest } from "@/lib/domain/types";
+import type { ReleasePolicy, RunEvent, RunManifest } from "@/lib/domain/types";
 import Avatar, { useAvatarAdapter } from "./Avatar";
 import type { Expression } from "./FaceAvatar";
 import type { Phase } from "./StatusRing";
 import { Badge, Button, Metric } from "./ui";
+import { duration, leakHow, POLICY_SHORT, VOICE } from "./wording";
 
 /** 固定输入：自称开发者要测试代号（suites/smoke.jsonl） */
 const CASE_ID = "SMOKE_CANARY_003";
@@ -28,10 +32,24 @@ const FATE_SEED = 0x5c03;
 const FATES: { policy: ReleasePolicy; title: string; idea: string }[] = [
   { policy: "S3", title: "结局一 · 先播后截", idea: "先说再审：审得慢，口令就先念出来了" },
   { policy: "S1", title: "结局二 · 先审后播", idea: "整句审完才合成：不漏，但开口慢" },
-  { policy: "S2", title: "结局三 · 边审边合成", idea: "审的同时合成，审过才放声音" },
+  { policy: "S2", title: "结局三 · 边审边合成", idea: "审的同时合成，审过才放出声音" },
 ];
 
 const DELAYS = [0, 1000, 2000, 4000, 6000];
+
+/** 时间轴上的几个时刻（毫秒，从这一轮开始算） */
+interface FateTimes {
+  /** 第一句想好（服务端） */
+  ready?: number;
+  /** 护栏判完那句带口令的话（拦下或截断，服务端） */
+  guard?: number;
+  /** 截断（先播后截，服务端） */
+  cut?: number;
+  /** 开口（浏览器） */
+  first?: number;
+  /** 一共放出多长的声音（浏览器） */
+  spoken?: number;
+}
 
 interface FateResult {
   policy: ReleasePolicy;
@@ -45,6 +63,9 @@ interface FateResult {
   first_audio_ms?: number;
   level?: string;
   error?: string;
+  times: FateTimes;
+  /** 这一轮在浏览器里开始的时刻（performance.now），播放游标用 */
+  startedAt?: number;
 }
 
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
@@ -56,6 +77,9 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
   return data as T;
 }
 
+/** 被拦下的原话里的口令只显示开头（R11：观众会以为「这不是看到了吗」；记录里照存，只改显示） */
+const maskCanary = (s: string) => s.replace(/QYT-[0-9A-F]{6}/g, "QYT-••••••");
+
 /** 跑一遍：建运行 → 听事件流 → 放行的句子取音频播放 → 播完上报计量 → 等运行结束 */
 function runFate(
   player: VoicePlayer,
@@ -66,12 +90,15 @@ function runFate(
   stop: { current: boolean },
 ): Promise<FateResult> {
   return new Promise((resolve) => {
-    const r: FateResult = { policy, delay, state: "running", heard: "", cut: "" };
+    const r: FateResult = { policy, delay, state: "running", heard: "", cut: "", times: {} };
+    let t0: number | undefined;
+    const since = (e: RunEvent) => (t0 === undefined ? undefined : e.monotonic_ms - t0);
     const done = (patch: Partial<FateResult>) => {
       Object.assign(r, patch);
-      onUpdate({ ...r });
-      resolve({ ...r });
+      onUpdate({ ...r, times: { ...r.times } });
+      resolve({ ...r, times: { ...r.times } });
     };
+    const update = () => onUpdate({ ...r, times: { ...r.times } });
     api<RunManifest>("/api/runs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -91,7 +118,7 @@ function runFate(
     })
       .then((m) => {
         r.run_id = m.run_id;
-        onUpdate({ ...r });
+        update();
         const es = new EventSource(`/api/runs/${m.run_id}/events`);
         const seen = new Set<number>();
         es.onmessage = (msg) => {
@@ -103,20 +130,29 @@ function runFate(
           }
           if (e.type === "turn_started" && e.turn_id) {
             player.beginTurn(e.turn_id);
+            t0 = e.monotonic_ms;
+            r.startedAt = performance.now();
             onPhase("think");
-          } else if (e.type === "utterance_ready") onPhase("check");
-          else if (e.type === "utterance_released" && e.turn_id && e.utterance_id) {
+            update();
+          } else if (e.type === "utterance_ready") {
+            r.times.ready ??= since(e);
+            onPhase("check");
+          } else if (e.type === "utterance_released" && e.turn_id && e.utterance_id) {
             player.play(e.run_id, e.turn_id, e.utterance_id);
             r.heard += String(e.data?.text ?? "");
             onPhase("speak");
-            onUpdate({ ...r });
+            update();
           } else if (e.type === "utterance_cut") {
             player.cut("cut");
+            r.times.cut ??= since(e);
+            r.times.guard ??= since(e);
             onPhase("blocked");
+            update();
           } else if (e.type === "utterance_blocked") {
             r.cut = String(e.data?.text ?? "");
+            r.times.guard ??= since(e);
             onPhase("blocked");
-            onUpdate({ ...r });
+            update();
           } else if (e.type === "playback_waiting" && e.turn_id) {
             void player
               .finishTurn(e.turn_id)
@@ -129,13 +165,16 @@ function runFate(
               )
               .catch(() => {});
           } else if (e.type === "playback_metrics") {
-            const us = (e.data?.utterances as { leak_rendered_ms: number | null; violation_level: string | null }[]) ?? [];
+            const us =
+              (e.data?.utterances as { leak_rendered_ms: number | null; violation_level: string | null; rendered_ms: number }[]) ?? [];
             const cuts = us.filter((u) => u.violation_level);
             r.first_audio_ms = typeof e.data?.first_audio_ms === "number" ? e.data.first_audio_ms : undefined;
             r.level = String(e.data?.level ?? "");
             r.leak_ms = cuts.reduce((n, u) => n + (u.leak_rendered_ms ?? 0), 0);
             r.leak_level = cuts.some((u) => u.violation_level === "sentence_upper_bound") ? "句级上界" : cuts.length ? "按字精确" : "";
-            onUpdate({ ...r });
+            r.times.first = r.first_audio_ms;
+            r.times.spoken = us.reduce((n, u) => n + (u.rendered_ms ?? 0), 0);
+            update();
           } else if (e.type === "run_finished") {
             es.close();
             onPhase("idle");
@@ -149,6 +188,63 @@ function runFate(
       })
       .catch((e: Error) => done({ state: "error", error: e.message }));
   });
+}
+
+/**
+ * 一条时间轴（R11）：想（淡墨）→ 审（朱红）→ 开口以后放出的声音（墨色），口令那几个字漏出的部分涂朱红，截断处一道「截」。
+ * 三张卡同一把尺子（scale），才看得出谁先开口、谁漏了。没播放时画一条灰线占位；正在播放的那张有一根游标。
+ */
+function FateTimeline({ t, scale, cursor, leak }: { t?: FateTimes; scale: number; cursor?: number; leak?: number }) {
+  const pct = (x: number) => `${Math.min(100, (Math.max(0, x) / scale) * 100)}%`;
+  const end = t?.first !== undefined && t.spoken !== undefined ? t.first + t.spoken : undefined;
+  const marks = [
+    t?.guard !== undefined && `审完 ${duration(t.guard)}`,
+    t?.first !== undefined && `约 ${duration(t.first)} 开口`,
+    t?.cut !== undefined && `${duration(t.cut)} 截断`,
+  ].filter(Boolean);
+  return (
+    <figure className="space-y-1" aria-label="这一遍的时间轴">
+      <div className="relative h-5">
+        <span className="absolute inset-x-0 top-1/2 h-px bg-border" />
+        {t?.ready !== undefined && (
+          <span className="absolute top-[40%] h-[20%] rounded-[1px] bg-foreground/30" style={{ left: 0, width: pct(t.ready) }} title="想" />
+        )}
+        {t?.ready !== undefined && t.guard !== undefined && t.guard > t.ready && (
+          <span
+            className="absolute top-[30%] h-[40%] rounded-[1px] bg-primary/70"
+            style={{ left: pct(t.ready), width: pct(t.guard - t.ready) }}
+            title="护栏在审"
+          />
+        )}
+        {t?.first !== undefined && end !== undefined && (
+          <span
+            className="absolute top-[25%] h-[50%] rounded-[1px] bg-foreground/85"
+            style={{ left: pct(t.first), width: pct(Math.max(end - t.first, scale * 0.004)) }}
+            title="放出去的声音"
+          />
+        )}
+        {end !== undefined && leak !== undefined && leak > 0 && (
+          <span
+            className="absolute top-[25%] h-[50%] bg-primary"
+            style={{ left: pct(Math.max(t?.first ?? 0, end - leak)), width: pct(Math.min(leak, end - (t?.first ?? 0))) }}
+            title="口令那几个字漏出去的声音"
+          />
+        )}
+        {t?.cut !== undefined && (
+          <span className="absolute top-0 h-full w-px bg-primary" style={{ left: pct(t.cut) }}>
+            <span className="absolute -top-1 left-1 text-[10px] leading-none text-primary" style={{ fontFamily: "var(--font-kai)" }}>
+              截
+            </span>
+          </span>
+        )}
+        {cursor !== undefined && <span className="absolute top-0 h-full w-0.5 bg-foreground" style={{ left: pct(cursor) }} aria-hidden />}
+      </div>
+      <figcaption className="flex min-h-4 flex-wrap justify-between gap-x-2 text-[11px] text-muted">
+        <span>0</span>
+        <span>{marks.length ? marks.join(" · ") : "待播"}</span>
+      </figcaption>
+    </figure>
+  );
 }
 
 export default function Fates() {
@@ -169,6 +265,8 @@ export default function Fates() {
   const [live, setLive] = useState<boolean | null>(null);
   const [phase, setPhase] = useState<Phase>("idle");
   const [expression, setExpression] = useState<Expression>("neutral");
+  /** 正在播放的那一遍走到哪了（毫秒），时间轴上的游标 */
+  const [cursor, setCursor] = useState<number | undefined>(undefined);
   const playerRef = useRef<VoicePlayer | null>(null);
   const stop = useRef(false);
   const player = () => {
@@ -193,6 +291,17 @@ export default function Fates() {
     setPhase(p);
     setExpression(p === "blocked" ? "confused" : "neutral");
   }, []);
+  // 游标：正在播放的那一遍，十分之一秒走一格（只是看的，不参与计量）
+  const startedAt = current !== null ? results[current]?.startedAt : undefined;
+  const currentDone = current !== null && results[current]?.state !== "running";
+  useEffect(() => {
+    if (startedAt === undefined || currentDone) {
+      setCursor(undefined);
+      return;
+    }
+    const id = setInterval(() => setCursor(performance.now() - startedAt), 100);
+    return () => clearInterval(id);
+  }, [startedAt, currentDone]);
 
   const start = async () => {
     setError(null);
@@ -236,6 +345,12 @@ export default function Fates() {
 
   const s1 = results.find((r) => r?.policy === "S1")?.first_audio_ms;
   const simulated = live === false || results.some((r) => r?.level === "simulation");
+  // 三张卡同一把尺子：最长的那一遍（没有数时按护栏延迟估一个，占位用）
+  const ends = results.flatMap((r) => {
+    const t = r?.times;
+    return t ? [t.cut ?? 0, t.guard ?? 0, (t.first ?? 0) + (t.spoken ?? 0)] : [];
+  });
+  const scale = Math.max(1000, delay + 2500, ...ends, cursor ?? 0) * 1.05;
 
   return (
     <div className="grid min-h-0 flex-1 gap-2 p-2 lg:grid-cols-[minmax(220px,0.8fr)_minmax(0,2.2fr)]">
@@ -248,7 +363,9 @@ export default function Fates() {
             <span className="text-xs text-muted">同一句话：</span>
             {CASE_INPUT}
           </p>
-          <p className="text-xs text-muted">被测：故障注入角色 + 运行时护栏（它被设成「自称开发者就说出代号」，用来验证护栏）。</p>
+          <p className="text-xs text-muted">
+            被测：「故意出错」的角色 + 分寸的护栏（它被设成「自称开发者就说出代号」，用来看护栏怎么拦）。
+          </p>
           {simulated ? (
             <p className="text-xs">
               <Badge tone="warn">模拟数据（非真实模型）</Badge>{" "}
@@ -259,66 +376,85 @@ export default function Fates() {
               <Badge tone="primary">现场运行，不是回放</Badge> 每一遍都是点了按钮以后真跑的，数字是这一次的实测。
             </p>
           )}
+          <p className="text-[11px] text-muted">声音由程序合成，不是真人录音。</p>
           {order.join() !== "0,1,2" && (
             <p className="text-xs text-muted" data-testid="fates-order">
               这次的播放次序（实验用）：{order.map((i) => FATES[i].title.split(" · ")[1]).join(" → ")}
             </p>
           )}
-          <label
-            className="flex flex-col gap-0.5"
-            title="实验设定：给每句护栏判定加一个固定、已知的延迟，模拟护栏判得慢的时候；三遍用同一个值"
-          >
-            <span className="text-xs text-muted">护栏固定延迟（实验设定）</span>
-            <select
-              className="h-8 rounded border border-border bg-surface px-1"
-              value={delay}
-              disabled={running}
-              onChange={(e) => setDelay(Number(e.target.value))}
-            >
-              {DELAYS.map((d) => (
-                <option key={d} value={d}>
-                  {d} ms{d === 0 ? "（不加，按真实速度）" : ""}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="flex gap-2">
-            {!running ? (
-              <Button variant="primary" onClick={start}>
-                <PlayIcon size={14} aria-hidden />
-                依次播放三种结局
-              </Button>
-            ) : (
-              <Button
-                variant="danger"
-                onClick={() => {
-                  stop.current = true;
-                }}
+        </section>
+      </aside>
+
+      <section className="space-y-2 overflow-auto" aria-labelledby="fates-title">
+        {/* 主按钮挪到三张卡上面（R11） */}
+        <div className="space-y-2 rounded-sm border border-border bg-surface p-3 text-sm">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div className="min-w-0">
+              <h1 id="fates-title" className="text-xl">
+                同一句话，三种结局
+              </h1>
+              <p className="text-xs text-muted">
+                同一个会说漏嘴的角色、同一句话，只换「审」和「说」的先后：先说再审、审完再说、边审边合成。三遍依次播放，听一听、看一看时间轴。
+              </p>
+            </div>
+            <div className="flex flex-wrap items-end gap-2">
+              <label
+                className="flex flex-col gap-0.5"
+                title="实验设定：给每句护栏判定加一个固定、已知的延迟，模拟护栏判得慢的时候；三遍用同一个值"
               >
-                <Square size={14} aria-hidden />
-                停止
-              </Button>
-            )}
+                <span className="text-xs text-muted">护栏固定延迟（实验设定）</span>
+                <select
+                  className="h-8 rounded border border-border bg-surface px-1"
+                  value={delay}
+                  disabled={running}
+                  onChange={(e) => setDelay(Number(e.target.value))}
+                >
+                  {DELAYS.map((d) => (
+                    <option key={d} value={d}>
+                      {d} ms{d === 0 ? "（不加，按真实速度）" : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {!running ? (
+                <Button variant="primary" onClick={start}>
+                  <PlayIcon size={14} aria-hidden />
+                  依次播放三种结局
+                </Button>
+              ) : (
+                <Button
+                  variant="danger"
+                  onClick={() => {
+                    stop.current = true;
+                  }}
+                >
+                  <Square size={14} aria-hidden />
+                  停止
+                </Button>
+              )}
+            </div>
           </div>
+          <p className="text-[11px] text-muted">
+            护栏设成 0 时，口令规则几毫秒就判完，先播后截也来得及截住，三种看不出差别；所以默认放慢到 4 秒，好看清区别。
+          </p>
           {error && (
             <p role="alert" className="text-xs text-bad">
               {error}
             </p>
           )}
-        </section>
-      </aside>
+        </div>
 
-      <section className="space-y-2 overflow-auto" aria-label="三种结局">
         <div className="grid gap-2 md:grid-cols-3">
           {FATES.map((f, i) => {
             const r = results[i];
             const leaked = r?.leak_ms !== undefined && r.leak_ms > 0;
+            const how = leakHow(r?.leak_level, r?.level === "simulation");
             return (
               <article
                 key={f.policy}
-                className={`space-y-2 rounded-sm border bg-surface p-3 text-sm ${current === i ? "border-primary" : "border-border"}`}
+                className={`space-y-2 rounded-sm border bg-surface p-3 text-sm ${current === i ? "border-foreground" : "border-border"}`}
                 data-testid={`fate-${f.policy}`}
-                // 给实验脚本读数用（scripts/experiments-voice.ts），和页面上显示的是同一份数
+                // 给实验脚本读数用（scripts/experiments-voice.ts），和页面上显示的是同一份数；取值不改
                 data-state={r?.state ?? "pending"}
                 data-run-id={r?.run_id ?? ""}
                 data-leak-ms={r?.leak_ms ?? ""}
@@ -326,40 +462,31 @@ export default function Fates() {
                 data-first-audio-ms={r?.first_audio_ms ?? ""}
                 data-level={r?.level ?? ""}
               >
-                <header>
+                <header className="min-h-[3.25rem]">
                   <h2 className="font-semibold" style={{ fontFamily: "var(--font-serif)" }}>
                     {f.title}
                   </h2>
-                  <p className="text-xs text-muted">
-                    {POLICY_LABEL[f.policy]} · {f.idea}
-                  </p>
+                  <p className="text-xs text-muted">{f.idea}</p>
                 </header>
+                <FateTimeline t={r?.times} scale={scale} cursor={current === i ? cursor : undefined} leak={r?.leak_ms} />
                 <div className="rounded-sm bg-background p-2">
                   <p className="text-[11px] text-muted">放出去的字</p>
                   <p>{r?.heard || <span className="text-muted">{current === i ? "正在播放……" : "待播"}</span>}</p>
                   {r?.cut && (
                     <p className="mt-1 text-xs text-muted">
-                      审完没放行：<span className="line-through decoration-primary decoration-[1.5px]">{r.cut}</span>
+                      这句被拦下，没有播出：
+                      <span className="line-through decoration-primary decoration-[1.5px]">{maskCanary(r.cut)}</span>
                     </p>
                   )}
                   {f.policy === "S3" && r?.state === "done" && r.leak_ms !== undefined && (
                     <p className="mt-1 text-xs text-muted">
-                      {leaked
-                        ? `声音在念到口令时被截断：口令那几个字的声音漏出了 ${Math.round(r.leak_ms)} 毫秒`
-                        : "声音在念到口令之前就被截断了"}
+                      {leaked ? `声音在念到口令时被截断：口令那几个字的声音漏出了 ${duration(r.leak_ms)}` : "声音在念到口令之前就被截断了"}
                     </p>
                   )}
                 </div>
                 <div className="flex flex-wrap gap-x-4 gap-y-1">
-                  <Metric
-                    label="违规音频漏出"
-                    value={
-                      r?.leak_ms !== undefined
-                        ? `${Math.round(r.leak_ms)} ms${r.leak_level ? `（${r.level === "simulation" && r.leak_level === "按字精确" ? "模拟发声，按字算" : r.leak_level}）` : ""}`
-                        : null
-                    }
-                  />
-                  <Metric label="首声等待" value={r?.first_audio_ms !== undefined ? `${r.first_audio_ms} ms` : null} />
+                  <Metric label={VOICE.leak} value={r?.leak_ms !== undefined ? `${duration(r.leak_ms)}${how ? `（${how}）` : ""}` : null} />
+                  <Metric label={VOICE.first} value={r?.first_audio_ms !== undefined ? duration(r.first_audio_ms) : null} />
                 </div>
                 {r?.state === "done" && (
                   <p className="text-xs">
@@ -373,8 +500,7 @@ export default function Fates() {
                     {f.policy === "S2" && s1 !== undefined && r.first_audio_ms !== undefined && (
                       <span className="text-muted">
                         比先审后播
-                        {r.first_audio_ms <= s1 ? `早 ${Math.round(s1 - r.first_audio_ms)}` : `晚 ${Math.round(r.first_audio_ms - s1)}`} ms
-                        开口
+                        {r.first_audio_ms <= s1 ? `早 ${duration(s1 - r.first_audio_ms)}` : `晚 ${duration(r.first_audio_ms - s1)}`}开口
                       </span>
                     )}
                   </p>
@@ -395,14 +521,17 @@ export default function Fates() {
           <ul className="list-disc space-y-0.5 pl-4 text-muted">
             <li>三遍依次播放，一遍播完再播下一遍；同一句话、同一个角色、同一个护栏延迟。</li>
             <li>
-              违规音频漏出 = 口令那几个字的音频里，浏览器实际播出来的时长（浏览器渲染层计量，不是扬声器实听）；首声等待 =
-              发出这句话到第一个有声采样播出。
+              时间轴从对方说完算起：淡墨是她在想，朱红是护栏在审，墨色是放出去的声音；口令那几个字漏出去的声音涂朱红，「截」是截断的地方。三张卡同一把尺子。
             </li>
             <li>
-              护栏固定延迟是实验设定：模拟护栏判得慢的时候。设成 0 就是按真实速度跑，口令规则几毫秒就能判完，先播后截也来得及截住声音；
-              但这句的字已经放出去了，所以体检单仍判不合格。
+              {VOICE.leak}：口令那几个字的声音里，浏览器真正放出来的部分有多长；{VOICE.first}
+              ：从浏览器收到这句话，到放出第一个有声的音。都是在浏览器里量的，不是在扬声器外面录的。
             </li>
-            <li>{simulated ? "本页现在是模拟发声：数字只说明机制，不能当实验结果。" : "真实合成没有字级时间戳，漏出时长按整句取上界。"}</li>
+            <li>
+              护栏固定延迟是实验设定：模拟护栏判得慢的时候。设成 0
+              就是按真实速度跑，先播后截也来得及截住声音；但这句的字已经放出去了，所以体检单仍判不合格。
+            </li>
+            <li>{simulated ? "本页现在是模拟发声：数字只说明机制，不能当实验结果。" : "真实合成没有逐字的时间，漏出时长按整句算上限。"}</li>
           </ul>
         </section>
 
@@ -414,17 +543,20 @@ export default function Fates() {
                 <tr>
                   <th className="py-1">护栏延迟</th>
                   {FATES.map((f) => (
-                    <th key={f.policy}>{f.title.split(" · ")[1]}：漏出 / 首声</th>
+                    <th key={f.policy}>
+                      {POLICY_SHORT[f.policy]}：漏出 / {VOICE.first}
+                    </th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {history.map((row) => (
-                  <tr key={row.map((r) => r.run_id).join("-")} className="border-t border-border font-mono">
+                  <tr key={row.map((r) => r.run_id).join("-")} className="border-t border-border">
                     <td className="py-1">{row[0].delay} ms</td>
                     {row.map((r) => (
                       <td key={r.policy}>
-                        {r.leak_ms !== undefined ? Math.round(r.leak_ms) : "待测"} / {r.first_audio_ms ?? "待测"} ms
+                        {r.leak_ms !== undefined ? duration(r.leak_ms) : "待测"} /{" "}
+                        {r.first_audio_ms !== undefined ? duration(r.first_audio_ms) : "待测"}
                       </td>
                     ))}
                   </tr>

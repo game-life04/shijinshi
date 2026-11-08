@@ -1,85 +1,111 @@
-// 运行记录：时间、配置、模型、各类结果数、调用量；选两次兼容的运行，到「前后对比」页看改了什么、结果怎么变。
+// 运行记录：选两次运行，到「前后对比」页看改了什么、结果怎么变（评审 R28 改版，ADR-036）。
+//   - 时间按北京时间写，不再只露格林尼治时间的运行编号（编号在体检单链接的悬停里）；状态、配置都写中文；
+//   - 「拦截」改叫「平台拒答」：那是模型平台自己的内容审核挡下的，和护栏的「拦」不是一回事；补上「不适用」；
+//   - 三种结局、一键演示这类只跑几道指定题的运行收进单独一组，不和完整体检混在一起；
+//   - 配了账号时默认只列自己发起的，可以切到「全部」。
+// listRuns 是服务端函数，分组、筛选只在这一页做。
 
 import Link from "next/link";
 import AppShell from "@/components/AppShell";
-import { Badge } from "@/components/ui";
+import RunPicker, { type RunRow } from "@/components/RunPicker";
+import { POLICY_SHORT, VARIANT_SHORT } from "@/components/wording";
 import { DEFAULT_PERSONA } from "@/lib/domain/persona";
-import { VARIANT_LABEL } from "@/lib/domain/types";
+import type { RunManifest } from "@/lib/domain/types";
+import { authConfig } from "@/lib/server/auth";
 import { listRuns } from "@/lib/server/runs";
+import { getSession } from "@/lib/server/session";
 
 export const dynamic = "force-dynamic";
 
+const STATE: Record<string, string> = {
+  queued: "排队",
+  running: "运行中",
+  pausing: "暂停中",
+  paused: "暂停",
+  cancelling: "终止中",
+  completed: "",
+  cancelled: "终止",
+  failed: "失败",
+};
+
+const time = (iso: string) =>
+  new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  })
+    .format(new Date(iso))
+    .replace(/\//g, "-");
+
+function row(m: RunManifest): RunRow {
+  const c = m.counts;
+  const unfinished = [
+    c.provider_blocked && `平台拒答 ${c.provider_blocked}`,
+    c.error && `出错 ${c.error}`,
+    c.cancelled && `终止 ${c.cancelled}`,
+    c.not_run && `没跑 ${c.not_run}`,
+  ]
+    .filter(Boolean)
+    .join("、");
+  return {
+    run_id: m.run_id,
+    time: time(m.started_at ?? m.created_at),
+    persona: (m.config.persona ?? DEFAULT_PERSONA).name,
+    config: `${VARIANT_SHORT[m.config.variant]} · ${POLICY_SHORT[m.config.policy]}${m.config.voice ? " · 语音" : ""}`,
+    live: m.data_level === "live",
+    preview: m.preview,
+    state: STATE[m.state] ?? m.state,
+    pass: c.pass,
+    planned: c.planned,
+    fail: c.fail,
+    uncertain: c.uncertain,
+    na: c.not_applicable,
+    unfinished,
+  };
+}
+
 export default async function RunsPage({ searchParams }: PageProps<"/runs">) {
   const sp = await searchParams;
-  const runs = listRuns();
   const a = typeof sp.a === "string" ? sp.a : undefined;
   const b = typeof sp.b === "string" ? sp.b : undefined;
+  const all = sp.all === "1";
+  const me = authConfig().mode === "accounts" ? (await getSession())?.account : undefined;
+  const runs = listRuns();
+  const shown = me && !all ? runs.filter((r) => r.created_by === me) : runs;
+  // 只跑指定几道题的（三种结局每播一遍一题、一键演示四题）单独一组
+  const picked = (r: RunManifest) => Boolean(r.config.case_ids?.length);
+  const full = shown.filter((r) => !picked(r));
+  const demos = shown.filter(picked);
 
   return (
     <AppShell active="/runs">
       <div className="mx-auto w-full max-w-6xl space-y-4 p-4 text-sm">
-        <h1 className="text-xl font-semibold">运行记录</h1>
-        {!runs.length && <p className="text-muted">还没有运行记录。到「体检工作台」开始一次体检。</p>}
-        {runs.length > 0 && (
-          <form action="/compare" className="overflow-x-auto rounded-sm border border-border bg-surface">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="text-left text-muted">
-                  <th className="p-2">比较 A</th>
-                  <th>比较 B</th>
-                  <th>运行</th>
-                  <th>配置</th>
-                  <th>数据</th>
-                  <th>状态</th>
-                  <th>计划 / 完成</th>
-                  <th>合格 / 不合格 / 不确定</th>
-                  <th>拦截 / 出错 / 取消 / 未执行</th>
-                  <th>模型调用</th>
-                </tr>
-              </thead>
-              <tbody>
-                {runs.map((r) => (
-                  <tr key={r.run_id} className="border-t border-border">
-                    <td className="p-2">
-                      <input type="radio" name="a" value={r.run_id} defaultChecked={a === r.run_id} aria-label={`选 ${r.run_id} 为 A`} />
-                    </td>
-                    <td>
-                      <input type="radio" name="b" value={r.run_id} defaultChecked={b === r.run_id} aria-label={`选 ${r.run_id} 为 B`} />
-                    </td>
-                    <td>
-                      <Link className="font-mono link" href={`/reports/${r.run_id}`}>
-                        {r.run_id}
-                      </Link>
-                    </td>
-                    <td>
-                      {VARIANT_LABEL[r.config.variant].split("（")[0]} · {r.config.policy} · {r.config.suite} ·{" "}
-                      {(r.config.persona ?? DEFAULT_PERSONA).name}
-                    </td>
-                    <td>
-                      {r.data_level === "live" ? <Badge tone="ok">真实</Badge> : <Badge tone="warn">模拟</Badge>}
-                      {r.preview && <Badge tone="warn">预览</Badge>}
-                    </td>
-                    <td>{r.state}</td>
-                    <td className="font-mono">
-                      {r.counts.planned} / {r.counts.completed}
-                    </td>
-                    <td className="font-mono">
-                      {r.counts.pass} / {r.counts.fail} / {r.counts.uncertain}
-                    </td>
-                    <td className="font-mono">
-                      {r.counts.provider_blocked} / {r.counts.error} / {r.counts.cancelled} / {r.counts.not_run}
-                    </td>
-                    <td className="font-mono">{r.usage.llm_calls}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <div className="border-t border-border p-2">
-              <button type="submit" className="h-8 rounded border border-border px-3 hover:bg-background">
-                前后对比：A 改之前 → B 改之后
-              </button>
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h1 className="text-xl font-semibold">运行记录</h1>
+          {me && (
+            <p className="text-xs text-muted">
+              {all ? "全部账号的运行" : `只列 ${me} 发起的运行`} ·{" "}
+              <Link className="link" href={all ? "/runs" : "/runs?all=1"}>
+                {all ? "只看我的" : `看全部（${runs.length}）`}
+              </Link>
+            </p>
+          )}
+        </div>
+        {!shown.length && <p className="text-muted">还没有运行记录。到「体检工作台」开始一次体检。</p>}
+        {full.length > 0 && <RunPicker rows={full.map(row)} a0={a} b0={b} />}
+        {demos.length > 0 && (
+          <details className="rounded-sm border border-border bg-surface p-3" open={!full.length}>
+            <summary className="cursor-pointer text-sm">
+              三种结局、一键演示这类只跑几道指定题的运行（{demos.length} 次）
+              <span className="ml-1 text-xs text-muted">和完整体检分开放：题数不一样，通过数不能直接比</span>
+            </summary>
+            <div className="mt-2">
+              <RunPicker rows={demos.map(row)} a0={a} b0={b} />
             </div>
-          </form>
+          </details>
         )}
       </div>
     </AppShell>

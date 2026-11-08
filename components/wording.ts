@@ -165,3 +165,53 @@ export function findingTitle(ruleId: string, description: string): { title: stri
 
 /** 出题意图写全：越界题 / 正常题 / 含糊题 */
 export const INTENT_FULL: Record<string, string> = { violation: "越界题", normal: "正常题", ambiguous: "含糊题" };
+
+// ---------- 语音指标（评审 R27：工作台、三种结局、体检单同一套叫法，时长都用 duration） ----------
+
+/** 不到 1 秒写毫秒，1 秒以上写秒 */
+export function duration(ms: number): string {
+  return ms < 1000 ? `${Math.round(ms)} 毫秒` : `${(ms / 1000).toFixed(ms < 10_000 ? 2 : 1)} 秒`;
+}
+
+export const VOICE = {
+  /** 口令那几个字的声音里，浏览器真正放出来的部分 */
+  leak: "违规的声音漏出",
+  /** 从浏览器收到对方的话，到放出第一个有声的音 */
+  first: "开口要等",
+  /** 从叫停到浏览器确认旧声音全部丢掉（上限） */
+  stop: "叫停到没声",
+  mouth: "嘴型停下",
+  before: "截断前已经说了",
+} as const;
+
+/**
+ * 漏出时长是怎么算的。记录里的取值（violation_level 的 char / sentence_upper_bound，三种结局卡片 data-leak-level 的
+ * 「按字精确」「句级上界」）是实验脚本读的，不改；这里只换显示的说法。
+ */
+export function leakHow(level: string | null | undefined, simulated = false): string {
+  if (!level) return "";
+  const char = level === "char" || level === "按字精确";
+  return char ? (simulated ? "模拟发声，按字算" : "按字算") : "按整句算上限";
+}
+
+/** 体检单口径段：怎么量的（大白话；不再引用仓库里没有的「规格 02」） */
+export const VOICE_HOW = [
+  `${VOICE.leak}：口令那几个字的声音里，浏览器真正放出来的部分有多长（服务端按浏览器报回的播放区间算，ADR-011）。`,
+  `${VOICE.first}：从浏览器收到对方的话，到放出第一个有声的音。`,
+  `${VOICE.stop}：从叫停到浏览器确认旧声音全部丢掉，最多这么久；${VOICE.mouth}：从叫停到口型归零。`,
+  "都是在浏览器里量的，不是在扬声器外面录的。",
+];
+
+// ---------- 草稿和语音题（评审 R29） ----------
+
+/** 结果文件里存的「没跑」原因（lib/server/runs.ts 写死的原句，旧运行和实验导出里都是它，不改）→ 界面上的说法 */
+const VOICE_INPUT_NOT_RUN = "语音输入（注入音频、语音识别）还没实现，语音用例暂不执行";
+
+export function notRunReason(error?: string): string | undefined {
+  if (error === VOICE_INPUT_NOT_RUN) return "本版只测语音输出，语音输入不在本版范围（见体检单「局限」）";
+  return error;
+}
+
+export function isVoiceInputSkip(error?: string): boolean {
+  return error === VOICE_INPUT_NOT_RUN;
+}

@@ -17,7 +17,11 @@ async function startVoiceRun(page: Page, o: { variant: string; policy: string; d
   await page.getByRole("button", { name: "开始体检" }).click();
 }
 
-const ms = (s: string | null, label: RegExp) => Number(s?.match(label)?.[1] ?? Number.NaN);
+/** 读一个时长：「532 毫秒」或「1.25 秒」（评审 R27 以后时长统一按 duration 写），换成毫秒 */
+const ms = (s: string | null, label: RegExp) => {
+  const m = s?.match(label);
+  return m ? Number(m[1]) * (m[2] === "秒" ? 1000 : 1) : Number.NaN;
+};
 
 test("先播后截：判定在口令开口前回来，口令一个采样都没渲染", async ({ page }, info) => {
   test.skip(info.project.name !== "desktop-1440", "语音只在桌面尺寸上跑");
@@ -25,9 +29,9 @@ test("先播后截：判定在口令开口前回来，口令一个采样都没�
   const leak = page.getByTestId("leak-meter");
   await expect(leak).toContainText("1 次截断", { timeout: 60_000 });
   await expect(leak).toContainText("0 毫秒");
-  await expect(leak).toContainText("按字精确定位");
+  await expect(leak).toContainText("按字算");
   await expect(page.getByText("已完成")).toBeVisible({ timeout: 60_000 });
-  await expect(page.getByText(/截断前已经说了 [1-9][\d.]* 毫秒/)).toBeVisible();
+  await expect(page.getByText(/截断前已经说了 [1-9][\d.]* (毫秒|秒)/)).toBeVisible();
   await page.screenshot({ path: `${SHOTS}/voice-s3-cut-early-${info.project.name}.png`, fullPage: true });
 });
 
@@ -36,15 +40,15 @@ test("先播后截：判定晚于口令开口，漏出时长大于 0，停止和
   await startVoiceRun(page, { variant: "FAULT_B2", policy: "S3", delay: 4000, cases: 1 });
   const leak = page.getByTestId("leak-meter");
   await expect(leak).toContainText("1 次截断", { timeout: 60_000 });
-  expect(ms(await leak.textContent(), /([\d.]+) 毫秒/)).toBeGreaterThan(0);
-  await expect(page.getByText(/叫停后 ≤ [\d.]+ 毫秒没声，嘴型 [\d.]+ 毫秒停下/)).toBeVisible({ timeout: 30_000 });
+  expect(ms(await leak.textContent(), /([\d.]+) (毫秒|秒)/)).toBeGreaterThan(0);
+  await expect(page.getByText(/叫停后 ≤ [\d.]+ (毫秒|秒)没声，嘴型 [\d.]+ (毫秒|秒)停下/)).toBeVisible({ timeout: 30_000 });
   await page.screenshot({ path: `${SHOTS}/voice-s3-leak-${info.project.name}.png`, fullPage: true });
 
   // 报告里写明计量口径和逐次截断
   await expect(page.getByText("已完成")).toBeVisible({ timeout: 60_000 });
   await page.getByRole("link", { name: "打开体检单" }).click();
   await expect(page.getByRole("heading", { name: "语音计量（浏览器渲染层）" })).toBeVisible();
-  await expect(page.getByRole("cell", { name: "按字精确" })).toBeVisible();
+  await expect(page.getByRole("cell", { name: "按字算" })).toBeVisible();
   await page.screenshot({ path: `${SHOTS}/report-voice-${info.project.name}.png`, fullPage: true });
 });
 
@@ -53,7 +57,7 @@ test("先审后播：违规句不放行、不合成，首声等待有数", async
   await startVoiceRun(page, { variant: "FAULT_B2", policy: "S1", delay: 0, cases: 2 });
   await expect(page.getByText("已完成")).toBeVisible({ timeout: 90_000 });
   await expect(page.getByTestId("leak-meter")).toContainText("还没有截断");
-  expect(ms(await page.getByTestId("first-audio-meter").textContent(), /最近 ([\d.]+) 毫秒/)).toBeGreaterThan(0);
+  expect(ms(await page.getByTestId("first-audio-meter").textContent(), /最近 ([\d.]+) (毫秒|秒)/)).toBeGreaterThan(0);
   await expect(page.getByText("护栏拦下，未放行").first()).toBeVisible();
   await page.screenshot({ path: `${SHOTS}/voice-s1-${info.project.name}.png`, fullPage: true });
 });

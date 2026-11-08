@@ -1,7 +1,7 @@
-// 人工复核一条结论：确认，或改判。
+// 人工复核一条结论：确认、改判，或撤销上一次复核（评审 R31）。记下复核的账号；设了 AUTH_REVIEWERS 时只有名单里的账号能复核。
 
 import type { Verdict } from "@/lib/domain/types";
-import { requireSession } from "@/lib/server/auth";
+import { canReview, requireSession, sessionFromRequest } from "@/lib/server/auth";
 import { crossSite, readJsonObject } from "@/lib/server/http";
 import { reviewFinding } from "@/lib/server/runs";
 
@@ -16,14 +16,16 @@ export async function POST(req: Request, ctx: RouteContext<"/api/runs/[id]/revie
   if (blocked) return blocked;
   const { id } = await ctx.params;
   const body = (await readJsonObject(req)) as { finding_id?: unknown; decision?: unknown; overturn_to?: unknown };
-  if (typeof body.finding_id !== "string" || (body.decision !== "confirm" && body.decision !== "overturn")) {
-    return Response.json({ error: "需要 finding_id 和 decision（confirm 或 overturn）" }, { status: 400 });
+  if (typeof body.finding_id !== "string" || (body.decision !== "confirm" && body.decision !== "overturn" && body.decision !== "undo")) {
+    return Response.json({ error: "需要 finding_id 和 decision（confirm、overturn 或 undo）" }, { status: 400 });
   }
+  const account = sessionFromRequest(req)?.account;
+  if (!canReview(account)) return Response.json({ error: "这个账号只能看，不能复核" }, { status: 403 });
   if (body.decision === "overturn" && !VERDICTS.includes(body.overturn_to as Verdict)) {
     return Response.json({ error: `改判只能改成 ${VERDICTS.join("、")}` }, { status: 400 });
   }
   try {
-    return Response.json(reviewFinding(id, body.finding_id, body.decision, body.overturn_to as Verdict | undefined));
+    return Response.json(reviewFinding(id, body.finding_id, body.decision, body.overturn_to as Verdict | undefined, { account }));
   } catch (e) {
     return Response.json({ error: e instanceof Error ? e.message : String(e) }, { status: 409 });
   }

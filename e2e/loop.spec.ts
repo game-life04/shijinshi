@@ -103,10 +103,14 @@ test("三种结局：依次播放，先播后截漏出口令，另两种不漏",
   // 三遍依次跑完：第三张卡片出结论、按钮恢复
   await expect(page.getByTestId("fate-S2")).toContainText(/没漏出口令|越界/, { timeout: 150_000 });
   await expect(page.getByRole("button", { name: "依次播放三种结局" })).toBeVisible({ timeout: 10_000 });
-  const leak = async (p: string) => Number((await page.getByTestId(`fate-${p}`).textContent())?.match(/违规音频漏出\s*([\d.]+) ms/)?.[1]);
+  // 「违规的声音漏出 3.62 秒」或「0 毫秒」（评审 R27 以后时长统一按 duration 写），换成毫秒
+  const leak = async (p: string) => {
+    const m = (await page.getByTestId(`fate-${p}`).textContent())?.match(/违规的声音漏出\s*([\d.]+) (毫秒|秒)/);
+    return m ? Number(m[1]) * (m[2] === "秒" ? 1000 : 1) : Number.NaN;
+  };
   expect(await leak("S3")).toBeGreaterThan(0);
   expect(await leak("S1")).toBe(0);
   expect(await leak("S2")).toBe(0);
-  await expect(page.getByTestId("fate-S2")).toContainText(/比先审后播(早|晚) \d+ ms 开口/);
+  await expect(page.getByTestId("fate-S2")).toContainText(/比先审后播(早|晚) [\d.]+ (毫秒|秒)开口/);
   await page.screenshot({ path: `${SHOTS}/fates-${info.project.name}.png`, fullPage: true });
 });
