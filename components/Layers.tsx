@@ -6,8 +6,9 @@ import { ArrowRight } from "lucide-react";
 import type { ReactNode } from "react";
 import type { CaseLayers, RawLayer } from "@/lib/domain/layers";
 import { type CaseResult, GUARD_RULE_LABEL, type TurnRecord, type UtteranceRecord } from "@/lib/domain/types";
-import { AudioLine, Highlighted, type MarkedEvidence } from "./Transcript";
+import { AudioLine, Highlighted, type MarkedEvidence, PartText, releasedParts } from "./Transcript";
 import { Badge, VerdictBadge } from "./ui";
+import { guardReason } from "./wording";
 
 /** 原话层的状态：越界用墨色实印（和「不合格」同一种形状），没越界只写字，待定用淡墨虚线框 */
 export function RawBadge({ status }: { status: RawLayer["status"] }) {
@@ -62,7 +63,7 @@ export function GuardCell({ turn, guarded }: { turn: TurnRecord; guarded: boolea
           <span className="font-semibold">{u.cut_after_release ? "先播后截" : "拦下"}</span>（
           {GUARD_RULE_LABEL[u.guard.rule] ?? u.guard.rule} · {u.guard.by === "rule" ? "规则" : "模型"} · {u.guard.ms} ms）：
           <span className="line-through decoration-primary decoration-[1.5px]">{u.text}</span>
-          <span className="block text-muted">{u.guard.reason}</span>
+          <span className="block text-muted">{guardReason(u.guard)}</span>
         </li>,
       );
     } else if (u.origin === "masked") {
@@ -100,12 +101,15 @@ export function LayeredTurns({
   layers,
   guarded,
   evidence,
+  strategyTitle,
 }: {
   result: CaseResult;
   layers: CaseLayers;
   guarded: boolean;
   /** 结论的证据（最终播出层），用来在播出的原文上画朱批 */
   evidence: MarkedEvidence[];
+  /** 套路编号 → 名字（和工作台同一张表）；第一句是题目原句 */
+  strategyTitle?: (id?: string) => string | undefined;
 }) {
   if (!result.turns.length) return <p className="text-sm text-muted">没有对话记录</p>;
   const cell = "rounded-sm bg-background p-2";
@@ -121,7 +125,7 @@ export function LayeredTurns({
         <div key={t.turn_id} className="space-y-1 border-t border-border pt-2 first:border-t-0 first:pt-0">
           <p className="text-xs">
             <span className="text-muted">
-              第 {t.index} 轮{t.strategy_id ? ` · 测试策略 ${t.strategy_id}` : ""} · 用户：
+              第 {t.index} 轮{t.strategy_id ? ` · 套路：${strategyTitle?.(t.strategy_id) ?? t.strategy_id}` : ""} · 测试 Agent（扮成用户）：
             </span>
             {t.user_text}
           </p>
@@ -141,7 +145,20 @@ export function LayeredTurns({
             <div className={cell}>
               <p className={head}>最终播出</p>
               {t.released_output ? (
-                <Highlighted text={t.released_output} spans={evidence.filter((e) => e.turn_id === t.turn_id && e.layer === "released")} />
+                // 系统补上的话（时长提醒、求助信息）也是用户听到的，照样列在这一层，但写明不是角色说的（评审 R15）
+                releasedParts(t).map((part) =>
+                  part.service ? (
+                    <span key={part.start} className="mt-1 block text-xs text-muted">
+                      系统补上的话：{part.text}
+                    </span>
+                  ) : (
+                    <PartText
+                      key={part.start}
+                      part={part}
+                      spans={evidence.filter((e) => e.turn_id === t.turn_id && e.layer === "released")}
+                    />
+                  ),
+                )
               ) : (
                 <span className="text-muted">{t.service.exited ? "（服务已停止，没有播出）" : "（无输出）"}</span>
               )}

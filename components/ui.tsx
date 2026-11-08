@@ -1,11 +1,11 @@
 // 小型共用组件：状态徽标、按钮、面板。颜色只用 globals.css 里的设计变量；状态同时有文字和图标或形状，不只靠颜色。
-// 判定徽标（ADR-021）：合格是朱红印章，不合格是墨色实印，不确定是淡墨虚线框，不适用只写字。
+// 判定徽标（ADR-021，章法见 globals.css 开头）：合格是朱文印，不合格是墨色实印，不确定是淡墨虚线框，不适用只写字；「拦」是白文印。
 
 import { Ban, CheckCircle2, CircleDashed, Clock, HelpCircle, MinusCircle, ShieldAlert, XCircle } from "lucide-react";
 import type { ReactNode } from "react";
 import type { CaseStatus, Verdict } from "@/lib/domain/types";
 
-type Tone = "ok" | "bad" | "warn" | "muted" | "primary";
+type Tone = "ok" | "bad" | "warn" | "muted" | "primary" | "ink";
 
 const TONE: Record<Tone, string> = {
   ok: "border border-ok text-ok",
@@ -13,7 +13,18 @@ const TONE: Record<Tone, string> = {
   warn: "border border-dashed border-warn text-warn",
   muted: "border border-border text-muted",
   primary: "bg-primary-soft text-primary",
+  // 墨色实印：越界、不合格（和 VerdictBadge 的「不合格」一个样子）
+  ink: "bg-foreground text-surface",
 };
+
+/** 白文印「拦」：朱红实底、宣纸色字（对话里被拦下的原话、闯关、三种结局都用这一个） */
+export function BlockSeal({ className = "" }: { className?: string }) {
+  return (
+    <span className={`seal-bai inline-block px-1 py-0.5 text-sm leading-none ${className}`} aria-hidden>
+      拦
+    </span>
+  );
+}
 
 export function Badge({ tone, icon, children, title }: { tone: Tone; icon?: ReactNode; children: ReactNode; title?: string }) {
   return (
@@ -166,21 +177,39 @@ export function Metric({ label, value, hint }: { label: string; value?: string |
 }
 
 /**
- * 体检单的大印章：「本次通过 X/Y 项」（ADR-022）。只说这一次、这些用例里通过了几项，不是「合格」认证；
+ * 通过数「本次通过 X/Y 项」（ADR-022）。只说这一次、这些用例里通过了几项，不是「合格」认证；
  * 分母是计划的全部用例，没跑完、出错的都在分母里。
+ * 章法（R19）：写成墨字大号，不再用朱红章——「1/16 项」盖着朱红章，看上去也像盖了合格章。
+ * 朱红章只在体检单末尾当出具章（IssueSeal）。测试按 testid「tally-seal」和「本次通过 X/Y 项」这几个字找它。
  */
-export function TallySeal({ pass, total }: { pass: number; total: number }) {
+export function TallySeal({ pass, total, simulated = false }: { pass: number; total: number; simulated?: boolean }) {
   return (
     <div
-      className="seal inline-flex shrink-0 flex-col items-center px-3 py-1.5 leading-tight"
+      className="inline-flex shrink-0 flex-col items-start leading-tight"
       data-testid="tally-seal"
       role="img"
-      aria-label={`本次通过 ${pass}/${total} 项`}
+      aria-label={`本次通过 ${pass}/${total} 项${simulated ? "（模拟数据）" : ""}`}
     >
-      <span className="text-sm">本次通过</span>
-      <span className="text-2xl tabular-nums">
+      <span className="text-xs text-muted">本次通过</span>
+      <span className="text-3xl tabular-nums" style={{ fontFamily: "var(--font-serif)" }}>
         {pass}/{total} 项
       </span>
+      {simulated && <span className="mt-0.5 border border-dashed border-warn px-1 text-[11px] text-warn">模拟数据</span>}
+    </div>
+  );
+}
+
+/** 体检单末尾的出具章：朱红「分寸」印，旁边写清这是什么、不是什么 */
+export function IssueSeal() {
+  return (
+    <div className="flex items-center gap-3" data-testid="issue-seal">
+      <span className="seal inline-grid h-12 w-12 shrink-0 place-items-center text-base leading-none" aria-hidden>
+        <span className="flex flex-col items-center">
+          <span>分</span>
+          <span>寸</span>
+        </span>
+      </span>
+      <span className="text-xs text-muted">「分寸」AI 语音角色安全体检台出具。AI 辅助生成；自查辅助，不是合规认证。</span>
     </div>
   );
 }

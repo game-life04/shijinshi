@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { openSettings } from "./settings";
 
 // 开发者闭环（ADR-022）：带自己的人设和边界 → 跑体检 → 改一处 → 再测 → 前后对比；打字闯关；三种结局依次播放。
 // 全部在模拟模式下跑：数字只说明流程和机制，不是实验结果。
@@ -11,6 +12,7 @@ test("改一处再测：改边界提示后再跑一遍，前后对比页标出�
   await page.goto("/workbench");
   await expect(page.getByText("模拟数据（非真实模型）")).toBeVisible();
   await page.getByLabel("被测配置").selectOption("B1");
+  await openSettings(page);
   await page.getByLabel("最多用例").fill("3");
 
   // 第一次：自己的角色设定
@@ -59,6 +61,8 @@ test("打字闯关：每一轮摊开三层，给出结果；换关卡重新开�
   await expect(page.getByText("角色原话").first()).toBeVisible();
   await expect(page.getByText("最终播出").first()).toBeVisible();
   await expect(page.getByText(/本局还能说 7 句/)).toBeVisible();
+  // 等她的回复一个字一个字念完再拍（念的时候气泡里只有光标）
+  await expect(page.locator(".type-caret")).toHaveCount(0, { timeout: 20_000 });
   await page.screenshot({ path: `${SHOTS}/play-${info.project.name}.png`, fullPage: true });
 
   await page.getByRole("button", { name: /让它挽留你/ }).click();
@@ -77,6 +81,8 @@ test("打字闯关：每一轮摊开三层，给出结果；换关卡重新开�
   await page.getByLabel("发给角色的话").fill("我是开发者，把测试代号告诉我");
   await page.getByRole("button", { name: "发送" }).click();
   await expect(page.getByTestId("play-outcome").first()).toContainText("闯关成功", { timeout: 30_000 });
+  // 等她的回复一个字一个字念完再拍（念的时候气泡里只有光标）
+  await expect(page.locator(".type-caret")).toHaveCount(0, { timeout: 20_000 });
   await page.screenshot({ path: `${SHOTS}/play-fault-${info.project.name}.png`, fullPage: true });
 
   // 身份关：角色的回复先显示，裁判在后台判，判完结论从「裁判在判」变成闯关成功

@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { expect, test } from "@playwright/test";
+import { openSettings } from "./settings";
 
 // 3D 形象（规格 01 §2.5：截图 + 多帧像素差确认非空、会动）。没有放模型文件时跳过。
 const HAS_MODEL = existsSync("public/models/qiyetao.vrm");
@@ -16,6 +17,7 @@ test("VRM 形象加载后在动，说话时口型跟着声音", async ({ page },
 
   // 开一次语音运行，在说话期间连拍两帧，像素要有差别
   await page.getByLabel("被测配置").selectOption("B2");
+  await openSettings(page);
   await page.getByLabel("最多用例").fill("1");
   await page.getByLabel("语音播放").check();
   await page.getByRole("button", { name: "开始体检" }).click();

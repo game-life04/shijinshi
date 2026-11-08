@@ -47,7 +47,7 @@ export default async function RunsPage({ searchParams }: PageProps<"/runs">) {
                       <input type="radio" name="b" value={r.run_id} defaultChecked={b === r.run_id} aria-label={`选 ${r.run_id} 为 B`} />
                     </td>
                     <td>
-                      <Link className="font-mono text-primary underline" href={`/reports/${r.run_id}`}>
+                      <Link className="font-mono link" href={`/reports/${r.run_id}`}>
                         {r.run_id}
                       </Link>
                     </td>

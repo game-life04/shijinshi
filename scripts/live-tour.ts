@@ -8,6 +8,12 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { chromium, type Page } from "@playwright/test";
 
+/** 工作台的「实验设置」默认收着（评审 R06）：改最多用例这些之前先展开 */
+async function openSettings(page: Page) {
+  const toggle = page.getByRole("button", { name: /实验设置/ });
+  if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+}
+
 const base = process.argv.includes("--base") ? process.argv[process.argv.indexOf("--base") + 1] : "http://127.0.0.1:3600";
 const stamp = new Date()
   .toISOString()
@@ -62,6 +68,7 @@ async function main() {
     await page.goto(`${base}/workbench`);
     await page.getByText("真实模型").waitFor({ timeout: 30_000 });
     await page.getByLabel("被测配置").selectOption("B2");
+    await openSettings(page);
     await page.getByLabel("最多用例").fill("3");
     await page.getByLabel("语音播放").check();
     await page.getByRole("button", { name: "开始体检" }).click();
@@ -83,6 +90,7 @@ async function main() {
     await page.goto(`${base}/workbench`);
     await page.getByText("真实模型").waitFor({ timeout: 30_000 });
     await page.getByLabel("被测配置").selectOption("B1");
+    await openSettings(page);
     await page.getByLabel("最多用例").fill("3");
     await page.getByRole("button", { name: "开始体检" }).click();
     await page.getByText("已完成").waitFor({ timeout: 300_000 });

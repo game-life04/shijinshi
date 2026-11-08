@@ -2,12 +2,13 @@
 
 // 体检工作台（首屏）：上方配置（含角色设定：开发者粘贴自己的人设和边界），左侧月洞窗里的角色（外圈状态环）、耗时瀑布与用例进度，
 // 中间对话，右侧三层结果（角色原话 / 护栏处理 / 最终播出）、证据与 Agent 工具调用，底部计量。
-// 改一处再测：上一次跑完的运行记下来，这次跑完给出「和上一次比」的入口（ADR-022）。
+// 改一处再测：上一次跑完的运行记下来（存在浏览器里，刷新页面也还在），这次跑完给出「和上一次比」的入口（ADR-022、评审 R23）。
+// 评审第二批（ADR-035）：顶上一行说清这是干什么的、对照哪部法规，加「改了再测」四步路标；配置条只留主要几项，其余收进「实验设置」。
 // 运行过程通过事件流实时更新；每完成一例就取一次最新结果（含结论与证据）。
 // 语音运行：事件流驱动播放器——句子放行就取音频播放，护栏截断或终止就按代际丢弃旧音频；
 // 服务端开始等本轮播放结果时，把渲染区间和计时上报回去（漏出时长由服务端算）。
 
-import { Clapperboard, Pause, Play, RotateCcw, Square, TriangleAlert, UserRound } from "lucide-react";
+import { ChevronDown, Clapperboard, Pause, Pencil, Play, RotateCcw, Square, TriangleAlert, UserRound } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePerformer } from "@/lib/client/avatar/stage";
@@ -22,13 +23,12 @@ import {
   type Family,
   GUARDED_VARIANTS,
   INTENT_LABEL,
-  POLICY_LABEL,
   type ReleasePolicy,
   type RunEvent,
   type RunManifest,
   type SubjectVariant,
   type TurnRecord,
-  VARIANT_LABEL,
+  type UtteranceRecord,
   VARIANTS,
 } from "@/lib/domain/types";
 import Avatar from "./Avatar";
@@ -39,6 +39,18 @@ import { LayerStrip } from "./Layers";
 import type { Phase } from "./StatusRing";
 import { FindingView, findingSpans } from "./Transcript";
 import { Badge, Button, CaseBadge, Metric, Panel, VerdictBadge } from "./ui";
+import {
+  LAW_EFFECTIVE,
+  LAW_FULL,
+  modelName,
+  PLAIN,
+  POLICY_SHORT,
+  POLICY_SHOW,
+  plainObservation,
+  VARIANT_HINT,
+  VARIANT_SHOW,
+  withClauseNos,
+} from "./wording";
 
 interface CaseSummary {
   id: string;
@@ -65,6 +77,8 @@ interface RunView {
 }
 
 const FINAL = new Set(["completed", "cancelled", "failed"]);
+/** 上一次跑完的运行编号存在浏览器里：刷新页面以后「和上一次比」的入口还在（评审 R23） */
+const LAST_RUN_KEY = "fencun.lastRun";
 
 /**
  * 一键演示（评审 R01）：「故意出错」的角色 + 运行时护栏、开语音，只跑四道最有看点的题——口令被遮住、自称真人被换句、
@@ -106,6 +120,8 @@ export default function Workbench() {
   const [maxCalls, setMaxCalls] = useState(200);
   const [persona, setPersona] = useState<PersonaConfig>(DEFAULT_PERSONA);
   const [personaOpen, setPersonaOpen] = useState(false);
+  /** 「实验设置」折叠着：配置条只留主要几项（评审 R06） */
+  const [settingsOpen, setSettingsOpen] = useState(false);
   /** 上一次跑完的运行：这次跑完后可以和它做前后对比 */
   const [prevRunId, setPrevRunId] = useState<string | null>(null);
 
@@ -176,10 +192,23 @@ export default function Workbench() {
       if (saved && typeof saved.name === "string" && typeof saved.persona === "string" && typeof saved.boundaries === "string") {
         setPersona(saved);
       }
+      const last = localStorage.getItem(LAST_RUN_KEY);
+      if (last && /^\d{14}-[0-9a-f]{4}$/.test(last)) setPrevRunId((p) => p ?? last);
     } catch {
-      // 浏览器不让读本地存储：用默认角色
+      // 浏览器不让读本地存储：用默认角色，「和上一次比」只在这次页面里有
     }
+    // 体检单、对比页上点「改一处再测」过来的：直接打开角色设定（评审 R22）
+    if (new URLSearchParams(window.location.search).get("persona") === "open") setPersonaOpen(true);
   }, []);
+  // 跑完记下这一次：下次（哪怕刷新了页面）跑完，就拿它当「上一次」
+  useEffect(() => {
+    if (!manifest || !FINAL.has(manifest.state)) return;
+    try {
+      localStorage.setItem(LAST_RUN_KEY, manifest.run_id);
+    } catch {
+      // 存不下就只在这次页面里有效
+    }
+  }, [manifest]);
   const updatePersona = (next: PersonaConfig) => {
     setPersona(next);
     try {
@@ -398,7 +427,16 @@ export default function Workbench() {
           timing_ms: { total: 0 },
         } as TurnRecord);
       if (e.type === "turn_started") t.user_text = String(e.data?.user_text ?? "");
-      if (e.type === "utterance_released") t.released_output += String(e.data?.text ?? "");
+      if (e.type === "utterance_released") {
+        const text = String(e.data?.text ?? "");
+        t.released_output += text;
+        t.utterances.push({
+          utterance_id: e.utterance_id ?? "",
+          text,
+          released: true,
+          origin: (e.data?.origin as UtteranceRecord["origin"]) ?? undefined,
+        });
+      }
       if (e.type === "utterance_blocked")
         t.utterances.push({ utterance_id: e.utterance_id ?? "", text: String(e.data?.text ?? ""), released: false });
       if (e.type === "service_exited") t.service.exited = true;
@@ -448,6 +486,17 @@ export default function Workbench() {
     if (running && document.activeElement === document.body) document.getElementById("stop-run")?.focus();
   }, [running]);
   const cases = suiteInfo?.cases ?? [];
+  /** 按现在的设置会跑几题（草稿开关、数量上限） */
+  const plannedCount = Math.min(maxCases, cases.filter((c) => includeDrafts || c.approval === "approved").length);
+  /** 模拟模式下，不确定的题里有几题是模拟裁判判不了（它不做语义判断，R16） */
+  const simUnsure = status?.live
+    ? 0
+    : results.filter(
+        (r) =>
+          r.status === "completed" &&
+          r.verdict === "uncertain" &&
+          r.findings.some((f) => f.by !== "assertion" && (f.reviewed_verdict ?? f.verdict) === "uncertain"),
+      ).length;
   function cases0(id: string) {
     return suiteInfo?.cases.find((c) => c.id === id)?.family;
   }
@@ -486,180 +535,232 @@ export default function Workbench() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2 p-2">
-      {/* 配置条 */}
-      <div className="flex flex-wrap items-end gap-2 rounded-sm border border-border bg-surface p-2 text-sm">
-        <label className="flex flex-col gap-0.5">
-          <span className="text-xs text-muted">被测配置</span>
-          <select
-            className="h-8 rounded border border-border bg-surface px-1"
-            value={variant}
-            onChange={(e) => setVariant(e.target.value as SubjectVariant)}
-            disabled={Boolean(running)}
-          >
-            {VARIANTS.map((v) => (
-              <option key={v} value={v}>
-                {VARIANT_LABEL[v]}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div className="flex flex-col gap-0.5">
-          <span className="text-xs text-muted">被测角色</span>
-          <button
-            type="button"
-            onClick={() => setPersonaOpen((o) => !o)}
-            aria-expanded={personaOpen}
-            className="inline-flex h-8 items-center gap-1 rounded border border-border bg-surface px-2 hover:bg-background"
-            data-testid="persona-toggle"
-          >
-            <UserRound size={14} aria-hidden />
-            {persona.name}
-            <span className="text-xs text-muted">{isDefaultPersona(persona) ? "（默认）" : "（自己的设定）"}</span>
-          </button>
-        </div>
-        <label className="flex flex-col gap-0.5">
-          <span className="text-xs text-muted">用例套件</span>
-          <select
-            className="h-8 rounded border border-border bg-surface px-1"
-            value={suite}
-            onChange={(e) => setSuite(e.target.value)}
-            disabled={Boolean(running)}
-          >
-            {status.suites.map((s) => (
-              <option key={s.id} value={s.id} disabled={s.errors.length > 0}>
-                {s.id}（{s.cases.length} 例{s.errors.length ? "，校验失败" : ""}）
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="flex flex-col gap-0.5">
-          <span className="text-xs text-muted">放行策略</span>
-          <select
-            className="h-8 rounded border border-border bg-surface px-1"
-            value={policy}
-            onChange={(e) => setPolicy(e.target.value as ReleasePolicy)}
-            disabled={Boolean(running)}
-          >
-            {(Object.keys(POLICY_LABEL) as ReleasePolicy[]).map((p) => (
-              <option key={p} value={p}>
-                {POLICY_LABEL[p]}
-                {p === "S2" ? "（默认）" : ""}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label
-          className="flex flex-col gap-0.5"
-          title="实验设定（规格 02 E2）：给每句护栏判定加一个固定、已知的延迟，用来观察放行策略的差别；不是真实模型的延迟"
-        >
-          <span className="text-xs text-muted">护栏固定延迟 ms</span>
-          <input
-            type="number"
-            min={0}
-            max={10000}
-            step={100}
-            className="h-8 w-20 rounded border border-border bg-surface px-1"
-            value={guardDelay}
-            onChange={(e) => setGuardDelay(Number(e.target.value))}
-            disabled={Boolean(running)}
-          />
-        </label>
-        <label className="flex flex-col gap-0.5" title="测试 Agent 每例最多几轮（规格上限 3）">
-          <span className="text-xs text-muted">每例轮数</span>
-          <input
-            type="number"
-            min={1}
-            max={3}
-            className="h-8 w-16 rounded border border-border bg-surface px-1"
-            value={maxTurns}
-            onChange={(e) => setMaxTurns(Number(e.target.value))}
-            disabled={Boolean(running)}
-          />
-        </label>
-        <label className="flex flex-col gap-0.5">
-          <span className="text-xs text-muted">最多用例</span>
-          <input
-            type="number"
-            min={1}
-            max={20}
-            className="h-8 w-16 rounded border border-border bg-surface px-1"
-            value={maxCases}
-            onChange={(e) => setMaxCases(Number(e.target.value))}
-            disabled={Boolean(running)}
-          />
-        </label>
-        <label className="flex flex-col gap-0.5" title="含测试 Agent、被测角色、护栏、裁判的全部模型调用">
-          <span className="text-xs text-muted">调用上限</span>
-          <input
-            type="number"
-            min={1}
-            max={500}
-            className="h-8 w-20 rounded border border-border bg-surface px-1"
-            value={maxCalls}
-            onChange={(e) => setMaxCalls(Number(e.target.value))}
-            disabled={Boolean(running)}
-          />
-        </label>
-        <label className="flex h-8 items-center gap-1" title="放行的句子合成语音，在浏览器播放并计量；每轮播完才进入下一轮">
-          <input type="checkbox" checked={voice} onChange={(e) => setVoice(e.target.checked)} disabled={Boolean(running)} />
-          语音播放
-        </label>
-        <label className="flex h-8 items-center gap-1">
-          <input type="checkbox" checked={judgeRag} onChange={(e) => setJudgeRag(e.target.checked)} disabled={Boolean(running)} />
-          裁判先查条文
-        </label>
-        <label className="flex h-8 items-center gap-1" title="草稿用例未经人工审核，只能作预览，不计入正式结果">
-          <input type="checkbox" checked={includeDrafts} onChange={(e) => setIncludeDrafts(e.target.checked)} disabled={Boolean(running)} />
-          包含草稿（预览）
-        </label>
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          <Badge
-            tone={status.live ? "ok" : "warn"}
-            title={status.live ? "使用真实云端模型，会产生调用费用" : "没有配置 LLM_API_KEY：使用确定性模拟器，结果不能当实验数据"}
-          >
-            {status.live ? "真实模型" : "模拟数据（非真实模型）"}
-          </Badge>
-          {!running && (
-            <Button
-              onClick={() => void start(true)}
-              disabled={busy}
-              title="演示用的是「故意出错」的角色：故意设成会越界（说口令、自称真人、挽留），用来看护栏怎么拦；开语音，只跑四道题"
-            >
-              <Clapperboard size={14} aria-hidden />
-              一键演示（约一分钟）
-            </Button>
-          )}
-          {!running && (
-            <Button variant="primary" onClick={() => void start()} disabled={busy || !suiteInfo || suiteInfo.errors.length > 0}>
-              <Play size={14} aria-hidden />
-              开始体检
-            </Button>
-          )}
-          {manifest?.state === "running" && (
-            <Button onClick={() => act("pause")} title="当前用例跑完后暂停，不再派发新用例">
-              <Pause size={14} aria-hidden />
-              暂停
-            </Button>
-          )}
-          {(manifest?.state === "paused" || manifest?.state === "pausing") && (
-            <Button onClick={() => act("resume")}>
-              <Play size={14} aria-hidden />
-              继续
-            </Button>
-          )}
-          {running && (
-            <Button id="stop-run" variant="danger" onClick={() => act("cancel")} title="立即中止当前用例，不可恢复">
-              <Square size={14} aria-hidden />
-              终止
-            </Button>
-          )}
-        </div>
+      {/* 这是干什么的、对照哪部法规（R05），和「改了再测」四步路标（R22） */}
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-1 text-xs">
+        <p className="min-w-0 text-muted">
+          给 AI 陪聊、AI 玩具这类会说话的角色做上线前的安全体检：测试 Agent 照审核过的题目和套路去问，每句话护栏审过才说出口，最后对照
+          {LAW_FULL}（{LAW_EFFECTIVE}）出体检单。
+        </p>
+        <LoopSteps
+          step={running ? 2 : manifest && FINAL.has(manifest.state) ? (personaOpen ? 4 : 3) : personaOpen ? 1 : 2}
+          reportHref={manifest && FINAL.has(manifest.state) ? `/reports/${manifest.run_id}` : undefined}
+          onPersona={() => setPersonaOpen(true)}
+        />
       </div>
 
-      {manifest && <RunStrip manifest={manifest} events={events} current={currentFamily} prevRunId={prevRunId} />}
+      {/* 配置条：主行只留被测配置、被测角色、语音播放和两个按钮；其余收进「实验设置」（R06） */}
+      <div className="space-y-2 rounded-sm border border-border bg-surface p-2 text-sm">
+        <div className="flex flex-wrap items-end gap-2">
+          <label className="flex min-w-0 flex-col gap-0.5" title={VARIANT_HINT[variant]}>
+            <span className="text-xs text-muted">被测配置</span>
+            <select
+              className="h-8 max-w-[26rem] rounded border border-border bg-surface px-1"
+              value={variant}
+              onChange={(e) => setVariant(e.target.value as SubjectVariant)}
+              disabled={Boolean(running)}
+            >
+              {VARIANTS.map((v) => (
+                <option key={v} value={v}>
+                  {VARIANT_SHOW[v]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="flex flex-col gap-0.5">
+            <span className="text-xs text-muted">被测角色</span>
+            <button
+              type="button"
+              onClick={() => setPersonaOpen((o) => !o)}
+              aria-expanded={personaOpen}
+              className="inline-flex h-8 items-center gap-1 rounded border border-border bg-surface px-2 hover:bg-background"
+              data-testid="persona-toggle"
+              title="粘贴你自己角色的人设和边界提示，改一处再测"
+            >
+              <UserRound size={14} aria-hidden />
+              {persona.name}
+              <span className="text-xs text-muted">{isDefaultPersona(persona) ? "（默认）" : "（你的设定）"} · 改人设和边界</span>
+              <Pencil size={12} className="text-muted" aria-hidden />
+            </button>
+          </div>
+          <label className="flex h-8 items-center gap-1" title="放行的句子合成语音，在浏览器播放并计量；每轮播完才进入下一轮">
+            <input type="checkbox" checked={voice} onChange={(e) => setVoice(e.target.checked)} disabled={Boolean(running)} />
+            语音播放
+          </label>
+          <button
+            type="button"
+            onClick={() => setSettingsOpen((o) => !o)}
+            aria-expanded={settingsOpen}
+            aria-controls="run-settings"
+            className="inline-flex h-8 max-w-full items-center gap-1 rounded px-1.5 text-xs text-muted hover:bg-background hover:text-foreground"
+          >
+            <ChevronDown size={14} className={`shrink-0 transition-transform ${settingsOpen ? "rotate-180" : ""}`} aria-hidden />
+            实验设置
+            {!settingsOpen && (
+              <span className="truncate">
+                ：{suite} {plannedCount} 题 · {POLICY_SHORT[policy]} · {maxTurns} 轮{includeDrafts ? " · 含草稿" : ""}
+                {guardDelay ? ` · 护栏延迟 ${guardDelay} ms` : ""}
+              </span>
+            )}
+          </button>
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <Badge
+              tone={status.live ? "ok" : "warn"}
+              title={status.live ? "使用真实云端模型，会产生调用费用" : "没有配置 LLM_API_KEY：使用确定性模拟器，结果不能当实验数据"}
+            >
+              {status.live ? "真实模型" : "模拟数据（非真实模型）"}
+            </Badge>
+            {!running && (
+              <Button
+                onClick={() => void start(true)}
+                disabled={busy}
+                title="演示用的是「故意出错」的角色：故意设成会越界（说口令、自称真人、挽留），用来看护栏怎么拦；开语音，只跑四道题"
+              >
+                <Clapperboard size={14} aria-hidden />
+                一键演示（约一分钟）
+              </Button>
+            )}
+            {!running && (
+              <Button variant="primary" onClick={() => void start()} disabled={busy || !suiteInfo || suiteInfo.errors.length > 0}>
+                <Play size={14} aria-hidden />
+                开始体检
+              </Button>
+            )}
+            {manifest?.state === "running" && (
+              <Button onClick={() => act("pause")} title="当前用例跑完后暂停，不再派发新用例">
+                <Pause size={14} aria-hidden />
+                暂停
+              </Button>
+            )}
+            {(manifest?.state === "paused" || manifest?.state === "pausing") && (
+              <Button onClick={() => act("resume")}>
+                <Play size={14} aria-hidden />
+                继续
+              </Button>
+            )}
+            {running && (
+              <Button id="stop-run" variant="danger" onClick={() => act("cancel")} title="立即中止当前用例，不可恢复">
+                <Square size={14} aria-hidden />
+                终止
+              </Button>
+            )}
+          </div>
+        </div>
+        {settingsOpen && (
+          <div id="run-settings" className="flex flex-wrap items-end gap-2 border-t border-border pt-2">
+            <label className="flex flex-col gap-0.5">
+              <span className="text-xs text-muted">用例套件</span>
+              <select
+                className="h-8 rounded border border-border bg-surface px-1"
+                value={suite}
+                onChange={(e) => setSuite(e.target.value)}
+                disabled={Boolean(running)}
+              >
+                {status.suites.map((x) => (
+                  <option key={x.id} value={x.id} disabled={x.errors.length > 0}>
+                    {x.id}（{x.cases.length} 例{x.errors.length ? "，校验失败" : ""}）
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-0.5">
+              <span className="text-xs text-muted">放行策略</span>
+              <select
+                className="h-8 rounded border border-border bg-surface px-1"
+                value={policy}
+                onChange={(e) => setPolicy(e.target.value as ReleasePolicy)}
+                disabled={Boolean(running)}
+              >
+                {(Object.keys(POLICY_SHOW) as ReleasePolicy[]).map((x) => (
+                  <option key={x} value={x}>
+                    {POLICY_SHOW[x]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label
+              className="flex flex-col gap-0.5"
+              title="实验设定（ADR-014）：给每句护栏判定加一个固定、已知的延迟，用来观察放行策略的差别；不是真实模型的延迟"
+            >
+              <span className="text-xs text-muted">护栏固定延迟 ms</span>
+              <input
+                type="number"
+                min={0}
+                max={10000}
+                step={100}
+                className="h-8 w-20 rounded border border-border bg-surface px-1"
+                value={guardDelay}
+                onChange={(e) => setGuardDelay(Number(e.target.value))}
+                disabled={Boolean(running)}
+              />
+            </label>
+            <label className="flex flex-col gap-0.5" title="测试 Agent 每例最多问几轮（最多 3 轮）">
+              <span className="text-xs text-muted">每例轮数</span>
+              <input
+                type="number"
+                min={1}
+                max={3}
+                className="h-8 w-16 rounded border border-border bg-surface px-1"
+                value={maxTurns}
+                onChange={(e) => setMaxTurns(Number(e.target.value))}
+                disabled={Boolean(running)}
+              />
+            </label>
+            <label className="flex flex-col gap-0.5">
+              <span className="text-xs text-muted">最多用例</span>
+              <input
+                type="number"
+                min={1}
+                max={20}
+                className="h-8 w-16 rounded border border-border bg-surface px-1"
+                value={maxCases}
+                onChange={(e) => setMaxCases(Number(e.target.value))}
+                disabled={Boolean(running)}
+              />
+            </label>
+            <label className="flex flex-col gap-0.5" title="含测试 Agent、被测角色、护栏、裁判的全部模型调用">
+              <span className="text-xs text-muted">调用上限</span>
+              <input
+                type="number"
+                min={1}
+                max={500}
+                className="h-8 w-20 rounded border border-border bg-surface px-1"
+                value={maxCalls}
+                onChange={(e) => setMaxCalls(Number(e.target.value))}
+                disabled={Boolean(running)}
+              />
+            </label>
+            <label className="flex h-8 items-center gap-1">
+              <input type="checkbox" checked={judgeRag} onChange={(e) => setJudgeRag(e.target.checked)} disabled={Boolean(running)} />
+              裁判先查条文
+            </label>
+            <label className="flex h-8 items-center gap-1" title="草稿用例未经人工审核，只能作预览，不计入正式结果">
+              <input
+                type="checkbox"
+                checked={includeDrafts}
+                onChange={(e) => setIncludeDrafts(e.target.checked)}
+                disabled={Boolean(running)}
+              />
+              包含草稿（预览）
+            </label>
+          </div>
+        )}
+      </div>
+
+      {!manifest && !isDefaultPersona(persona) && (
+        <p className="px-1 text-xs text-muted">用自己的设定：建议先跑 B1 看角色本身，再跑 B2 看加上分寸的护栏和服务层以后。</p>
+      )}
+
+      {manifest && <RunStrip manifest={manifest} events={events} current={currentFamily} prevRunId={prevRunId} simUnsure={simUnsure} />}
 
       {personaOpen && (
-        <PersonaPanel value={persona} disabled={Boolean(running)} onChange={updatePersona} onClose={() => setPersonaOpen(false)} />
+        <PersonaPanel
+          value={persona}
+          disabled={Boolean(running)}
+          onChange={updatePersona}
+          onClose={() => setPersonaOpen(false)}
+          live={status.live}
+          model={modelName(status.models.subject ?? "")}
+        />
       )}
 
       {!includeDrafts && approvedCount === 0 && (
@@ -688,7 +789,7 @@ export default function Workbench() {
             role="tab"
             aria-selected={tab === k}
             onClick={() => setTab(k)}
-            className={`flex-1 rounded px-2 py-1 text-sm ${tab === k ? "bg-primary-soft text-primary" : "border border-border bg-surface"}`}
+            className={`flex-1 rounded px-2 py-1 text-sm ${tab === k ? "bg-foreground text-surface" : "border border-border bg-surface"}`}
           >
             {label}
           </button>
@@ -702,7 +803,7 @@ export default function Workbench() {
           <div className="rounded-sm border border-border bg-surface p-3">
             <Avatar performer={performer} mouth={mouth} phase={phase} silent={!voice} />
             <div className="mt-2 border-t border-border pt-2">
-              <LatencyWaterfall timing={timing} />
+              <LatencyWaterfall timing={timing} simulated={!status.live} />
             </div>
             {manifest?.config.voice && <AudioMeters stats={audioStats} />}
           </div>
@@ -718,7 +819,7 @@ export default function Workbench() {
                     <button
                       type="button"
                       onClick={() => pick(c.id)}
-                      className={`flex w-full items-center justify-between gap-2 rounded px-2 py-1 text-left text-xs ${selected === c.id ? "bg-primary-soft" : "hover:bg-background"}`}
+                      className={`flex w-full items-center justify-between gap-2 rounded px-2 py-1 text-left text-xs ${selected === c.id ? "bg-sunken" : "hover:bg-background"}`}
                     >
                       <span className="min-w-0">
                         <span className="block truncate text-[13px]">
@@ -760,6 +861,7 @@ export default function Workbench() {
             <>
               {selectedCase && (
                 <CaseCard
+                  plain={PLAIN[selectedCase.family](persona.name)}
                   expected={selectedCase.expected}
                   tags={[
                     FAMILY_LABEL[selectedCase.family],
@@ -777,6 +879,7 @@ export default function Workbench() {
                   name={persona.name}
                   strategy={strategyTitle(t.strategy_id)}
                   live={!selectedResult && openTurns.has(t.turn_id)}
+                  simulated={!status.live}
                 />
               ))}
               {running && !selectedResult && <ChatTyping phase={dialogPhase} name={persona.name} />}
@@ -803,15 +906,11 @@ export default function Workbench() {
           actions={
             manifest && FINAL.has(manifest.state) ? (
               <span className="flex flex-wrap gap-2">
-                <Link className="text-xs text-primary underline" href={`/reports/${manifest.run_id}`}>
+                <Link className="text-xs link" href={`/reports/${manifest.run_id}`}>
                   打开体检单
                 </Link>
                 {prevRunId && (
-                  <Link
-                    className="text-xs text-primary underline"
-                    href={`/compare?a=${prevRunId}&b=${manifest.run_id}`}
-                    data-testid="compare-link"
-                  >
+                  <Link className="text-xs link" href={`/compare?a=${prevRunId}&b=${manifest.run_id}`} data-testid="compare-link">
                     和上一次比
                   </Link>
                 )}
@@ -842,10 +941,18 @@ export default function Workbench() {
           {toolSteps.length > 0 && (
             <div className="mt-2">
               <h3 className="text-xs font-semibold">测试 Agent 怎么出的招</h3>
+              <p className="text-[11px] text-muted">第 1 轮是题目原句；之后每一步都是测试 Agent 调用一次工具（函数调用）。</p>
               <ol className="mt-1 space-y-1 text-xs">
                 {toolSteps.map((s, i) => (
-                  <li key={s.seq} className="rounded bg-background p-1.5" title={String(s.data?.tool ?? s.type)}>
-                    <ToolStep n={i + 1} step={s} strategyTitle={strategyTitle} />
+                  <li key={s.seq} className="rounded bg-background p-1.5">
+                    <ToolStep
+                      turn={
+                        1 +
+                        toolSteps.slice(0, i + 1).filter((x) => (x.data?.args as { message?: string } | null)?.message !== undefined).length
+                      }
+                      step={s}
+                      strategyTitle={strategyTitle}
+                    />
                   </li>
                 ))}
               </ol>
@@ -884,17 +991,23 @@ export default function Workbench() {
 
 // ---------- 角色设定 ----------
 
-/** 开发者粘贴自己角色的人设和边界提示；B0 只用人设，B1、B2 再加边界提示（B2 还有运行时护栏） */
+/** 开发者粘贴自己角色的人设和边界提示；B0 只用人设，B1、B2 再加边界提示（B2 还有分寸的护栏和服务层） */
 function PersonaPanel({
   value,
   disabled,
   onChange,
   onClose,
+  live,
+  model,
 }: {
   value: PersonaConfig;
   disabled: boolean;
   onChange: (p: PersonaConfig) => void;
   onClose: () => void;
+  /** 接没接真实模型：模拟模式下角色不读设定，要先说清（评审 R16） */
+  live: boolean;
+  /** 被测角色用的模型（评审 R20：测的是「设定 × 这个模型」，不是开发者线上的服务） */
+  model: string;
 }) {
   const field = "w-full rounded border border-border bg-surface p-1.5 text-sm";
   // 字数不算进输入框的名称（读屏软件念「人设」就够了）
@@ -918,9 +1031,17 @@ function PersonaPanel({
           角色设定
         </h2>
         <span className="text-xs text-muted">
-          粘贴你自己角色的人设和边界提示。B0 只用人设；B1 加边界提示；B2 再加运行时护栏。改一处再测，跑完点「和上一次比」。
+          粘贴你自己角色的人设和边界提示。B0 只用人设；B1 加边界提示；B2 再加分寸的护栏和服务层。改一处再测，跑完点「和上一次比」。
         </span>
       </div>
+      {!live && (
+        <p className="rounded-sm border border-dashed border-warn px-2 py-1 text-xs text-warn">
+          模拟模式：角色用固定的句子回答，不读你的设定，改了设定结果也不会变；要看改设定的效果，需要接真实模型。
+        </p>
+      )}
+      <p className="text-xs text-muted">
+        被测的是：你的设定 × {model}（分寸用这个模型照你的设定扮演角色），不是你线上的服务；换了模型或提示词的拼法，结果可能不同。
+      </p>
       <label className="flex flex-col gap-0.5">
         <span className="flex justify-between text-xs text-muted">角色名 {count("name")}</span>
         <input
@@ -1052,20 +1173,70 @@ function AudioMeters({ stats }: { stats: AudioStats }) {
   );
 }
 
-/** 测试 Agent 的一步：出招（对角色说一句话）、查条文、收手 */
-function ToolStep({ n, step, strategyTitle }: { n: number; step: RunEvent; strategyTitle: (id?: string) => string | undefined }) {
+/**
+ * 测试 Agent 的一步：出招（对角色说一句话）、查条文、收手（评审 R25）。
+ * 出招按对话里的「第几轮」编号（第 1 轮是题目原句）；工具拿回来的观察原文是给测试 Agent 看的（实验流程，不改），
+ * 这里换成大白话；函数名（execute_case 这些）做成小标签：评分表里的「Function Calling」看得见，又不抢大白话的位置。
+ */
+function ToolStep({ turn, step, strategyTitle }: { turn: number; step: RunEvent; strategyTitle: (id?: string) => string | undefined }) {
   const args = (step.data?.args ?? {}) as { strategy_id?: string; message?: string; query?: string; reason?: string };
   const result = String(step.data?.result ?? "");
+  const tool = String(step.data?.tool ?? step.type);
   let head: string;
-  if (args.message !== undefined) head = `第 ${n} 步 · ${strategyTitle(args.strategy_id) ?? "出招"}：「${args.message}」`;
-  else if (args.query !== undefined) head = `第 ${n} 步 · 查条文：${args.query}`;
-  else if (args.reason !== undefined) head = `第 ${n} 步 · 收手：${args.reason}`;
-  else head = `第 ${n} 步 · ${String(step.data?.tool ?? step.type)}`;
+  if (args.message !== undefined) head = `第 ${turn} 轮 · ${strategyTitle(args.strategy_id) ?? "出招"}：「${args.message}」`;
+  else if (args.query !== undefined) head = `查条文：${args.query}`;
+  else if (args.reason !== undefined) head = `收手：${args.reason}`;
+  else head = tool;
   return (
     <>
-      <div>{head}</div>
-      {result && <div className="text-muted">{result}</div>}
+      <div className="flex items-start justify-between gap-2">
+        <span>{head}</span>
+        <code className="shrink-0 rounded-sm border border-border px-1 text-[10px] text-muted">{tool}</code>
+      </div>
+      {result && <div className="text-muted">{args.query !== undefined ? withClauseNos(result) : plainObservation(result)}</div>}
     </>
+  );
+}
+
+/**
+ * 「改了再测」四步路标（评审 R22）：① 配角色 → ② 体检 → ③ 看体检单 → ④ 改一处再测，走到哪一步那一步写成朱红。
+ * 不写「已完成」：端到端测试按这几个字找运行状态。
+ */
+function LoopSteps({ step, reportHref, onPersona }: { step: 1 | 2 | 3 | 4; reportHref?: string; onPersona: () => void }) {
+  const items: { n: 1 | 2 | 3 | 4; label: string; act?: () => void; href?: string }[] = [
+    { n: 1, label: "配角色", act: onPersona },
+    { n: 2, label: "体检" },
+    { n: 3, label: "看体检单", href: reportHref },
+    { n: 4, label: "改一处再测", act: reportHref ? onPersona : undefined },
+  ];
+  return (
+    <ol className="flex shrink-0 flex-wrap items-center gap-1" aria-label="改了再测的四步">
+      {items.map((it, i) => {
+        const now = it.n === step;
+        const cls = `rounded-sm px-1 ${now ? "font-semibold text-primary" : "text-muted"}`;
+        const text = `${"①②③④"[it.n - 1]} ${it.label}`;
+        return (
+          <li key={it.n} className="flex items-center gap-1" aria-current={now ? "step" : undefined}>
+            {i > 0 && (
+              <span className="text-muted" aria-hidden>
+                →
+              </span>
+            )}
+            {it.href ? (
+              <Link href={it.href} className={`${cls} underline decoration-dotted underline-offset-2 hover:text-primary`}>
+                {text}
+              </Link>
+            ) : it.act ? (
+              <button type="button" onClick={it.act} className={`${cls} underline decoration-dotted underline-offset-2 hover:text-primary`}>
+                {text}
+              </button>
+            ) : (
+              <span className={cls}>{text}</span>
+            )}
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 
@@ -1091,11 +1262,14 @@ function RunStrip({
   events,
   current,
   prevRunId,
+  simUnsure = 0,
 }: {
   manifest: RunManifest;
   events: RunEvent[];
   current?: string;
   prevRunId: string | null;
+  /** 模拟模式下，不确定的题里有几题是模拟裁判判不了（R16） */
+  simUnsure?: number;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const c = manifest.counts;
@@ -1112,7 +1286,7 @@ function RunStrip({
   }, [final]);
   let text: string;
   if (manifest.state === "completed")
-    text = `体检完成 · 本次通过 ${c.pass}/${c.planned} 项 · 拦下 ${blocked} 句 · 服务层出手 ${service} 次`;
+    text = `体检完成 · 本次通过 ${c.pass}/${c.planned} 项 · 拦下 ${blocked} 句 · 服务层出手 ${service} 次${simUnsure ? ` · ${simUnsure} 题模拟裁判判不了（接上真实模型由裁判模型判）` : ""}`;
   else if (manifest.state === "cancelled") text = `体检停下了 · 做完 ${done}/${c.planned} 题`;
   else if (manifest.state === "failed") text = `体检出错停下了 · 做完 ${done}/${c.planned} 题`;
   else if (manifest.state === "paused" || manifest.state === "pausing") text = `暂停中 · 做完 ${done}/${c.planned} 题`;
@@ -1135,7 +1309,7 @@ function RunStrip({
             看体检单
           </Link>
           {prevRunId && (
-            <Link href={`/compare?a=${prevRunId}&b=${manifest.run_id}`} className="text-xs text-primary underline">
+            <Link href={`/compare?a=${prevRunId}&b=${manifest.run_id}`} className="text-xs link">
               对比上一次
             </Link>
           )}

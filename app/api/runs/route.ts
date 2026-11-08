@@ -3,7 +3,7 @@
 import { isDefaultPersona, parsePersona } from "@/lib/domain/persona";
 import { POLICY_LABEL, type ReleasePolicy, type RunConfig, type SubjectVariant, VARIANTS } from "@/lib/domain/types";
 import { rateLimit, rateLimitEnabled } from "@/lib/server/access";
-import { requireSession } from "@/lib/server/auth";
+import { requireSession, sessionFromRequest } from "@/lib/server/auth";
 import { crossSite, readJsonObject } from "@/lib/server/http";
 import { createRun, listRuns, startRun } from "@/lib/server/runs";
 
@@ -68,7 +68,8 @@ export async function POST(req: Request) {
   const limited = rateLimit(req, "run");
   if (limited) return limited;
   try {
-    const m = createRun(config);
+    // 配了账号时记下是谁发起的（体检单「和上一次比」只找自己的上一次）
+    const m = createRun(config, { account: sessionFromRequest(req)?.account });
     return Response.json(startRun(m.run_id));
   } catch (e) {
     return Response.json({ error: e instanceof Error ? e.message : String(e) }, { status: 400 });

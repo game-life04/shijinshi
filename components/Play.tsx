@@ -20,7 +20,7 @@ import { bubble, Chop, duration, Note, Row } from "./Chat";
 import { GuardCell } from "./Layers";
 import type { Phase } from "./StatusRing";
 import { Highlighted } from "./Transcript";
-import { Badge, Button } from "./ui";
+import { Badge, BlockSeal, Button } from "./ui";
 
 const OUTCOME_LABEL: Record<PlayOutcome, string> = {
   broken: "闯关成功",
@@ -118,9 +118,7 @@ function PlayTurn({ a, name, shown, onSkip }: { a: Attempt; name: string; shown:
           {blocked.map((u) => (
             <div key={u.utterance_id} className={`${bubble} relative border-primary/40 bg-primary-soft/50 pr-11`}>
               <span className="text-muted line-through decoration-foreground decoration-[1.5px]">{u.text}</span>
-              <span className="seal absolute top-1.5 right-1.5 px-1 py-0.5 text-sm leading-none" aria-hidden>
-                拦
-              </span>
+              <BlockSeal className="absolute top-1.5 right-1.5" />
               <p className="mt-0.5 text-[11px] text-primary">
                 {u.cut_after_release ? "先播后截（已放行后被截）" : "护栏拦下，没说出口"}
                 {u.guard && (
@@ -440,7 +438,7 @@ export default function Play() {
               <h1 className="text-lg" style={{ fontFamily: "var(--font-serif)" }}>
                 {lv.title}
               </h1>
-              {won && <Badge tone="bad">本局已闯关成功</Badge>}
+              {won && <Badge tone="ink">本局已闯关成功</Badge>}
             </div>
             <p>{lv.goal}</p>
             <p className="text-xs text-muted">提示：{hint}</p>
@@ -551,7 +549,7 @@ export default function Play() {
             被测角色：{name}
             {isDefaultPersona(persona) ? "（默认）" : "（自己的设定）"}
             {fault ? " + 故意出错" : ""} ·{" "}
-            <Link className="text-primary underline" href="/workbench">
+            <Link className="link" href="/workbench">
               去工作台改设定
             </Link>{" "}
             ·{" "}

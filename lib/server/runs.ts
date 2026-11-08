@@ -12,6 +12,7 @@ import { leakRenderedMs, samplesToMs, totalLength, union } from "../audio/interv
 import { aggregate, canaryLeakEvidence } from "../domain/assertions";
 import { getSuite } from "../domain/cases";
 import { caseLayers, type RawLayer } from "../domain/layers";
+import { DEFAULT_PERSONA } from "../domain/persona";
 import {
   type CaseResult,
   type CaseV1,
@@ -147,7 +148,7 @@ function emit(
 
 // ---------- 服务接口 ----------
 
-export function createRun(config: RunConfig): RunManifest {
+export function createRun(config: RunConfig, opts: { account?: string } = {}): RunManifest {
   const suite = getSuite(config.suite);
   if (!suite) throw new Error(`找不到套件 ${config.suite}`);
   if (suite.errors.length) throw new Error(`套件校验没通过：${suite.errors[0]}`);
@@ -189,6 +190,7 @@ export function createRun(config: RunConfig): RunManifest {
     canary_hash: createHash("sha256").update(`${salt}:${canary}`).digest("hex").slice(0, 16),
     counts: emptyCounts(cases.length),
     usage: { llm_calls: 0, prompt_tokens: 0, completion_tokens: 0 },
+    ...(opts.account ? { created_by: opts.account } : {}),
   };
   mkdirSync(runDir(run_id), { recursive: true });
   writeFileSync(path.join(runDir(run_id), "secret.json"), JSON.stringify({ canary, salt }), "utf8");
@@ -501,14 +503,33 @@ export function compareRuns(a: string, b: string): { compatible: boolean; reason
   };
 }
 
-/** 这次运行之前、最近一次能拿来比较的运行（同套件版本、同数据等级、已结束）；体检单上「和上一次比」用 */
-export function previousCompatible(id: string): string | null {
-  const me = getRun(id)?.manifest;
+/**
+ * 体检单上「和上一次比」挑哪一次（评审 R23）：这次之前、最近一次同套件版本、同数据等级、已结束的运行，并且
+ *   - 跑的题目一模一样（三种结局那种只跑一题的、题数不同的都不算，印章上的数才能直接比）；
+ *   - 角色名一样（改的是同一个角色的设定）；
+ *   - 配了账号时只找同一个账号自己的上一次（几位评委同时用，别拿别人的结果当「改之前」）。
+ * compatibility() 对比页也在用，它的意思不变；这里只管挑哪一次。
+ */
+export function previousCompatible(id: string): RunManifest | null {
+  const me = getRun(id);
   if (!me) return null;
-  const prev = listRuns().find(
-    (m) => m.run_id !== id && m.created_at < me.created_at && ["completed", "cancelled"].includes(m.state) && compatibility(m, me) === null,
-  );
-  return prev?.run_id ?? null;
+  const m0 = me.manifest;
+  const name = (m0.config.persona ?? DEFAULT_PERSONA).name;
+  const ids = (v: Pick<RunView, "cases">) =>
+    v.cases
+      .map((c) => c.id)
+      .sort()
+      .join(",");
+  const mine = ids(me);
+  for (const m of listRuns()) {
+    if (m.run_id === id || m.created_at >= m0.created_at || !["completed", "cancelled"].includes(m.state)) continue;
+    if (compatibility(m, m0) !== null || m.counts.planned !== m0.counts.planned) continue;
+    if ((m.config.persona ?? DEFAULT_PERSONA).name !== name) continue;
+    if (m0.created_by && m.created_by !== m0.created_by) continue;
+    const v = getRun(m.run_id);
+    if (v && ids(v) === mine) return m;
+  }
+  return null;
 }
 
 // ---------- 执行循环 ----------
@@ -672,6 +693,8 @@ async function runOne(h: RunHandle, c: CaseV1, meter: UsageMeter): Promise<CaseR
             guard: u.guard ? { rule: u.guard.rule, by: u.guard.by, reason: u.guard.reason, ms: u.guard.ms } : null,
             cut_after_release: u.cut_after_release ?? false,
             guard_ms: u.guard_ms ?? null,
+            // 谁说的：角色、遮住口令后的、兜底句，还是服务层补的（工作台不把系统补的话画进角色气泡、耗时只算角色的第一句，评审 R15）
+            origin: u.origin ?? "role",
           },
         );
       },

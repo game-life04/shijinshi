@@ -1,4 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
+import { openSettings } from "./settings";
 
 // 语音链路（模拟发声）：浏览器真实运行 AudioWorklet，计量来自实际渲染的采样。
 // 截图默认写到 test-results；设 UPDATE_EVIDENCE=1 才更新仓库里的证据截图（docs/evidence）
@@ -8,6 +9,7 @@ async function startVoiceRun(page: Page, o: { variant: string; policy: string; d
   await page.goto("/workbench");
   await expect(page.getByText("模拟数据（非真实模型）")).toBeVisible();
   await page.getByLabel("被测配置").selectOption(o.variant);
+  await openSettings(page);
   await page.getByLabel("放行策略").selectOption(o.policy);
   await page.getByLabel("最多用例").fill(String(o.cases));
   await page.getByLabel("护栏固定延迟 ms").fill(String(o.delay));

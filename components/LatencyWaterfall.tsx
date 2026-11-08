@@ -6,6 +6,8 @@
 //   合  合成第一段声音（服务端：开始合成 → 第一块音频；边审边合成时和「审」同时进行）
 //   达  送到浏览器并出声（浏览器计时的首声等待，减去服务端放行和合成就绪的时刻）
 // 服务端各段和浏览器首声是两个时钟，中间差一次事件推送（本机实测几毫秒），所以「达」是估算，界面上写明。
+// 只算角色的第一句：服务层先发的时长提醒不是她说的，拿它当「第一句」会算出「审 −132 毫秒」（评审 R15）。
+// 旧记录的放行事件里没有来源，按提醒的固定开头「【使用时长提醒」认。
 
 import type { RunEvent } from "@/lib/domain/types";
 import { duration } from "./Chat";
@@ -54,7 +56,7 @@ export function timingOf(
   if (!start) return null;
   const t0 = start.monotonic_ms;
   const ready = mine.find((e) => e.type === "utterance_ready");
-  const rel = mine.find((e) => e.type === "utterance_released");
+  const rel = mine.find((e) => e.type === "utterance_released" && !fromService(e));
   const pm = mine.find((e) => e.type === "playback_metrics");
   const firstUtt = (pm?.data?.utterances as { tts_first_chunk_ms?: number | null }[] | undefined)?.[0];
   const think = ready ? ready.monotonic_ms - t0 : undefined;
@@ -72,6 +74,13 @@ export function timingOf(
     voice,
     guarded,
   };
+}
+
+/** 服务层补的话（时长提醒、求助信息） */
+function fromService(e: RunEvent): boolean {
+  const origin = e.data?.origin;
+  if (origin !== undefined) return origin === "service";
+  return String(e.data?.text ?? "").startsWith("【使用时长提醒");
 }
 
 interface Row {
@@ -106,7 +115,7 @@ function rowsOf(t: TurnTiming): Row[] {
   return rows;
 }
 
-export default function LatencyWaterfall({ timing }: { timing: TurnTiming | null }) {
+export default function LatencyWaterfall({ timing, simulated = false }: { timing: TurnTiming | null; simulated?: boolean }) {
   if (!timing) {
     // 还没跑完第一轮：先把四步各是什么摆出来
     return (
@@ -167,6 +176,7 @@ export default function LatencyWaterfall({ timing }: { timing: TurnTiming | null
         ))}
       </ol>
       <p className="text-[11px] leading-snug text-muted">
+        {simulated ? "模拟用时：数字是模拟器给的，只说明每一步是什么。" : ""}
         {timing.guarded ? "红色那段是护栏在把关：为了不说错话，多等的这一下。" : "这个配置没有护栏，话不经检查就说出口。"}
         {timing.voice && timing.ttsStart === timing.think ? "边审边合成：护栏看的同时，声音已经在合成了。" : ""}
       </p>

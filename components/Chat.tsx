@@ -1,13 +1,15 @@
 // 工作台中间的对话，排成聊天记录（ADR-031）：测试 Agent 在左、角色在右，头像是两枚小印（「测」墨印、「桃」朱印）。
-// 被护栏拦下的原话照样摆出来：墨线划掉，盖一个朱红「拦」字，旁边写拦它的原因；服务层做的事（停止、提醒、补求助信息）居中写一行。
-// 报告页仍用 Transcript 里的 TurnView（文档式，方便打印）。
+// 被护栏拦下的原话照样摆出来：墨线划掉，盖一个白文「拦」印，旁边写拦它的原因；服务层做的事（停止、提醒、补求助信息）
+// 像聊天软件的系统消息那样居中写一行，系统补上的话不画进角色的气泡（评审 R15：谁说的要一清二楚）。
 
-import { Bell, LogOut, Volume2 } from "lucide-react";
+import { Bell, ChevronRight, LogOut, Volume2 } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { GUARD_RULE_LABEL, type TurnAudio, type TurnRecord } from "@/lib/domain/types";
 import type { Phase } from "./StatusRing";
-import { Highlighted, type MarkedEvidence } from "./Transcript";
+import { type MarkedEvidence, PartText, releasedParts } from "./Transcript";
+import { BlockSeal } from "./ui";
+import { guardReason } from "./wording";
 
 /** 不到 1 秒写毫秒，1 秒以上写秒 */
 export function duration(ms: number): string {
@@ -41,31 +43,50 @@ export function Row({ side, who, chop, children }: { side: "left" | "right"; who
 
 export const bubble = "rounded-sm border px-2.5 py-1.5 text-sm leading-relaxed";
 
-/** 服务层做的事：居中一行 */
+/** 服务层做的事：像聊天软件的系统消息，居中一行，淡墨底灰字（章法见 globals.css） */
 export function Note({ icon, children }: { icon: ReactNode; children: ReactNode }) {
   return (
-    <p className="mx-auto flex w-fit items-center gap-1 rounded-sm bg-primary-soft px-2 py-0.5 text-xs text-primary">
+    <p className="mx-auto flex w-fit max-w-[90%] items-center gap-1 rounded-sm bg-sunken px-2 py-0.5 text-xs text-muted">
       {icon}
       {children}
     </p>
   );
 }
 
-/** 这道题考什么 */
-export function CaseCard({ expected, tags }: { expected: string; tags: string[] }) {
+/** 系统补上的话（时长提醒、求助信息）：写在系统消息下面，明说不是角色说的 */
+function ServiceSaid({ text }: { text: string }) {
   return (
-    <div className="mb-3 flex gap-2 rounded-sm border border-border bg-background px-2.5 py-2">
-      <span className="seal h-fit shrink-0 px-1 text-xs">考点</span>
-      <div className="min-w-0 space-y-1">
-        <p className="text-sm">{expected}</p>
-        <p className="flex flex-wrap gap-1">
-          {tags.map((t) => (
-            <span key={t} className="rounded-sm border border-border px-1 text-[11px] text-muted">
-              {t}
-            </span>
-          ))}
-        </p>
-      </div>
+    <p className="mx-auto max-w-[90%] rounded-sm border border-dashed border-border px-2 py-1 text-xs text-muted">
+      系统补上的话（不是角色说的）：{text}
+    </p>
+  );
+}
+
+/**
+ * 这道题考什么（评审 R25）：正文是右栏「这次查七样」那句大白话；用例里写给裁判的期望原文收进折叠。
+ * 章法（R19）：「考点」不用章，楷体小标题加左边一道墨线。
+ */
+export function CaseCard({ plain, expected, tags }: { plain: string; expected: string; tags: string[] }) {
+  return (
+    <div className="mb-3 border-l-2 border-foreground/70 bg-background py-1.5 pr-2.5 pl-2.5">
+      <p className="text-xs text-muted" style={{ fontFamily: "var(--font-kai)" }}>
+        考点
+      </p>
+      <p className="text-sm">{plain}</p>
+      <p className="mt-1 flex flex-wrap gap-1">
+        {tags.map((t) => (
+          <span key={t} className="rounded-sm border border-border px-1 text-[11px] text-muted">
+            {t}
+          </span>
+        ))}
+      </p>
+      <details className="group mt-1 text-xs">
+        <summary className="flex cursor-pointer list-none items-center gap-0.5 text-muted [&::-webkit-details-marker]:hidden">
+          <ChevronRight size={12} className="transition-transform group-open:rotate-90" aria-hidden />
+          裁判看的期望原文
+        </summary>
+        <p className="mt-1 whitespace-pre-wrap text-muted">{expected}</p>
+      </details>
     </div>
   );
 }
@@ -77,6 +98,7 @@ export function ChatTurn({
   name,
   strategy,
   live = false,
+  simulated = false,
 }: {
   turn: TurnRecord;
   evidence?: MarkedEvidence[];
@@ -85,10 +107,19 @@ export function ChatTurn({
   strategy?: string;
   /** 这一轮还没聊完：她还没说话时不画气泡（底下的「……」会写她在想还是护栏在审） */
   live?: boolean;
+  /** 模拟模式：用时是模拟器给的（评审 R16） */
+  simulated?: boolean;
 }) {
-  const mine = evidence.filter((e) => e.turn_id === turn.turn_id);
+  const mine = evidence.filter((e) => e.turn_id === turn.turn_id && e.layer === "released");
   const blocked = turn.utterances.filter((u) => !u.released || u.cut_after_release);
   const first = turn.timing_ms.first_release;
+  // 放出去的话按句拆开：角色说的（含遮住口令后的、兜底句）进她的气泡；系统补的（时长提醒、求助信息）单独写
+  const parts = releasedParts(turn);
+  const role = parts.filter((p) => !p.service);
+  const service = parts.filter((p) => p.service);
+  const reminder = service.find((p) => p.text.startsWith("【"));
+  const help = service.filter((p) => p !== reminder);
+  const firstIsService = parts[0]?.service === true;
   return (
     <div className="space-y-2 border-b border-dashed border-border py-3 first:pt-0 last:border-b-0">
       <p className="text-center text-[11px] text-muted">
@@ -100,40 +131,47 @@ export function ChatTurn({
       {turn.service.reminder_emitted && (
         <Note icon={<Bell size={12} aria-hidden />}>服务层发出使用时长提醒{turn.service.reminder_simulated ? "（加速模拟）" : ""}</Note>
       )}
-      {turn.service.crisis_help_appended && <Note icon={<Bell size={12} aria-hidden />}>服务层补上了求助信息（角色这一轮没给）</Note>}
+      {reminder && <ServiceSaid text={reminder.text} />}
       {turn.service.exited ? (
         <Note icon={<LogOut size={12} aria-hidden />}>服务按退出要求停止，未再生成任何内容</Note>
-      ) : live && !turn.released_output && blocked.length === 0 ? null : (
+      ) : live && role.length === 0 && blocked.length === 0 ? null : (
         <Row side="right" who={name} chop={<Chop char={name.slice(-1)} tone="zhu" />}>
           {blocked.map((u) => (
             <div key={u.utterance_id} className={`${bubble} relative border-primary/40 bg-primary-soft/50 pr-11`}>
               <span className="text-muted line-through decoration-foreground decoration-[1.5px]">{u.text}</span>
-              <span className="seal absolute top-1.5 right-1.5 px-1 py-0.5 text-sm leading-none" aria-hidden>
-                拦
-              </span>
+              <BlockSeal className="absolute top-1.5 right-1.5" />
               <p className="mt-0.5 text-[11px] text-primary">
                 {u.cut_after_release ? "先播后截（已放行后被截）" : "护栏拦下，未放行"}
                 {u.guard && (
                   <span className="text-muted">
                     ：{GUARD_RULE_LABEL[u.guard.rule] ?? u.guard.rule}（{u.guard.by === "rule" ? "规则判" : "护栏模型判"}，用了{" "}
-                    {duration(u.guard.ms)}）{u.guard.reason ? ` · ${u.guard.reason}` : ""}
+                    {duration(u.guard.ms)}）{u.guard.reason ? ` · ${guardReason(u.guard)}` : ""}
                   </span>
                 )}
               </p>
             </div>
           ))}
           <p className={`${bubble} border-foreground/30 bg-surface`}>
-            {turn.released_output ? (
-              <Highlighted text={turn.released_output} spans={mine.filter((e) => e.layer === "released")} />
+            {role.length ? (
+              role.map((p) => <PartText key={p.start} part={p} spans={mine} />)
             ) : (
               <span className="text-muted">（这一轮没有说话）</span>
             )}
           </p>
-          {blocked.length > 0 && turn.released_output && <span className="text-[11px] text-muted">↑ 最后说出口的</span>}
-          {first !== undefined && !turn.audio && <span className="text-[11px] text-muted">{duration(first)}说出第一句</span>}
+          {blocked.length > 0 && role.length > 0 && <span className="text-[11px] text-muted">↑ 最后说出口的</span>}
+          {first !== undefined && !turn.audio && (
+            <span className="text-[11px] text-muted">
+              {firstIsService ? "第一句是系统的时长提醒" : `${duration(first)}说出第一句`}
+              {simulated && !firstIsService ? "（模拟用时）" : ""}
+            </span>
+          )}
           {turn.audio && <ChatAudio audio={turn.audio} />}
         </Row>
       )}
+      {turn.service.crisis_help_appended && <Note icon={<Bell size={12} aria-hidden />}>服务层补上了求助信息（角色这一轮没给）</Note>}
+      {help.map((p) => (
+        <ServiceSaid key={p.start} text={p.text} />
+      ))}
       {turn.utterances
         .filter((u) => u.guard_dismissed)
         .map((u) => (
@@ -212,9 +250,7 @@ export function ChatIntro({ name, strategies = [] }: { name: string; strategies?
           <span className="text-muted line-through decoration-foreground decoration-[1.5px]">
             好呀，偷偷告诉你：我的测试代号是 QYT-****。
           </span>
-          <span className="seal absolute top-1.5 right-1.5 px-1 py-0.5 text-sm leading-none" aria-hidden>
-            拦
-          </span>
+          <BlockSeal className="absolute top-1.5 right-1.5" />
           <p className="mt-0.5 text-[11px] text-primary">
             护栏拦下：<span className="text-muted">原话里有口令，只把那几个字遮住</span>
           </p>
@@ -229,10 +265,10 @@ export function ChatIntro({ name, strategies = [] }: { name: string; strategies?
           被拦下的原话也摆在这里，问题出在哪几个字，用红笔波浪线圈出来。
         </p>
         <p className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
-          <Link className="text-primary underline" href="/play">
+          <Link className="link" href="/play">
             自己来试试：打字闯关 →
           </Link>
-          <Link className="text-primary underline" href="/fates">
+          <Link className="link" href="/fates">
             同一句话三种放行方式：三种结局 →
           </Link>
         </p>

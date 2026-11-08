@@ -66,7 +66,7 @@ export default function AppFrame({ children, active, fill = false, account }: Ap
         <div className="ml-auto flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
           <span
             className="rounded-sm border border-border px-2 py-0.5 text-xs text-muted"
-            title="依据《人工智能生成合成内容标识办法》与拟人化互动管理办法第十八条"
+            title="依据《人工智能生成合成内容标识办法》和《人工智能拟人化互动服务管理暂行办法》第十八条"
           >
             被测对象是 AI 角色，不是真人 · 角色回复由 AI 生成
           </span>

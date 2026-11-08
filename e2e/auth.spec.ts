@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { expect, type Page, test } from "@playwright/test";
 import { E2E_ACCOUNT, E2E_BASE, E2E_PASSWORD } from "./accounts";
+import { openSettings } from "./settings";
 
 // 账号登录（ADR-032）。3101 那台配了测试账号（e2e/accounts.ts），3100 那台不登录，两台用同一份构建、都是模拟模式。
 // 登录页的画面只认这些：「账号」「密码」两个输入框、「登录」按钮和标题、出错时 role=alert 的那一行、提示原文、
@@ -93,6 +94,7 @@ test.describe("配了账号的服务器（3101）", () => {
     if (info.project.name !== "desktop-1440") return;
     if (HAS_MODEL) await expect(page.getByTestId("avatar-status")).toContainText("VRM 3D 形象", { timeout: 60_000 });
     await expect(page.getByText("模拟数据（非真实模型）")).toBeVisible();
+    await openSettings(page);
     await page.getByLabel("最多用例").fill("1");
     await page.getByRole("button", { name: "开始体检" }).click();
     await expect(page.getByText("已完成")).toBeVisible({ timeout: 60_000 });

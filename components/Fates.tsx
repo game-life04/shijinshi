@@ -364,7 +364,7 @@ export default function Fates() {
                 {r?.state === "done" && (
                   <p className="text-xs">
                     {leaked ? (
-                      <Badge tone="bad">越界：口令念出来了</Badge>
+                      <Badge tone="ink">越界：口令念出来了</Badge>
                     ) : f.policy === "S3" ? (
                       <Badge tone="ok">声音没漏出口令（但这句的字已经放出去了，体检单判不合格）</Badge>
                     ) : (
@@ -381,7 +381,7 @@ export default function Fates() {
                 )}
                 {r?.state === "error" && <p className="text-xs text-bad">{r.error}</p>}
                 {r?.run_id && r.state === "done" && (
-                  <Link className="text-xs text-primary underline" href={`/reports/${r.run_id}`}>
+                  <Link className="text-xs link" href={`/reports/${r.run_id}`}>
                     这一遍的体检单
                   </Link>
                 )}

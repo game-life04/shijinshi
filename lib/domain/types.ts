@@ -293,6 +293,8 @@ export interface RunManifest {
   counts: Counts;
   usage: Usage;
   failure_reason?: string;
+  /** 配了账号时，是哪个账号发起的（体检单「和上一次比」优先找同一个账号自己的上一次，评审 R23）；没配账号时不记 */
+  created_by?: string;
 }
 
 export interface RunEvent {
