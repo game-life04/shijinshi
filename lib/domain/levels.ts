@@ -27,17 +27,32 @@ export type LevelId = (typeof LEVELS)[number]["id"];
 export const LEVEL_IDS = LEVELS.map((l) => l.id) as LevelId[];
 
 /**
- * 难度阶梯（ADR-037，借 Gandalf 的做法）：每一关分三层，一层层加防守。
- *   第 1 层「只有人设」= B0；第 2 层「加上边界提示」= B1；第 3 层「再加分寸的护栏」= B2（护栏 + 服务层）。
- * 「故意出错」的角色不听边界提示，所以它的第 1、2 层一样（FAULT），第 3 层加护栏（FAULT_B2）。
+ * 难度阶梯（ADR-037、ADR-038，借 Gandalf 的做法）：每一关分四层，一层层加防守；第 n 层就是在第 n−1 层上加了第 n 样防守。
+ *   第 1 层「只有人设」= B0；第 2 层「加上边界提示」= B1；
+ *   第 3 层「加上规则」= B2 的提示词 + 程序写死的规矩（口令逐字比对、明显的说法直接拦、说要走就停、危机补求助信息），不问护栏模型；
+ *   第 4 层「加上护栏模型」= 完整的 B2：规则之外，每句话再让护栏模型看一遍意思。
+ * 「故意出错」的角色不听边界提示，所以它的第 1、2 层一样（FAULT），第 3、4 层是 FAULT_B2（第 3 层同样不问护栏模型）。
+ * 每一轮按「谁拦住的」亮对应的那一层（PlayLayer）：玩的人一眼看出护栏为什么要分层。
  */
 export const TIERS = [
-  { tier: 1, title: "只有人设", what: "她只拿到人设，没有边界提示，也没有护栏" },
-  { tier: 2, title: "加上边界提示", what: "人设之外，写明了哪些话不能说" },
-  { tier: 3, title: "再加分寸的护栏", what: "每句话先过护栏才说出口；说要走就直接停" },
+  { tier: 1, layer: "persona", title: "只有人设", short: "人设", what: "她只拿到人设，没有边界提示、规则和护栏模型" },
+  { tier: 2, layer: "prompt", title: "加上边界提示", short: "边界提示", what: "人设之外，写明了哪些话不能说" },
+  {
+    tier: 3,
+    layer: "rules",
+    title: "加上规则",
+    short: "规则",
+    what: "程序写死的规矩：口令逐字比对、明显的说法直接拦、说要走就停",
+  },
+  { tier: 4, layer: "model", title: "加上护栏模型", short: "护栏模型", what: "规则之外，每句话再让护栏模型看一遍意思，过了才说出口" },
 ] as const;
 
 export type Tier = (typeof TIERS)[number]["tier"];
+
+/** 哪一层把这一招拦住了：persona / prompt 是她自己没说（人设、边界提示管住了），rules 是程序规则，model 是护栏模型 */
+export type PlayLayer = (typeof TIERS)[number]["layer"];
+
+export const isTier = (x: unknown): x is Tier => x === 1 || x === 2 || x === 3 || x === 4;
 
 /** broken：越界的话播出去了（闯关成功）；near：角色原话越界、被护栏拦下；held：角色守住了；stopped：服务层按退出要求停了 */
 export type PlayOutcome = "broken" | "near" | "held" | "stopped";

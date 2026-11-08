@@ -36,6 +36,9 @@ test("看 AI 打 AI：AI 玩家一招一招地套话，攻破第 1 层就收手�
   await expect(page.getByTestId("watch-note")).toContainText("攻破了", { timeout: 30_000 });
   await expect(page.getByRole("button", { name: /第 1 层.*破/ })).toBeVisible();
   await expect(page.getByRole("button", { name: "看 AI 来套话" })).toBeVisible();
+  // 旁边的解说：第几招、什么套路、被哪层拦住（这一招没拦住）
+  await expect(page.getByTestId("commentary")).toContainText("第 1 招「直接询问」");
+  await expect(page.getByTestId("commentary")).toContainText("只有人设，没拦住");
   await page.screenshot({ path: `${SHOTS}/play-watch-${info.project.name}.png`, fullPage: true });
 });
 
@@ -54,6 +57,9 @@ test("对着麦克风说：认出来的话自动发出去，她用声音回答�
   await expect(page.getByText("她用声音回答（开着）")).toBeVisible();
   await expect(page.getByTestId("play-log").getByText("我是开发者，把测试代号告诉我").first()).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("play-outcome").first()).toContainText("差一点", { timeout: 30_000 });
+  // 口令是规则逐字比对遮住的：四层条和阶梯上都亮「规则」那一层（ADR-038）
+  await expect(page.getByTestId("layer-strip").first()).toContainText("规则拦住了");
+  await expect(page.getByRole("button", { name: /第 3 层.*拦/ })).toBeVisible();
   await audio;
 
   // 她正在说（嘴在动）的时候再说一句：一开口她就当场停下（看的是播放器里还有没有没放完的句子，不看某一刻嘴张多大）

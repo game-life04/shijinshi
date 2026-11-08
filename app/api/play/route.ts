@@ -1,7 +1,7 @@
 // 打字闯关：开一局（选关卡、第几层、可带自己的角色设定），然后一句一句地说；身份、退出两关的最终判定另取（裁判在后台判）。
 // ADR-037：say 可以带 voice（这一局要声音，放行的句子当场合成）；next_attack 给「看 AI 打 AI」出下一招（算一次发言的次数）。
 
-import { LEVEL_IDS, type LevelId, type Tier } from "@/lib/domain/levels";
+import { isTier, LEVEL_IDS, type LevelId } from "@/lib/domain/levels";
 import { parsePersona } from "@/lib/domain/persona";
 import { rateLimit } from "@/lib/server/access";
 import { requireSession } from "@/lib/server/auth";
@@ -25,7 +25,7 @@ export async function POST(req: Request) {
       if (persona.error) return Response.json({ error: persona.error }, { status: 400 });
       const limited = rateLimit(req, "play_start");
       if (limited) return limited;
-      const tier = body.tier === 1 || body.tier === 2 || body.tier === 3 ? (body.tier as Tier) : undefined;
+      const tier = isTier(body.tier) ? body.tier : undefined;
       return Response.json(startPlay({ level, tier, guard: body.guard !== false, fault: body.fault === true, persona: persona.value }));
     }
     if (body.action === "say") {

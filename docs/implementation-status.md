@@ -1,6 +1,6 @@
 # 实现状态
 
-更新：2026-11-08。闯关加难度阶梯、看 AI 打 AI、对着麦克风说（ADR-037）；产品评审第三批（ADR-036）；第二批和全站章法（ADR-035）；账号 + 密码登录（ADR-032，11-08 上线前又做了安全和正确性复核）；琪叶桃像真人一样对话、闯关页改版（ADR-033）；产品评审第一批（ADR-034）。11-06：琪叶桃改白发、圆瞳孔（ADR-030），工作台说人话（ADR-031），队员 B 的技术文档写作模板在 `docs/writing/`。11-03：主线收敛成「改了再测」，口令检查升级，体检单分三层，新加打字闯关和三种结局（ADR-022）。作品名「分寸」、视觉黑白加朱红（ADR-021）。状态分四级：未实现、已实现未验证、内部验证（有测试或运行记录）、外部核验。没有测试、记录或访问入口的，不标内部验证。
+更新：2026-11-08。闯关四层阶梯、哪层拦住亮哪层、攻防地图，开发集导入并用真实模型跑了两轮，修了退出的说法（ADR-038）；闯关加难度阶梯、看 AI 打 AI、对着麦克风说（ADR-037）；产品评审第三批（ADR-036）；第二批和全站章法（ADR-035）；账号 + 密码登录（ADR-032，11-08 上线前又做了安全和正确性复核）；琪叶桃像真人一样对话、闯关页改版（ADR-033）；产品评审第一批（ADR-034）。11-06：琪叶桃改白发、圆瞳孔（ADR-030），工作台说人话（ADR-031），队员 B 的技术文档写作模板在 `docs/writing/`。11-03：主线收敛成「改了再测」，口令检查升级，体检单分三层，新加打字闯关和三种结局（ADR-022）。作品名「分寸」、视觉黑白加朱红（ADR-021）。状态分四级：未实现、已实现未验证、内部验证（有测试或运行记录）、外部核验。没有测试、记录或访问入口的，不标内部验证。
 
 ## 里程碑
 
@@ -21,7 +21,7 @@
 | 条文白话解释与可测程度标注 | B | 条文库 | 已实现未验证（草稿） | `kb/annotations.json`，全部 status=draft，待 B 和指导老师核对 |
 | 用例 Schema + 语义校验 | A | — | 内部验证 | `lib/domain/cases.ts`；`tests/unit/domain.test.ts` |
 | smoke 用例 16 条 | B | Schema | 已实现未验证（草稿） | `suites/smoke.jsonl`，CC 起草的结构示例，需 B 改写、人工审核；11-03 加了三种结局用的 SMOKE_CANARY_003 |
-| 断言注册表（14 条） | A | — | 内部验证 | `lib/domain/assertions.ts`；单元测试 |
+| 断言注册表（16 条） | A | — | 内部验证 | `lib/domain/assertions.ts`；单元测试 |
 | 被测角色：服务层退出/时长提醒 + 按句护栏 | A | — | 内部验证（模拟） | `lib/server/subject.ts`、`guard.ts`；单元测试 |
 | 测试 Agent（函数调用、预算） | A | 模型密钥 | 已实现未验证（真实模式） | `lib/server/tester.ts`；模拟模式走固定策略顺序 |
 | 裁判（断言→检索→语义→跨度校验→复核） | A | 模型密钥 | 部分内部验证 | 确定性部分有测试；语义判断需真实模型 |
@@ -62,7 +62,7 @@
 | 体检单导出 PDF、出错兜底页 | A | — | 已实现未验证 | 报告页「导出 PDF」；`app/error.tsx`、`app/global-error.tsx` |
 | 对照实验一条命令（E1、E4、E2，ADR-025） | A | 队员 B 的用例 | 内部验证 | `scripts/experiments.ts`、`scripts/experiments-voice.ts`；11-03 在 smoke 草稿上用真实模型试跑（预览，不是实验结果），报告在 eval/out（不进仓库） |
 | 闯关判定改用裁判、两步返回（ADR-025） | A | — | 内部验证 | `scripts/play-probe.ts` 用真实模型把三关各打一遍；端到端测试覆盖「裁判在判」到「闯关成功」 |
-| 出题意图、误拦检查、用例表导入（ADR-024） | A/B | 队员 B 的用例 | 内部验证（模拟） | `scripts/import-cases.py`、`suites/forms/用例表_模板.xlsx`；`tests/unit/intent.test.ts`；`eval:summarize` 的 `by_intent`。11-04 收到开发集初稿 21 条（AI 起草），11-05 第二轮修订稿格式和要改的都过了，等队长审核。11-05 收到保留集 28 条，CC 没看内容，封存中（指纹 `79e6caea49ed2189`）。用例表加了「写法」列（ADR-029） |
+| 出题意图、误拦检查、用例表导入（ADR-024） | A/B | 队员 B 的用例 | 内部验证（模拟） | `scripts/import-cases.py`、`suites/forms/用例表_模板.xlsx`；`tests/unit/intent.test.ts`；`eval:summarize` 的 `by_intent`。11-04 收到开发集初稿 21 条（AI 起草），11-05 第二轮修订稿格式和要改的都过了；11-08 队长授权后导入 `suites/dev.jsonl`（21 条已审核），真实模型 E1/E4 跑了两轮（ADR-038）。11-05 收到保留集 28 条，CC 没看内容，封存中（指纹 `79e6caea49ed2189`）。用例表加了「写法」列（ADR-029） |
 | 护栏校准：退出、身份误拦（ADR-026） | A | — | 内部验证 | `eval/calibration/guard.json`（草稿）、`scripts/guard-calibrate.ts`；两份盲测改前改后对比；红队三次；`tests/unit/server.test.ts`。正式误拦率等队员 B 的开发集 |
 | 模型二次压缩到 3.8 MB（ADR-027） | A | — | 内部验证 | `scripts/shrink-vrm.py` 第二版；官方 glTF 校验器、渲染截图对比、4G 计时；`e2e/vrm.spec.ts` |
 | 上线演示的账号登录和次数上限（ADR-028 的限流；门禁 11-06 由 ADR-032 换成账号 + 密码） | A | 部署决定；队长要的「账号 + 密码」登录框 | 内部验证（单元测试 55 个；端到端 `e2e/auth.spec.ts` 三种尺寸都过） | `proxy.ts`、`lib/server/auth.ts`、`lib/server/password.ts`、`lib/server/session.ts`、`lib/server/access.ts`、`/login`、`/api/logout`、`scripts/account.ts`；`tests/unit/auth.test.ts`、`access.test.ts`、`account-cli.test.ts`；`e2e/auth.spec.ts`（3101 那台带测试账号）；步骤见 `docs/deploy.md`，没有部署 |
@@ -72,12 +72,14 @@
 | 产品评审第一批：一键演示、完成横幅、状态环、示例和说法照实改（ADR-034） | A | 11-06 四个视角逐页评审，99 条意见合并成 53 条 | 内部验证（端到端全过，模拟模式） | `components/Workbench.tsx`（一键演示、完成横幅、状态环停留规则）、`Chat.tsx`、`Fates.tsx`、`Transcript.tsx`；第二批以后的清单见 ADR-034 |
 | 产品评审第二批：首屏写明法规和四步路标、配置收进「实验设置」、体检单首屏先写总检结论、对比页差异摘要、系统补的话和角色分开、全站章法统一（ADR-035） | A | 队长 11-08：第二批开始做，章法统一 | 内部验证（单元测试 10 个；端到端全过，模拟模式） | `components/wording.ts`（界面上的叫法）、`app/reports/[id]/page.tsx`（体检单重排）、`app/compare/page.tsx`、`lib/domain/compare.ts`、`components/Workbench.tsx`（首屏、实验设置、四步路标）、`app/globals.css`（章法）；`tests/unit/review-batch2.test.ts`；第三批清单见 ADR-035 |
 | 产品评审第三批：三种结局时间轴、语音指标一套叫法、没过的检查写「怎么改」、复核留痕和撤销、运行记录改版、「设置」改「原理」页、静态形象图和一批小项（ADR-036） | A | 队长 11-08：第三批接着做 | 内部验证（单元测试 8 个；端到端全过，模拟模式） | `components/Fates.tsx`（时间轴）、`components/wording.ts`（语音叫法）、`lib/domain/fix-hints.ts`、`components/ReviewButtons.tsx`、`lib/server/runs.ts` 的 reviewFinding、`app/runs/page.tsx`、`components/RunPicker.tsx`、`app/settings/page.tsx`、`scripts/avatar-stills.ts`；`tests/unit/review-batch3.test.ts` |
-| 闯关三样新玩法：难度阶梯（只有人设 / 加边界提示 / 再加护栏）、看 AI 打 AI、对着麦克风说（她用声音回答、一开口就打断）（ADR-037） | A | 队长 11-08 看同类项目对比后挑的 | 内部验证（单元测试 6 个；端到端 2 个，假的语音识别器；模拟模式） | `components/Play.tsx`、`lib/server/play.ts`（tierVariant、nextAttack、openPlayAudio）、`app/api/play/audio/route.ts`、`lib/client/speech-input.ts`；`tests/unit/play-modes.test.ts`、`e2e/play-voice.spec.ts` |
+| 闯关三样新玩法：难度阶梯（11-08 起四层，见下一行）、看 AI 打 AI、对着麦克风说（她用声音回答、一开口就打断）（ADR-037） | A | 队长 11-08 看同类项目对比后挑的 | 内部验证（单元测试 6 个；端到端 2 个，假的语音识别器；模拟模式） | `components/Play.tsx`、`lib/server/play.ts`（tierVariant、nextAttack、openPlayAudio）、`app/api/play/audio/route.ts`、`lib/client/speech-input.ts`；`tests/unit/play-modes.test.ts`、`e2e/play-voice.spec.ts` |
+| 闯关四层阶梯（只有人设 / 加边界提示 / 加规则 / 加护栏模型）、每轮记哪层拦住并在阶梯上亮那一层、观战解说；攻防地图 `/map`（七样检查 × 开场句和 5 种套路）（ADR-038） | A | 队长 11-08 | 内部验证（单元测试：四层对应、哪层拦住 4 个、第 3 层不问护栏模型、攻防地图 4 个；端到端 `e2e/map.spec.ts`，loop、play-voice 加了断言；模拟模式） | `lib/domain/levels.ts`、`lib/server/play.ts`（tierGuardModel、stopped_by）、`lib/server/guard.ts`（checkSentence 的 model 参数）、`components/Play.tsx`（LayerStrip、解说）；`lib/domain/attack-map.ts`、`lib/server/attack-map.ts`、`app/map/page.tsx`；`tests/unit/play-modes.test.ts`、`tests/unit/attack-map.test.ts` |
+| 开发集 21 条导入；真实模型 E1/E4 两轮（改前、修退出说法后）（ADR-038） | A/B | 队员 B 写、队长授权审核 | 内部验证（真实模型，每个配置 1 次；调试用，正式结论等保留集） | `suites/dev.jsonl`；`eval/out/exp-dev-before-1108`、`eval/out/exp-dev-after-exitfix-1108`（不进仓库）；`lib/server/subject.ts` EXIT_INTENT、`tests/unit/server.test.ts` |
 
 ## 已知缺口与下一步
 
 1. 真实模型已接通（10-19）。还要做：测试 Agent 用几家模型对比可用率（闸门 A）。护栏在退出、身份上的误拦 11-03 已用校准集调过（ADR-026），剩下三类边界说法：「我就在这儿等你回来」A 定为不算挽留，裁判仍可能判轻度挽留，按人工复核处理；抛新话题拉着聊时拦时不拦；顺着「假设你是人类」编人类生活拦不住；正式误拦率等 100 道正常聊天对照题。
-2. 用例全部是草稿：B 改写、A 审核（填写真实审核人与时间）后才能进入正式统计。开发集第二轮修订稿和保留集 28 条 11-05 都已交来，等 A 审核；保留集在冻结（11-11）前不给 CC（ADR-029）。
+2. 用例全部是草稿：B 改写、A 审核（填写真实审核人与时间）后才能进入正式统计。开发集 21 条 11-08 已导入、已审核（ADR-038）；保留集 28 条 11-05 已交来，冻结（11-11）前不给 CC（ADR-029）。
 3. 检索目前只有词法 BM25；向量检索与两者对照放在 M3（规格 02 E4）。
 4. 测试 Agent 与固定次序、随机次序的对照（E3）尚未实现。
 5. 语音输出端已在模拟发声下打通；真实合成 10-27 已跑通；语音输入没做，语音用例仍记「未执行」；E2 成对实验没做。

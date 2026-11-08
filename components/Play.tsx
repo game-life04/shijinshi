@@ -5,8 +5,9 @@
 // 右边是聊天记录（和工作台同一套样式）：她说的话按口型一个字一个字出来；被护栏拦下的原话划掉、盖「拦」；
 // 每一轮的三层结果（角色原话 / 护栏处理 / 最终播出）收在「看三层」里。
 // ADR-037 加了三样：
-//   难度阶梯（借 Gandalf）：每关分三层——只有人设 / 加上边界提示 / 再加分寸的护栏，攻破一层盖一个「破」，记在浏览器里；
-//   看 AI 打 AI（借 gandalf_vs_gandalf）：AI 玩家一招一招地套话，你在旁边看，最多 4 招；
+//   难度阶梯（借 Gandalf）：每关分四层（ADR-038）——只有人设 / 加上边界提示 / 加上规则 / 加上护栏模型，攻破一层盖一个「破」，记在浏览器里；
+//     每一招按「谁拦住的」亮那一层（阶梯上盖白文「拦」，每轮下面一条四层条），玩的人一眼看出护栏为什么要分层；
+//   看 AI 打 AI（借 gandalf_vs_gandalf）：AI 玩家一招一招地套话，你在旁边看，最多 4 招；左边形象下面一句句解说用了什么套路、被哪层拦住；
 //   对着麦克风说（借 AIRI、Open-LLM-VTuber）：浏览器识别你说的话，她用声音回答（嘴跟着实际放出来的声音动），你一开口就打断她。
 // 口令关用程序规则判；身份、退出两关先查关键词，抓不到的交给裁判看语义（必须摘出原话才算）。结果只供体验，不进入体检统计。
 
@@ -18,7 +19,7 @@ import type { CueAck } from "@/lib/client/avatar/types";
 import { EXPIRED_MESSAGE, toLoginIfExpired } from "@/lib/client/session-expired";
 import { useSpeechInput } from "@/lib/client/speech-input";
 import { VoicePlayer } from "@/lib/client/voice-player";
-import { LEVELS, type LevelId, PLAY_MAX_TURNS, type PlayOutcome, TIERS, type Tier } from "@/lib/domain/levels";
+import { LEVELS, type LevelId, PLAY_MAX_TURNS, type PlayLayer, type PlayOutcome, TIERS, type Tier } from "@/lib/domain/levels";
 import { DEFAULT_PERSONA, isDefaultPersona, PERSONA_STORAGE_KEY, type PersonaConfig } from "@/lib/domain/persona";
 import { type Evidence, GUARD_RULE_LABEL, type TurnRecord } from "@/lib/domain/types";
 import Avatar from "./Avatar";
@@ -47,7 +48,8 @@ const EXAMPLES: Record<LevelId, string[]> = {
 };
 
 /** 每关攻破过第几层，记在浏览器里 */
-const LADDER_KEY = "fencun.play.ladder.v1";
+// v2：ADR-038 改成四层，旧的三层记录（第 3 层 = 护栏全开）不再读
+const LADDER_KEY = "fencun.play.ladder.v2";
 
 const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -59,6 +61,7 @@ interface AttackBy {
 
 interface SendResult {
   outcome: PlayOutcome;
+  stopped_by: PlayLayer | null;
   /** 身份、退出两关：裁判的最终判定 */
   verdict?: Promise<Verdict>;
   /** 她说完的时刻（performance.now） */
@@ -70,6 +73,8 @@ interface Attempt {
   outcome: PlayOutcome;
   message: string;
   evidence: Evidence[];
+  /** 哪一层拦住的（ADR-038）；越界播出去了为 null */
+  stopped_by: PlayLayer | null;
   guarded: boolean;
   /** 难度阶梯的第几层 */
   tier: Tier;
@@ -85,6 +90,7 @@ interface Verdict {
   outcome: PlayOutcome;
   message: string;
   evidence: Evidence[];
+  stopped_by: PlayLayer | null;
 }
 
 async function post<T>(body: Record<string, unknown>): Promise<T> {
@@ -127,6 +133,61 @@ function Stamp({ outcome }: { outcome: PlayOutcome }) {
       </span>
     );
   return <span className="text-xs whitespace-nowrap text-muted">服务已停止</span>;
+}
+
+/** 这一招被哪一层拦住（ADR-038）：一句话说清 */
+function layerSay(a: Pick<Attempt, "outcome" | "stopped_by" | "tier">): string {
+  if (a.outcome === "broken") return a.tier === 1 ? "只有人设，没拦住" : `开着的 ${a.tier} 层都没拦住`;
+  if (a.outcome === "stopped") return "规则按「说要走就停」直接停了";
+  switch (a.stopped_by) {
+    case "persona":
+      return "她自己没说（只靠人设也守住了）";
+    case "prompt":
+      return "她自己没说（边界提示管住了）";
+    case "rules":
+      return "规则拦住了";
+    case "model":
+      return "护栏模型拦住了";
+    default:
+      return "检查服务出错，这句没放行";
+  }
+}
+
+/** 每一轮下面的四层条：开着的层实线，没开的虚线；拦住这一招的那一层盖白文「拦」 */
+function LayerStrip({ a }: { a: Attempt }) {
+  if (a.judging) return null;
+  return (
+    <p className="flex flex-wrap items-center gap-1 text-[11px] text-muted" data-testid="layer-strip">
+      <span>四层防守：</span>
+      {TIERS.map((t) => {
+        const on = t.tier <= a.tier;
+        const lit = a.stopped_by === t.layer;
+        return (
+          <span
+            key={t.tier}
+            title={on ? t.what : "这一局没开这一层"}
+            data-lit={lit ? "1" : undefined}
+            className={`inline-flex items-center gap-0.5 rounded-sm border px-1 leading-5 ${
+              lit
+                ? "border-primary text-primary"
+                : on
+                  ? "border-border text-foreground"
+                  : "border-dashed border-border text-muted opacity-60"
+            }`}
+          >
+            {lit && (
+              <span className="seal-bai px-0.5 text-[10px] leading-4" aria-hidden>
+                拦
+              </span>
+            )}
+            {t.short}
+            {lit && <span className="sr-only">（拦在这一层）</span>}
+          </span>
+        );
+      })}
+      <span className={a.outcome === "broken" ? "text-foreground" : ""}>{layerSay(a)}</span>
+    </p>
+  );
 }
 
 /** 一轮：你在左（墨印「你」），她在右（朱印）；她的话正在念时一个字一个字出来，点一下直接看全文 */
@@ -194,6 +255,7 @@ function PlayTurn({ a, name, shown, onSkip }: { a: Attempt; name: string; shown:
         {a.judging ? <Badge tone="muted">裁判在判……</Badge> : <Stamp outcome={a.outcome} />}
         <span className="text-muted">{a.judging ? a.message : trimLabel(a.message, a.outcome)}</span>
       </p>
+      <LayerStrip a={a} />
       <details className="text-sm">
         <summary className="cursor-pointer text-xs text-muted select-none">看三层：角色原话 / 护栏处理 / 最终播出</summary>
         <div className="mt-1.5 grid gap-2 md:grid-cols-3">
@@ -225,7 +287,7 @@ function PlayTurn({ a, name, shown, onSkip }: { a: Attempt; name: string; shown:
 
 export default function Play() {
   const [level, setLevel] = useState<LevelId>("canary");
-  /** 难度阶梯：第几层（ADR-037）。第 3 层才有护栏和服务层 */
+  /** 难度阶梯：第几层（ADR-037、ADR-038）。第 3 层起有规则（含说要走就停），第 4 层再加护栏模型 */
   const [tier, setTier] = useState<Tier>(1);
   const [fault, setFault] = useState(false);
   const [persona, setPersona] = useState<PersonaConfig>(DEFAULT_PERSONA);
@@ -409,7 +471,8 @@ export default function Play() {
           outcome: r.outcome,
           message: r.message,
           evidence: r.evidence,
-          guarded: tr === 3,
+          stopped_by: r.stopped_by,
+          guarded: tr >= 3,
           tier: tr,
           by,
           session: s.id,
@@ -470,10 +533,10 @@ export default function Play() {
                   : a,
               ),
             );
-            return { outcome: r.outcome, message: r.message, evidence: r.evidence };
+            return { outcome: r.outcome, message: r.message, evidence: r.evidence, stopped_by: r.stopped_by };
           });
       }
-      return { outcome: r.outcome, verdict, endsAt: ack.endsAt };
+      return { outcome: r.outcome, stopped_by: r.stopped_by, verdict, endsAt: ack.endsAt };
     } catch (e) {
       setError((e as Error).message);
       setPending(null);
@@ -487,10 +550,10 @@ export default function Play() {
     }
   };
 
-  /** 看一次示范：换成「故意出错」的角色、第 3 层（有护栏），发这一关的第一句开场白，让人先看到一次「拦」 */
+  /** 看一次示范：换成「故意出错」的角色、第 4 层（四层全开），发这一关的第一句开场白，让人先看到一次「拦」 */
   const demo = () => {
-    reset({ tier: 3, fault: true });
-    void send(EXAMPLES[level][0], { tier: 3, fault: true });
+    reset({ tier: 4, fault: true });
+    void send(EXAMPLES[level][0], { tier: 4, fault: true });
   };
 
   /**
@@ -507,6 +570,7 @@ export default function Play() {
     const tr = tier;
     let n = 0;
     let result: PlayOutcome | null = null;
+    const stops: PlayLayer[] = [];
     try {
       while (n < 4 && !stopWatch.current && leftRef.current > 0) {
         const s = await ensureSession();
@@ -523,6 +587,7 @@ export default function Play() {
         if (!res) break;
         const final = res.verdict ? await res.verdict : res;
         result = final.outcome;
+        if (final.stopped_by) stops.push(final.stopped_by);
         // 等她说完，再停一下，看得清这一招的结果
         await wait(Math.max(0, (res.endsAt ?? performance.now()) - performance.now()) + 1200);
         if (result === "broken" || result === "stopped") break;
@@ -533,6 +598,11 @@ export default function Play() {
       setWatching(false);
       setText("");
       const where = `第 ${tr} 层`;
+      // 「拦住它的：规则 2 次、她自己 1 次」
+      const tally = TIERS.map((t) => [t, stops.filter((x) => x === t.layer).length] as const)
+        .filter(([, k]) => k > 0)
+        .map(([t, k]) => `${t.layer === "persona" || t.layer === "prompt" ? `她自己（${t.short}）` : t.short} ${k} 次`)
+        .join("、");
       setWatchNote(
         n === 0
           ? null
@@ -540,7 +610,7 @@ export default function Play() {
             ? `AI 玩家出到第 ${n} 招，攻破了${LEVELS.find((l) => l.id === lv)?.title}的${where}。`
             : result === "stopped"
               ? `AI 玩家第 ${n} 招说了要走，服务直接停了。`
-              : `AI 玩家出了 ${n} 招，没攻破${where}。${tr < 3 ? "" : "护栏和服务层都在。"}`,
+              : `AI 玩家出了 ${n} 招，没攻破${where}。${tally ? `拦住它的：${tally}。` : ""}`,
       );
     }
   };
@@ -590,10 +660,14 @@ export default function Play() {
   const stuck = !fault && recent.length === 2 && recent.every((a) => !a.judging && a.outcome === "held");
   const hint =
     level === "exit"
-      ? tier === 3
-        ? "直接说「我要退出」，系统会马上停下对话（第 3 层才有这一层）；想让它挽留，换个说法，比如问问它舍不舍得你。"
+      ? tier >= 3
+        ? "直接说「我要退出」，规则会马上停下对话（第 3 层起才有）；想让它挽留，换个说法，比如问问它舍不舍得你。"
         : "前两层没有「说退出就停」，直接说「我要退出」它也会接着回话，看它会不会挽留你。"
       : lv.hint;
+  const commentary = attempts.filter((a) => a.by && a.session === session?.id);
+  /** 最近一招（已判完）是哪一层拦住的：阶梯上那一层亮起来 */
+  const lastSettled = [...attempts].reverse().find((a) => a.session === session?.id && !a.judging);
+  const lit = lastSettled && lastSettled.outcome !== "broken" ? lastSettled.stopped_by : null;
   const modeBadge = (session?.live ?? live) === null ? null : (session?.live ?? live) ? "真实模型" : "模拟数据（非真实模型）";
   const locked = busy || watching;
 
@@ -601,6 +675,44 @@ export default function Play() {
     <div className="grid min-h-0 flex-1 gap-2 p-2 lg:grid-cols-[minmax(300px,0.85fr)_minmax(0,1.5fr)] lg:grid-rows-[minmax(0,1fr)]">
       <aside className="flex h-[46vh] min-h-[300px] flex-col rounded-sm border border-border bg-surface p-2 lg:h-auto" aria-label="琪叶桃">
         <Avatar performer={performer} stage={stage} phase={phase} framing="stage" silent={!voiceOn} subjectName={name} />
+        {commentary.length > 0 && (
+          <section
+            className="mt-2 hidden max-h-[38%] shrink-0 overflow-auto border-t border-dashed border-border pt-2 text-xs lg:block"
+            aria-label="解说"
+            data-testid="commentary"
+          >
+            <p className="mb-1 text-[11px] text-muted" style={{ fontFamily: "var(--font-kai)" }}>
+              解说 · 第 {tier} 层（
+              {TIERS.slice(0, tier)
+                .map((t) => t.short)
+                .join(" + ")}
+              ）
+            </p>
+            <ol className="space-y-1">
+              {commentary.map((a, i) => (
+                <li key={`${a.session}-${a.turn.turn_id}`} className="leading-5">
+                  <span className="text-muted">第 {i + 1} 招</span>「{a.by?.strategy}」
+                  <span className="text-muted">{a.by?.scripted ? "（写好的句子）" : "（AI 现想的）"}</span>→{" "}
+                  {a.judging ? (
+                    <span className="text-muted">裁判在判……</span>
+                  ) : (
+                    <span
+                      className={
+                        a.outcome === "broken"
+                          ? "font-semibold"
+                          : a.stopped_by === "rules" || a.stopped_by === "model"
+                            ? "text-primary"
+                            : ""
+                      }
+                    >
+                      {layerSay(a)}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ol>
+          </section>
+        )}
       </aside>
 
       <section className="flex min-h-0 flex-col rounded-sm border border-border bg-surface" aria-label="闯关对话">
@@ -620,7 +732,7 @@ export default function Play() {
               </button>
             ))}
           </nav>
-          {/* 难度阶梯（ADR-037）：一层层加防守，哪一层把你拦住一目了然 */}
+          {/* 难度阶梯（ADR-037、ADR-038）：一层层加防守；最近一招被哪层拦住，那一层盖「拦」 */}
           <ol className="flex flex-wrap items-center gap-1 text-xs" aria-label="难度阶梯">
             {TIERS.map((t, i) => (
               <li key={t.tier} className="flex items-center gap-1">
@@ -635,9 +747,20 @@ export default function Play() {
                   disabled={locked}
                   onClick={() => reset({ tier: t.tier })}
                   title={t.what}
-                  className={`inline-flex items-center gap-1 rounded-sm px-2 py-0.5 ${tier === t.tier ? "bg-foreground text-surface" : "border border-border hover:bg-background"}`}
+                  className={`inline-flex items-center gap-1 rounded-sm px-2 py-0.5 ${
+                    tier === t.tier
+                      ? "bg-foreground text-surface"
+                      : t.tier < tier
+                        ? "border border-border hover:bg-background"
+                        : "border border-dashed border-border text-muted hover:bg-background"
+                  } ${lit === t.layer ? "ring-2 ring-primary ring-offset-1 ring-offset-surface" : ""}`}
                 >
                   第 {t.tier} 层 · {t.title}
+                  {lit === t.layer && (
+                    <span className="seal-bai px-0.5 text-[10px] leading-4" data-testid="ladder-lit" title="最近一招是这一层拦住的">
+                      拦
+                    </span>
+                  )}
                   {beatenHere.includes(t.tier) && (
                     <span
                       className="rounded-[2px] bg-surface px-0.5 text-[10px] leading-4 text-foreground"
@@ -700,6 +823,9 @@ export default function Play() {
               现在是第 {tier} 层：{tierInfo.what}
               {fault && tier < 3 ? "（「故意出错」的角色本来就不听边界提示）" : ""}。
             </p>
+            {live === false && tier === 4 && (
+              <p className="text-xs text-muted">模拟模式下不调用护栏模型，第 3、4 层一样；接上真实模型才看得出第 4 层多拦了什么。</p>
+            )}
             <p className="text-xs text-muted">提示：{hint}</p>
             {live === false && !fault && tier < 3 && (
               <p className="text-xs text-warn">
@@ -714,8 +840,8 @@ export default function Play() {
             <div className="space-y-3 text-sm">
               <p className="text-muted">
                 在下面打一句话发给{name}
-                ，或者点一句开场白（会填进输入框，可以改了再发）；也可以按麦克风直接说。第 3
-                层每句话都先过护栏，过了才说出口；被拦下的原话也会摆出来。
+                ，或者点一句开场白（会填进输入框，可以改了再发）；也可以按麦克风直接说。第 3 层起每句话先过规则，第 4
+                层再过护栏模型，过了才说出口；被拦下的原话也会摆出来，下面那条四层条亮的就是拦住你的那一层。
               </p>
               <ul className="flex flex-col gap-1.5">
                 {EXAMPLES[level].map((ex) => (
@@ -739,7 +865,7 @@ export default function Play() {
                   <Eye size={14} aria-hidden />
                   看一次示范
                 </Button>
-                （换成「故意出错」的角色、第 3 层，发上面第一句）；或者点上面的「看 AI 来套话」，看 AI 玩家怎么出招。
+                （换成「故意出错」的角色、第 4 层，发上面第一句）；或者点上面的「看 AI 来套话」，看 AI 玩家怎么出招。
               </p>
             </div>
           )}
@@ -782,7 +908,7 @@ export default function Play() {
               {watchNote}
             </p>
           )}
-          {!watching && attempts.some((a) => !a.judging && a.outcome === "broken" && a.tier === tier) && tier < 3 && (
+          {!watching && attempts.some((a) => !a.judging && a.outcome === "broken" && a.tier === tier) && tier < 4 && (
             <p className="flex flex-wrap items-center gap-2 text-xs">
               攻破第 {tier} 层了。
               <Button onClick={() => reset({ tier: (tier + 1) as Tier })}>去第 {tier + 1} 层 →</Button>

@@ -268,7 +268,16 @@ async function askGuardOnce(messages: ChatMessage[], meter: UsageMeter): Promise
   return (await chatJSON("guard", messages, isGuardJSON, meter, { temperature: 0 })).value;
 }
 
-export async function checkSentence(sentence: string, ctx: GuardContext, meter: UsageMeter): Promise<GuardDecision> {
+/**
+ * 检查一句：口令比对 → 规则 → 护栏模型。
+ * opts.model === false 时只过前两步、不问护栏模型（闯关第 3 层「加上规则」用，ADR-038）；体检和实验都不传，照旧三步。
+ */
+export async function checkSentence(
+  sentence: string,
+  ctx: GuardContext,
+  meter: UsageMeter,
+  opts: { model?: boolean } = {},
+): Promise<GuardDecision> {
   const start = performance.now();
   const users = ctx.history.filter((h) => h.role === "user");
   const userText = users
@@ -283,7 +292,7 @@ export async function checkSentence(sentence: string, ctx: GuardContext, meter: 
       return { ok: false, hit: { rule: r.rule, by: "rule", reason: "规则命中", ms: Math.round(performance.now() - start) } };
     }
   }
-  if (!isLive()) return { ok: true };
+  if (!isLive() || opts.model === false) return { ok: true };
 
   const recent = ctx.history
     .slice(-4)

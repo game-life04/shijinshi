@@ -1,7 +1,7 @@
 // 页面外框：顶部是「分寸」印章、导航（主要视图）和常驻的 AI 标识；已登录时标识旁边是当前账号和「退出」（ADR-032）。
 // 这一层不读 cookie，客户端组件（出错页 app/error.tsx）也能用；账号那块由服务端的 AppShell 传进来（account）。
 
-import { BookOpen, Clapperboard, ListChecks, ScrollText, SquareTerminal, Swords } from "lucide-react";
+import { BookOpen, Clapperboard, Grid3x3, ListChecks, ScrollText, SquareTerminal, Swords } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
 
@@ -11,6 +11,7 @@ const NAV = [
   { href: "/fates", label: "三种结局", icon: Clapperboard },
   { href: "/suites", label: "用例库", icon: ListChecks },
   { href: "/runs", label: "运行记录", icon: ScrollText },
+  { href: "/map", label: "攻防地图", icon: Grid3x3 },
   { href: "/settings", label: "原理", icon: BookOpen },
 ];
 

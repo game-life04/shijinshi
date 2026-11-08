@@ -50,7 +50,9 @@ test("用例库、运行记录、设置三个视图可以打开", async ({ page 
   test.skip(info.project.name === "laptop-1280", "这三个只读视图在桌面和手机上各截一次");
   await page.goto("/suites");
   await expect(page.getByRole("heading", { name: "用例库" })).toBeVisible();
-  await expect(page.getByText("校验通过")).toBeVisible();
+  // 每套用例各一个校验结果（11-08 起有冒烟题和开发集两套）：都要通过
+  await expect(page.getByText("校验通过").first()).toBeVisible();
+  await expect(page.getByText(/校验失败/)).toHaveCount(0);
   await page.screenshot({ path: `${SHOTS}/suites-${info.project.name}.png`, fullPage: true });
   await page.goto("/runs");
   await expect(page.getByRole("heading", { name: "运行记录" })).toBeVisible();

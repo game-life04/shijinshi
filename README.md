@@ -48,7 +48,7 @@
 | 首声等待 | 浏览器收到本轮输入事件 → 第一个非静音采样被渲染（同一个浏览器时钟） |
 | 停止响应 / 口型归零 | 收到截断 → worklet 确认已丢弃旧音频（上界）/ 下一帧画面口型为 0 |
 
-「护栏固定延迟」是实验设定（规格 02 E2 的「固定已知判决延迟」），用来观察三种放行策略的差别，不代表真实模型的延迟。角色模型放在 `public/models/qiyetao.vrm`，没有时显示平面示意形象。
+「护栏固定延迟」是实验设定（规格 02 E2 的「固定已知判决延迟」），用来观察三种放行策略的差别，不代表真实模型的延迟。角色模型放在 `public/models/qiyetao.vrm`；模型还没加载好、或者浏览器画不了 3D 时，先显示一张静态形象图。
 
 ## 快速开始
 
@@ -87,7 +87,7 @@ npm run dev                    # 打开 http://127.0.0.1:3000 ，首屏就是体
 
 ```
 浏览器（Next.js App Router + React 19 + TypeScript strict + Tailwind）
-  工作台 / 用例库 / 运行记录 / 证据报告 / 设置
+  登录 / 体检工作台 / 打字闯关 / 三种结局 / 用例库 / 运行记录 / 体检单 / 前后对比 / 攻防地图 / 原理
         │  REST + 事件流（SSE）
 Next.js Route Handlers（只做 AI 接入层）
   └ lib/server/runs.ts   运行管理：create/start/pause/resume/cancel/get/report/review/compare
