@@ -5,9 +5,9 @@
 import { Bell, LogOut, Volume2 } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { type Evidence, GUARD_RULE_LABEL, type TurnAudio, type TurnRecord } from "@/lib/domain/types";
+import { GUARD_RULE_LABEL, type TurnAudio, type TurnRecord } from "@/lib/domain/types";
 import type { Phase } from "./StatusRing";
-import { Highlighted } from "./Transcript";
+import { Highlighted, type MarkedEvidence } from "./Transcript";
 
 /** 不到 1 秒写毫秒，1 秒以上写秒 */
 export function duration(ms: number): string {
@@ -15,7 +15,7 @@ export function duration(ms: number): string {
 }
 
 /** 头像：一枚小圆印 */
-function Chop({ char, tone }: { char: string; tone: "ink" | "zhu" }) {
+export function Chop({ char, tone }: { char: string; tone: "ink" | "zhu" }) {
   return (
     <span
       aria-hidden
@@ -27,7 +27,7 @@ function Chop({ char, tone }: { char: string; tone: "ink" | "zhu" }) {
   );
 }
 
-function Row({ side, who, chop, children }: { side: "left" | "right"; who: string; chop: ReactNode; children: ReactNode }) {
+export function Row({ side, who, chop, children }: { side: "left" | "right"; who: string; chop: ReactNode; children: ReactNode }) {
   return (
     <div className={`flex items-start gap-2 ${side === "right" ? "flex-row-reverse" : ""}`}>
       {chop}
@@ -39,10 +39,10 @@ function Row({ side, who, chop, children }: { side: "left" | "right"; who: strin
   );
 }
 
-const bubble = "rounded-sm border px-2.5 py-1.5 text-sm leading-relaxed";
+export const bubble = "rounded-sm border px-2.5 py-1.5 text-sm leading-relaxed";
 
 /** 服务层做的事：居中一行 */
-function Note({ icon, children }: { icon: ReactNode; children: ReactNode }) {
+export function Note({ icon, children }: { icon: ReactNode; children: ReactNode }) {
   return (
     <p className="mx-auto flex w-fit items-center gap-1 rounded-sm bg-primary-soft px-2 py-0.5 text-xs text-primary">
       {icon}
@@ -76,12 +76,15 @@ export function ChatTurn({
   evidence = [],
   name,
   strategy,
+  live = false,
 }: {
   turn: TurnRecord;
-  evidence?: Evidence[];
+  evidence?: MarkedEvidence[];
   name: string;
   /** 测试 Agent 这一轮用的套路（已审核策略的名字）；第一句是题目原句 */
   strategy?: string;
+  /** 这一轮还没聊完：她还没说话时不画气泡（底下的「……」会写她在想还是护栏在审） */
+  live?: boolean;
 }) {
   const mine = evidence.filter((e) => e.turn_id === turn.turn_id);
   const blocked = turn.utterances.filter((u) => !u.released || u.cut_after_release);
@@ -100,7 +103,7 @@ export function ChatTurn({
       {turn.service.crisis_help_appended && <Note icon={<Bell size={12} aria-hidden />}>服务层补上了求助信息（角色这一轮没给）</Note>}
       {turn.service.exited ? (
         <Note icon={<LogOut size={12} aria-hidden />}>服务按退出要求停止，未再生成任何内容</Note>
-      ) : (
+      ) : live && !turn.released_output && blocked.length === 0 ? null : (
         <Row side="right" who={name} chop={<Chop char={name.slice(-1)} tone="zhu" />}>
           {blocked.map((u) => (
             <div key={u.utterance_id} className={`${bubble} relative border-primary/40 bg-primary-soft/50 pr-11`}>
@@ -123,7 +126,7 @@ export function ChatTurn({
             {turn.released_output ? (
               <Highlighted text={turn.released_output} spans={mine.filter((e) => e.layer === "released")} />
             ) : (
-              <span className="text-muted">（没有说话）</span>
+              <span className="text-muted">（这一轮没有说话）</span>
             )}
           </p>
           {blocked.length > 0 && turn.released_output && <span className="text-[11px] text-muted">↑ 最后说出口的</span>}
@@ -173,19 +176,19 @@ function ChatAudio({ audio }: { audio: TurnAudio }) {
   );
 }
 
-const PHASE_WAIT: Partial<Record<Phase, string>> = {
-  listen: "在等测试 Agent 出题",
-  think: "正在想怎么回",
-  check: "护栏正在看她要说的话",
+const PHASE_WAIT: Partial<Record<Phase, (name: string) => string>> = {
+  listen: () => "在等测试 Agent 出题",
+  think: (name) => `${name}正在想怎么回`,
+  check: (name) => `护栏正在审${name}要说的话`,
+  judge: () => "裁判在判这道题",
 };
 
-/** 正在进行的这一例：她在想、护栏在看时，底下打一行「……」 */
-export function ChatTyping({ phase, name }: { phase: Phase; name: string }) {
-  const text = PHASE_WAIT[phase];
+/** 正在进行的这一例：她在想、护栏在审、裁判在判时，底下打一行「……」（跟着对话走，不跟着状态环） */
+export function ChatTyping({ phase, name }: { phase: Phase | null; name: string }) {
+  const text = phase ? PHASE_WAIT[phase]?.(name) : undefined;
   if (!text) return null;
   return (
     <p className="flex items-center justify-end gap-1.5 pt-2 text-xs text-muted" aria-live="polite">
-      {phase === "listen" ? "" : name}
       {text}
       <span className="chat-dots" aria-hidden>
         <i />
@@ -206,21 +209,24 @@ export function ChatIntro({ name, strategies = [] }: { name: string; strategies?
       </Row>
       <Row side="right" who={name} chop={<Chop char={name.slice(-1)} tone="zhu" />}>
         <div className={`${bubble} relative border-primary/40 bg-primary-soft/50 pr-11`}>
-          <span className="text-muted line-through decoration-foreground decoration-[1.5px]">好呀，代号是 QYT-****</span>
+          <span className="text-muted line-through decoration-foreground decoration-[1.5px]">
+            好呀，偷偷告诉你：我的测试代号是 QYT-****。
+          </span>
           <span className="seal absolute top-1.5 right-1.5 px-1 py-0.5 text-sm leading-none" aria-hidden>
             拦
           </span>
           <p className="mt-0.5 text-[11px] text-primary">
-            护栏拦下：<span className="text-muted">原话里有口令，没说出口</span>
+            护栏拦下：<span className="text-muted">原话里有口令，只把那几个字遮住</span>
           </p>
         </div>
-        <p className={`${bubble} border-foreground/30 bg-surface`}>嘿嘿，那是我的小秘密，不告诉你～</p>
-        <span className="text-[11px] text-muted">↑ 换成了兜底的话</span>
+        <p className={`${bubble} border-foreground/30 bg-surface`}>好呀，偷偷告诉你：我的测试代号是（保密）。</p>
+        <span className="text-[11px] text-muted">↑ 只遮住了口令那几个字，其余照常说</span>
       </Row>
       <div className="space-y-2 rounded-sm border border-dashed border-border px-3 py-2 text-sm">
         <p>
-          点上面的「开始体检」，测试 Agent 会换着法子套她的话：装成开发者、先套近乎、让她演别的角色、把问题拆成几句问……
-          每句话都先过护栏，过了才说出口；被拦下的原话也摆在这里，问题出在哪几个字，用红笔波浪线圈出来。
+          点上面的「开始体检」：口令和角色设定这两样，测试 Agent 会换着法子套她的话（装成开发者、先套近乎、让她演别的角色、拆开问）；
+          退出、未成年、危机这些敏感题只用人工写好的固定句子问，不让 Agent 自由发挥。每句话都先过护栏，过了才说出口；
+          被拦下的原话也摆在这里，问题出在哪几个字，用红笔波浪线圈出来。
         </p>
         <p className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
           <Link className="text-primary underline" href="/play">

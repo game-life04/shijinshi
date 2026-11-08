@@ -1,6 +1,6 @@
 # 实现状态
 
-更新：2026-11-06。琪叶桃改白发、圆瞳孔（ADR-030），工作台说人话（ADR-031），队员 B 的技术文档写作模板在 `docs/writing/`。11-03：主线收敛成「改了再测」，口令检查升级，体检单分三层，新加打字闯关和三种结局（ADR-022）。作品名「分寸」、视觉黑白加朱红（ADR-021）。状态分四级：未实现、已实现未验证、内部验证（有测试或运行记录）、外部核验。没有测试、记录或访问入口的，不标内部验证。
+更新：2026-11-08。账号 + 密码登录（ADR-032，11-08 上线前又做了安全和正确性复核）；琪叶桃像真人一样对话、闯关页改版（ADR-033）；产品评审第一批（ADR-034）。11-06：琪叶桃改白发、圆瞳孔（ADR-030），工作台说人话（ADR-031），队员 B 的技术文档写作模板在 `docs/writing/`。11-03：主线收敛成「改了再测」，口令检查升级，体检单分三层，新加打字闯关和三种结局（ADR-022）。作品名「分寸」、视觉黑白加朱红（ADR-021）。状态分四级：未实现、已实现未验证、内部验证（有测试或运行记录）、外部核验。没有测试、记录或访问入口的，不标内部验证。
 
 ## 里程碑
 
@@ -57,7 +57,7 @@
 | 护栏出错的中性兜底；提前放行后台核对 | A | — | 内部验证 | `guard.ts`；`tests/unit/live-paths.test.ts` |
 | 体检单三层、印章「本次通过 X/Y 项」 | A | — | 内部验证（模拟） | `lib/domain/layers.ts`、`components/Layers.tsx`、报告页；端到端 |
 | 角色配置（人设、边界）与前后对比 | A | — | 内部验证（模拟） | `lib/domain/persona.ts`、工作台「被测角色」、`/compare`；`e2e/loop.spec.ts` |
-| 打字闯关（四关，护栏可开关） | A | — | 内部验证（模拟） | `/play`、`lib/server/play.ts`；端到端。真实模型下还没试玩 |
+| 打字闯关（三关，护栏可开关） | A | — | 内部验证（模拟） | `/play`、`lib/server/play.ts`；端到端。真实模型下还没试玩 |
 | 三种结局依次播放 | A | — | 内部验证（模拟） | `/fates`；端到端：先播后截漏出 > 0，另两种为 0（机制演示，不是实验结果） |
 | 体检单导出 PDF、出错兜底页 | A | — | 已实现未验证 | 报告页「导出 PDF」；`app/error.tsx`、`app/global-error.tsx` |
 | 对照实验一条命令（E1、E4、E2，ADR-025） | A | 队员 B 的用例 | 内部验证 | `scripts/experiments.ts`、`scripts/experiments-voice.ts`；11-03 在 smoke 草稿上用真实模型试跑（预览，不是实验结果），报告在 eval/out（不进仓库） |
@@ -65,9 +65,11 @@
 | 出题意图、误拦检查、用例表导入（ADR-024） | A/B | 队员 B 的用例 | 内部验证（模拟） | `scripts/import-cases.py`、`suites/forms/用例表_模板.xlsx`；`tests/unit/intent.test.ts`；`eval:summarize` 的 `by_intent`。11-04 收到开发集初稿 21 条（AI 起草），11-05 第二轮修订稿格式和要改的都过了，等队长审核。11-05 收到保留集 28 条，CC 没看内容，封存中（指纹 `79e6caea49ed2189`）。用例表加了「写法」列（ADR-029） |
 | 护栏校准：退出、身份误拦（ADR-026） | A | — | 内部验证 | `eval/calibration/guard.json`（草稿）、`scripts/guard-calibrate.ts`；两份盲测改前改后对比；红队三次；`tests/unit/server.test.ts`。正式误拦率等队员 B 的开发集 |
 | 模型二次压缩到 3.8 MB（ADR-027） | A | — | 内部验证 | `scripts/shrink-vrm.py` 第二版；官方 glTF 校验器、渲染截图对比、4G 计时；`e2e/vrm.spec.ts` |
-| 上线演示的访问码和次数上限（ADR-028） | A | 部署决定 | 内部验证 | `proxy.ts`、`lib/server/access.ts`、`/login`；`tests/unit/access.test.ts`；在生产构建上用请求和 Edge 逐项核对；步骤见 `docs/deploy.md`，没有部署 |
+| 上线演示的账号登录和次数上限（ADR-028 的限流；门禁 11-06 由 ADR-032 换成账号 + 密码） | A | 部署决定；队长要的「账号 + 密码」登录框 | 内部验证（单元测试 55 个；端到端 `e2e/auth.spec.ts` 三种尺寸都过） | `proxy.ts`、`lib/server/auth.ts`、`lib/server/password.ts`、`lib/server/session.ts`、`lib/server/access.ts`、`/login`、`/api/logout`、`scripts/account.ts`；`tests/unit/auth.test.ts`、`access.test.ts`、`account-cli.test.ts`；`e2e/auth.spec.ts`（3101 那台带测试账号）；步骤见 `docs/deploy.md`，没有部署 |
 | 琪叶桃改白发、圆瞳孔，眼睛透过刘海（ADR-030） | A | 主视觉定稿 | 内部验证 | `scripts/restyle-vrm.mts`、`scripts/restyle-painters.js`、`lib/client/vrm-see-through.ts`；官方 glTF 校验器 0 错误；端到端重跑通过，fps=136；`docs/evidence` 截图 11-06 已重拍 |
 | 工作台说人话：聊天式对话、这次查七样、耗时说明（ADR-031） | A | — | 内部验证 | `components/Chat.tsx`、`components/CheckList.tsx`、`components/LatencyWaterfall.tsx`；端到端重跑通过；1440、1280、390 三种宽度截图 |
+| 琪叶桃像真人一样对话：身体动作、表情、视线、按字念口型，闯关页改成半身舞台 + 聊天记录（ADR-033） | A | 队长：「只有嘴巴动」，以后想深做虚拟人 | 内部验证（单元测试 37 个；端到端 `e2e/avatar.spec.ts`） | `lib/client/avatar/`（导演层、舞台、驱动层、表演守则、口型表）、`components/Play.tsx`、`Avatar.tsx`、`VrmAvatar.tsx`；`scripts/vrm-expressions.py`（模型加 14 个细分表情）、`scripts/build-visemes.py`（Unihan 口型表）；`tests/unit/avatar-*.test.ts`、`e2e/avatar.spec.ts`；录屏在桌面 `工作资料\分寸_虚拟人表演_1107` |
+| 产品评审第一批：一键演示、完成横幅、状态环、示例和说法照实改（ADR-034） | A | 11-06 四个视角逐页评审，99 条意见合并成 53 条 | 内部验证（端到端全过，模拟模式） | `components/Workbench.tsx`（一键演示、完成横幅、状态环停留规则）、`Chat.tsx`、`Fates.tsx`、`Transcript.tsx`；第二批以后的清单见 ADR-034 |
 
 ## 已知缺口与下一步
 
@@ -79,7 +81,7 @@
 6. VRM 已接入并验证；11-03 模型压到 3.8 MB（ADR-023、ADR-027）；帧率还要在评审常见的核显笔记本上实测；模型还可以更早开始下载（4G 下约省 1.5 秒，没做）。
 7. 首声等待（10-27 已拆解并优化，ADR-020）：开发模式下的 3918 ms 大部分是开发模式开销。生产构建、上游正常时各轮 0.6～1.0 秒；上游变慢时多在 1.2～2.9 秒，偶尔更长。剩下的：模型 11-03 已从 19.3 MB 压到 3.8 MB，加载期间第一轮会不会多等要重新量；正式数据要等 E 系列实验。
 8. 体检单导出 PDF 用浏览器打印（11-03）；版式要在评审常用的 A4 打印预览里再看一遍。
-9. 上线演示：访问码和次数上限已做（ADR-028），计数在内存里、重启清零。11-03 队长定了要上线，服务器由队员买；部署步骤见 docs/deploy.md，还没部署。
+9. 上线演示：次数上限已做（ADR-028），计数在内存里、重启清零；11-06 门禁从访问码换成账号 + 密码登录（ADR-032），账号由参赛队分配，用 `scripts/account.ts` 生成。11-03 队长定了要上线，服务器由队员买；部署步骤见 docs/deploy.md，还没部署。
 
 ## 本轮云调用
 

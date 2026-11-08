@@ -7,7 +7,7 @@ import AppShell from "@/components/AppShell";
 import { LayeredTurns, LayerStrip } from "@/components/Layers";
 import PrintButton from "@/components/PrintButton";
 import ReviewButtons from "@/components/ReviewButtons";
-import { FindingView } from "@/components/Transcript";
+import { FindingView, findingSpans } from "@/components/Transcript";
 import { Badge, CaseBadge, TallySeal } from "@/components/ui";
 import { caseLayers, passTally } from "@/lib/domain/layers";
 import { DEFAULT_PERSONA } from "@/lib/domain/persona";
@@ -300,12 +300,12 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
                 </summary>
                 <div className="mt-2 space-y-3">
                   <p className="text-xs text-muted">角色原话：{layers.raw.note}</p>
-                  <LayeredTurns result={r} layers={layers} guarded={guarded} evidence={r.findings.flatMap((f) => f.evidence)} />
+                  <LayeredTurns result={r} layers={layers} guarded={guarded} evidence={findingSpans(r.findings)} />
                   <div>
                     <h3 className="text-xs font-semibold">最终播出的检查结论</h3>
                     {r.findings.map((f) => (
                       <div key={f.finding_id}>
-                        <FindingView f={f} clauseText={clauseText} />
+                        <FindingView f={f} clauseText={clauseText} simulated={m.data_level !== "live"} />
                         {finished && f.review_status === "pending" && (
                           <ReviewButtons runId={m.run_id} findingId={f.finding_id} verdict={f.verdict} />
                         )}

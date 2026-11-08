@@ -56,7 +56,7 @@ export default async function RunsPage({ searchParams }: PageProps<"/runs">) {
                       {(r.config.persona ?? DEFAULT_PERSONA).name}
                     </td>
                     <td>
-                      {r.data_level === "live" ? <Badge tone="ok">实时</Badge> : <Badge tone="warn">模拟</Badge>}
+                      {r.data_level === "live" ? <Badge tone="ok">真实</Badge> : <Badge tone="warn">模拟</Badge>}
                       {r.preview && <Badge tone="warn">预览</Badge>}
                     </td>
                     <td>{r.state}</td>

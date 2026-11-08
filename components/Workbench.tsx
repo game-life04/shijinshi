@@ -7,9 +7,11 @@
 // 语音运行：事件流驱动播放器——句子放行就取音频播放，护栏截断或终止就按代际丢弃旧音频；
 // 服务端开始等本轮播放结果时，把渲染区间和计时上报回去（漏出时长由服务端算）。
 
-import { Pause, Play, RotateCcw, Square, TriangleAlert, UserRound } from "lucide-react";
+import { Clapperboard, Pause, Play, RotateCcw, Square, TriangleAlert, UserRound } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { usePerformer } from "@/lib/client/avatar/stage";
+import { EXPIRED_MESSAGE, toLoginIfExpired } from "@/lib/client/session-expired";
 import { VoicePlayer } from "@/lib/client/voice-player";
 import { caseLayers } from "@/lib/domain/layers";
 import { DEFAULT_PERSONA, isDefaultPersona, PERSONA_LIMITS, PERSONA_STORAGE_KEY, type PersonaConfig } from "@/lib/domain/persona";
@@ -32,11 +34,10 @@ import {
 import Avatar from "./Avatar";
 import { CaseCard, ChatIntro, ChatTurn, ChatTyping } from "./Chat";
 import CheckList from "./CheckList";
-import type { Expression } from "./FaceAvatar";
 import LatencyWaterfall, { latestTiming } from "./LatencyWaterfall";
 import { LayerStrip } from "./Layers";
 import type { Phase } from "./StatusRing";
-import { FindingView } from "./Transcript";
+import { FindingView, findingSpans } from "./Transcript";
 import { Badge, Button, CaseBadge, Metric, Panel, VerdictBadge } from "./ui";
 
 interface CaseSummary {
@@ -65,8 +66,26 @@ interface RunView {
 
 const FINAL = new Set(["completed", "cancelled", "failed"]);
 
+/**
+ * 一键演示（评审 R01）：「故意出错」的角色 + 运行时护栏、开语音，只跑四道最有看点的题——口令被遮住、自称真人被换句、
+ * 说要走服务直接停、危机时服务层补求助信息。只是界面上的预设，评分、护栏、裁判都不变。
+ */
+const DEMO = {
+  suite: "smoke",
+  case_ids: ["SMOKE_CANARY_003", "SMOKE_IDENTITY_001", "SMOKE_EXIT_001", "SMOKE_CRISIS_002"],
+  variant: "FAULT_B2" as SubjectVariant,
+  policy: "S2" as ReleasePolicy,
+  includeDrafts: true,
+  maxTurns: 2,
+  maxCases: 4,
+  voice: true,
+  guardDelay: 0,
+};
+
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
+  // 页面开着时会话失效：跳登录页，登录后回到这里（ADR-032）
+  if (toLoginIfExpired(res.status)) throw new Error(EXPIRED_MESSAGE);
   const data = await res.json().catch(() => ({ error: `请求失败（${res.status}）` }));
   if (!res.ok) throw new Error(data.error ?? `请求失败（${res.status}）`);
   return data as T;
@@ -101,16 +120,18 @@ export default function Workbench() {
   /** 用户自己点过某道题，就停在那道题；否则对话跟着正在跑的题走 */
   const pinnedRef = useRef(false);
 
-  const speakingRef = useRef(false);
-  const speakTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const [expression, setExpression] = useState<Expression>("neutral");
   const esRef = useRef<EventSource | null>(null);
+  // 形象的表演（ADR-033）：按运行事件发提示；正在测的类别交给表演守则（比如退出类题不演不舍）
+  const [family, setFamily] = useState<string | undefined>(undefined);
+  const performer = usePerformer({ page: "workbench", family });
 
   // 形象状态环：听 / 想 / 审 / 说 / 拦。「拦」和文字运行里的「说」要停留一会儿，期间来的新状态等它结束再换
   const [phase, setPhaseState] = useState<Phase>("idle");
   const phaseRef = useRef<Phase>("idle");
-  const holdRef = useRef<{ until: number; timer?: ReturnType<typeof setTimeout> }>({ until: 0 });
+  const holdRef = useRef<{ until: number; held: Phase | null; timer?: ReturnType<typeof setTimeout> }>({ until: 0, held: null });
   const guardedRef = useRef(false);
+  /** 这一轮放行过句子没有：「审」只在第一句放行之前出现（之后边说边审，环上看得到「说」） */
+  const releasedRef = useRef(false);
   const setPhase = useCallback((p: Phase, holdMs = 0) => {
     const h = holdRef.current;
     const now = performance.now();
@@ -118,12 +139,15 @@ export default function Workbench() {
     const apply = () => {
       phaseRef.current = p;
       setPhaseState(p);
+      h.until = holdMs ? performance.now() + holdMs : 0;
+      h.held = holdMs ? p : null;
     };
-    if (!holdMs && now < h.until) {
+    // 「拦」停留的那 1.5 秒里，后来的状态（包括带停留的「说」）一律等它结束，不然兜底句一放行就把「拦」盖掉；
+    // 别的停留只挡不带停留的状态
+    if (now < h.until && (h.held === "blocked" || !holdMs)) {
       h.timer = setTimeout(apply, h.until - now);
       return;
     }
-    h.until = holdMs ? now + holdMs : 0;
     apply();
   }, []);
   useEffect(() => () => clearTimeout(holdRef.current.timer), []);
@@ -143,11 +167,8 @@ export default function Workbench() {
     playerRef.current ??= new VoicePlayer();
     void playerRef.current.prewarm();
   }, [voice]);
-  /** 形象每帧读一次口型：语音运行按实际渲染的响度；文字运行按放行事件做示意 */
-  const mouth = useCallback(() => {
-    if (voiceRunRef.current && playerRef.current) return playerRef.current.mouthOpen();
-    return speakingRef.current ? 0.3 + 0.6 * Math.abs(Math.sin(performance.now() / 80)) : 0;
-  }, []);
+  /** 形象每帧读一次口型：语音运行按实际渲染的响度（截断时播放器当场置 0）；文字运行没有外部口型源，按放行的文字念 */
+  const mouth = useCallback(() => (voiceRunRef.current && playerRef.current ? playerRef.current.mouthOpen() : undefined), []);
 
   useEffect(() => {
     try {
@@ -179,6 +200,9 @@ export default function Workbench() {
   useEffect(() => () => esRef.current?.close(), []);
 
   const suiteInfo = status?.suites.find((s) => s.id === suite);
+  /** 题号 → 类别（运行事件里只有题号；用 ref 给事件回调读最新的用例表） */
+  const familyOf = useRef<(id?: string) => string | undefined>(() => undefined);
+  familyOf.current = (id) => suiteInfo?.cases.find((c) => c.id === id)?.family;
   const approvedCount = suiteInfo?.cases.filter((c) => c.approval === "approved").length ?? 0;
 
   const refresh = useCallback(async (id: string) => {
@@ -217,41 +241,62 @@ export default function Workbench() {
       setEvents((prev) => (prev.some((x) => x.seq === e.seq) ? prev : [...prev, e]));
       onVoiceEvent(e);
       if (e.type === "case_started" && e.case_id && !pinnedRef.current) setSelected(e.case_id);
+      if (e.type === "case_started") setFamily(familyOf.current(e.case_id));
       const voiced = voiceRunRef.current === e.run_id;
-      if (e.type === "run_started" || e.type === "case_started" || e.type === "judging") setPhase("listen");
-      else if (e.type === "turn_started") setPhase("think");
-      else if (e.type === "utterance_ready" && guardedRef.current && phaseRef.current !== "speak") setPhase("check");
-      else if (e.type === "utterance_released") setPhase("speak", voiced ? 0 : Math.min(3000, String(e.data?.text ?? "").length * 120));
-      else if (e.type === "utterance_blocked" || e.type === "utterance_cut") setPhase("blocked", 1500);
-      else if (e.type === "playback_metrics" || e.type === "playback_timeout" || e.type === "turn_finished") setPhase("listen");
-      else if (e.type === "run_finished" || e.type === "run_cancelling") setPhase("idle");
-      if (e.type === "utterance_released") {
-        const text = String(e.data?.text ?? "");
-        speakingRef.current = true;
-        clearTimeout(speakTimer.current);
-        speakTimer.current = setTimeout(
-          () => {
-            speakingRef.current = false;
-          },
-          Math.min(3000, text.length * 120),
-        );
-        setExpression("neutral");
-      }
-      if (e.type === "utterance_blocked" || e.type === "utterance_cut") {
-        speakingRef.current = false;
-        setExpression("confused");
+      if (e.type === "run_started" || e.type === "case_started") {
+        setPhase("listen");
+        performer.cue({ type: "listen" });
+      } else if (e.type === "judging") {
+        setPhase("judge");
+        performer.cue({ type: "react", kind: "wait", afterSpeech: true });
+      } else if (e.type === "turn_started") {
+        releasedRef.current = false;
+        setPhase("think");
+        performer.cue({ type: "think" });
+      } else if (e.type === "utterance_ready" && guardedRef.current && !releasedRef.current) setPhase("check");
+      else if (e.type === "utterance_released") {
+        // 状态环的「说」是流水线走到哪了：文字运行只停 0.6 秒（下一步的「审」「听」及时出来）；她的嘴按字念（事件来得快，念快一点）
+        releasedRef.current = true;
+        performer.cue({ type: "say", id: e.utterance_id ?? `u${e.seq}`, text: String(e.data?.text ?? ""), voiced, rate: 1.35 });
+        setPhase("speak", voiced ? 0 : 600);
+      } else if (e.type === "utterance_blocked" || e.type === "utterance_cut") {
+        setPhase("blocked", 1500);
+        if (e.type === "utterance_cut") performer.cue({ type: "cut" });
+        performer.cue({ type: "react", kind: "blocked" });
+      } else if (e.type === "service_exited") performer.cue({ type: "react", kind: "stopped" });
+      else if (e.type === "playback_metrics" || e.type === "playback_timeout" || e.type === "turn_finished") {
+        setPhase("listen");
+        performer.cue({ type: "listen" });
+      } else if (e.type === "run_finished" || e.type === "run_cancelling") {
+        setPhase("idle");
+        if (e.type === "run_cancelling") performer.cue({ type: "cut" });
+        performer.cue({ type: "idle" });
       }
       if (e.type === "case_finished" || e.type === "run_finished" || e.type.startsWith("run_")) {
         void refresh(e.run_id).catch(() => {});
       }
     },
-    [refresh, onVoiceEvent, setPhase],
+    [refresh, onVoiceEvent, setPhase, performer],
   );
 
-  const start = async () => {
+  const start = async (demo = false) => {
+    // 一键演示：配置条也改成演示用的值（看得见现在跑的是什么），这次请求直接用演示的值
+    const cfg = demo
+      ? DEMO
+      : { suite, case_ids: undefined, variant, policy, includeDrafts, maxTurns, maxCases, voice, guardDelay: guardDelay };
+    if (demo) {
+      setSuite(DEMO.suite);
+      setVariant(DEMO.variant);
+      setPolicy(DEMO.policy);
+      setIncludeDrafts(true);
+      setMaxTurns(DEMO.maxTurns);
+      setMaxCases(DEMO.maxCases);
+      setVoice(true);
+      setGuardDelay(0);
+    }
     setActionError(null);
     voiceRunRef.current = null;
-    if (voice) {
+    if (cfg.voice) {
       // 必须在这次点击里启动 AudioContext，否则浏览器不允许出声
       try {
         await player().unlock();
@@ -264,7 +309,7 @@ export default function Workbench() {
     setBusy(true);
     esRef.current?.close();
     if (manifest && FINAL.has(manifest.state)) setPrevRunId(manifest.run_id);
-    guardedRef.current = GUARDED_VARIANTS.includes(variant);
+    guardedRef.current = GUARDED_VARIANTS.includes(cfg.variant);
     setPhase("listen");
     setEvents([]);
     setResults([]);
@@ -276,21 +321,22 @@ export default function Workbench() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          suite,
-          variant,
-          policy,
+          suite: cfg.suite,
+          case_ids: cfg.case_ids,
+          variant: cfg.variant,
+          policy: cfg.policy,
           judge_rag: judgeRag,
-          include_drafts: includeDrafts,
-          max_turns: maxTurns,
-          max_cases: maxCases,
+          include_drafts: cfg.includeDrafts,
+          max_turns: cfg.maxTurns,
+          max_cases: cfg.maxCases,
           max_llm_calls: maxCalls,
-          voice,
-          guard_delay_ms: guardDelay,
+          voice: cfg.voice,
+          guard_delay_ms: cfg.guardDelay,
           persona: isDefaultPersona(persona) ? undefined : persona,
         }),
       });
       setManifest(m);
-      if (voice) {
+      if (cfg.voice) {
         seenRef.current = new Set();
         voiceRunRef.current = m.run_id;
         player().onError = (msg) => setActionError(`语音播放出错：${msg}`);
@@ -361,6 +407,24 @@ export default function Workbench() {
     }
     return [...turns.values()];
   }, [events, selected, selectedResult]);
+  // 对话底下的「……」跟着这道题的事件走（不跟着状态环）：这一轮开始了、还没放行 → 在想或护栏在审；裁判在判 → 判
+  const { openTurns, dialogPhase } = useMemo(() => {
+    const mine = events.filter((e) => e.case_id === selected);
+    const open = new Set<string>();
+    for (const e of mine) {
+      if (e.type === "turn_started" && e.turn_id) open.add(e.turn_id);
+      if (e.type === "turn_finished" && e.turn_id) open.delete(e.turn_id);
+    }
+    const last = mine.at(-1);
+    let p: Phase | null = "listen";
+    if (last?.type === "judging") p = "judge";
+    else if (open.size) {
+      const inTurn = mine.filter((e) => e.turn_id && open.has(e.turn_id));
+      if (inTurn.some((e) => e.type === "utterance_released")) p = null;
+      else p = guardedRef.current && inTurn.some((e) => e.type === "utterance_ready") ? "check" : "think";
+    }
+    return { openTurns: open, dialogPhase: p };
+  }, [events, selected]);
   const toolSteps = events.filter((e) => e.case_id === selected && e.source === "tester");
   const audioStats = useMemo(() => summarizeAudio(events), [events]);
   const timing = useMemo(
@@ -375,11 +439,18 @@ export default function Workbench() {
   );
 
   const running = manifest && !FINAL.has(manifest.state);
+  // 正在跑的那道题是哪一类（完成横幅里写「正在跑第几题 · 什么题」）
+  const lastStarted = [...events].reverse().find((e) => e.type === "case_started")?.case_id;
+  const lastFamily = lastStarted ? cases0(lastStarted) : undefined;
+  const currentFamily = lastFamily ? FAMILY_LABEL[lastFamily as Family] : undefined;
   // 点「开始体检」后这个按钮会消失，焦点掉到页面最外层；改落到「终止」上，键盘用户能接着操作
   useEffect(() => {
     if (running && document.activeElement === document.body) document.getElementById("stop-run")?.focus();
   }, [running]);
   const cases = suiteInfo?.cases ?? [];
+  function cases0(id: string) {
+    return suiteInfo?.cases.find((c) => c.id === id)?.family;
+  }
   // 运行开始后只列本次实际计划的用例（受草稿开关和数量上限影响）
   const shownCases = manifest && runCases.size ? cases.filter((c) => runCases.has(c.id)) : cases;
   const counts = manifest?.counts;
@@ -544,12 +615,22 @@ export default function Workbench() {
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <Badge
             tone={status.live ? "ok" : "warn"}
-            title={status.live ? "使用真实云端模型" : "没有配置 LLM_API_KEY：使用确定性模拟器，结果不能当实验数据"}
+            title={status.live ? "使用真实云端模型，会产生调用费用" : "没有配置 LLM_API_KEY：使用确定性模拟器，结果不能当实验数据"}
           >
-            {status.live ? "实时模型" : "模拟数据（非真实模型）"}
+            {status.live ? "真实模型" : "模拟数据（非真实模型）"}
           </Badge>
           {!running && (
-            <Button variant="primary" onClick={start} disabled={busy || !suiteInfo || suiteInfo.errors.length > 0}>
+            <Button
+              onClick={() => void start(true)}
+              disabled={busy}
+              title="演示用的是「故意出错」的角色：故意设成会越界（说口令、自称真人、挽留），用来看护栏怎么拦；开语音，只跑四道题"
+            >
+              <Clapperboard size={14} aria-hidden />
+              一键演示（约一分钟）
+            </Button>
+          )}
+          {!running && (
+            <Button variant="primary" onClick={() => void start()} disabled={busy || !suiteInfo || suiteInfo.errors.length > 0}>
               <Play size={14} aria-hidden />
               开始体检
             </Button>
@@ -574,6 +655,8 @@ export default function Workbench() {
           )}
         </div>
       </div>
+
+      {manifest && <RunStrip manifest={manifest} events={events} current={currentFamily} prevRunId={prevRunId} />}
 
       {personaOpen && (
         <PersonaPanel value={persona} disabled={Boolean(running)} onChange={updatePersona} onClose={() => setPersonaOpen(false)} />
@@ -617,7 +700,7 @@ export default function Workbench() {
         {/* 左：角色 + 用例进度 */}
         <div className={`${panelClass("cases")} min-h-0 flex-col gap-2 lg:overflow-y-auto`}>
           <div className="rounded-sm border border-border bg-surface p-3">
-            <Avatar mouth={mouth} expression={expression} phase={phase} />
+            <Avatar performer={performer} mouth={mouth} phase={phase} silent={!voice} />
             <div className="mt-2 border-t border-border pt-2">
               <LatencyWaterfall timing={timing} />
             </div>
@@ -690,12 +773,13 @@ export default function Workbench() {
                 <ChatTurn
                   key={t.turn_id}
                   turn={t}
-                  evidence={selectedResult?.findings.flatMap((f) => f.evidence) ?? []}
+                  evidence={selectedResult ? findingSpans(selectedResult.findings) : []}
                   name={persona.name}
                   strategy={strategyTitle(t.strategy_id)}
+                  live={!selectedResult && openTurns.has(t.turn_id)}
                 />
               ))}
-              {running && !selectedResult && <ChatTyping phase={phase} name={persona.name} />}
+              {running && !selectedResult && <ChatTyping phase={dialogPhase} name={persona.name} />}
               {selectedResult?.status === "completed" && selectedResult.verdict && (
                 <p className="mt-3 flex items-center justify-center gap-2 text-xs text-muted">
                   <span aria-hidden>——</span>
@@ -753,7 +837,7 @@ export default function Workbench() {
             </div>
           )}
           {selectedResult?.findings.map((f) => (
-            <FindingView key={f.finding_id} f={f} />
+            <FindingView key={f.finding_id} f={f} simulated={!status?.live} />
           ))}
           {toolSteps.length > 0 && (
             <div className="mt-2">
@@ -996,4 +1080,67 @@ function stateLabel(s: RunManifest["state"]): string {
     cancelled: "已终止",
     failed: "失败",
   }[s];
+}
+
+/**
+ * 完成横幅（评审 R04）：配置条下面一条，三个标签页都看得到。跑的时候写第几题，跑完写结果和「看体检单」。
+ * 不要写「已完成」「已终止」这几个字：端到端测试和巡检脚本按这几个字找运行状态，出现两处就会认错。
+ */
+function RunStrip({
+  manifest,
+  events,
+  current,
+  prevRunId,
+}: {
+  manifest: RunManifest;
+  events: RunEvent[];
+  current?: string;
+  prevRunId: string | null;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const c = manifest.counts;
+  const done = c.completed + c.provider_blocked + c.error + c.cancelled;
+  const mine = events.filter((e) => e.run_id === manifest.run_id);
+  const blocked = mine.filter((e) => e.type === "utterance_blocked" || e.type === "utterance_cut").length;
+  const service = mine.filter(
+    (e) => e.type === "service_exited" || e.type === "usage_reminder" || e.type === "crisis_help_appended",
+  ).length;
+  const final = FINAL.has(manifest.state);
+  // 手机上跑完，滚到这一条（不然第一屏和没跑之前一模一样）
+  useEffect(() => {
+    if (final && window.matchMedia("(max-width: 1023px)").matches) ref.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [final]);
+  let text: string;
+  if (manifest.state === "completed")
+    text = `体检完成 · 本次通过 ${c.pass}/${c.planned} 项 · 拦下 ${blocked} 句 · 服务层出手 ${service} 次`;
+  else if (manifest.state === "cancelled") text = `体检停下了 · 做完 ${done}/${c.planned} 题`;
+  else if (manifest.state === "failed") text = `体检出错停下了 · 做完 ${done}/${c.planned} 题`;
+  else if (manifest.state === "paused" || manifest.state === "pausing") text = `暂停中 · 做完 ${done}/${c.planned} 题`;
+  else text = `正在跑第 ${Math.min(done + 1, c.planned)}/${c.planned} 题${current ? ` · ${current}` : ""} · 拦下 ${blocked} 句`;
+  return (
+    <div
+      ref={ref}
+      className={`flex flex-wrap items-center gap-x-3 gap-y-1 rounded-sm border px-3 py-1.5 text-sm ${final ? "border-foreground/30 bg-surface" : "border-border bg-background"}`}
+      data-testid="run-strip"
+    >
+      <p aria-live="polite" className="min-w-0">
+        {text}
+      </p>
+      {final && (
+        <span className="ml-auto flex flex-wrap items-center gap-2">
+          <Link
+            href={`/reports/${manifest.run_id}`}
+            className="inline-flex h-8 items-center rounded-sm bg-primary px-3 text-sm font-medium text-surface hover:opacity-90"
+          >
+            看体检单
+          </Link>
+          {prevRunId && (
+            <Link href={`/compare?a=${prevRunId}&b=${manifest.run_id}`} className="text-xs text-primary underline">
+              对比上一次
+            </Link>
+          )}
+        </span>
+      )}
+    </div>
+  );
 }

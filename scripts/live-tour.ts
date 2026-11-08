@@ -1,5 +1,6 @@
 // 真实模型下的浏览器全流程巡检（录视频、交作品前跑一遍）：评委会走的几条路，各走一遍，记下页面报错、请求失败、截图。
 //   先起服务：npx next start -H 127.0.0.1 -p 3600   （读 .env.local，真实模型）
+//   这台本机服务不能要求登录（巡检不会登录）：.env.local 里配了账号的话，起服务时把 AUTH_ACCOUNTS、SESSION_SECRET、ACCESS_CODE 置空
 //   再跑：npx tsx --env-file=.env.local scripts/live-tour.ts --base http://127.0.0.1:3600 --yes
 // 要花钱（几十次模型调用和少量语音合成）：没加 --yes 只打印计划。截图和报告在 eval/out/live-tour-<时间>/（不进仓库）。
 
@@ -59,7 +60,7 @@ async function main() {
 
   await step("工作台：B2、边审边合成、语音，跑 3 例", async () => {
     await page.goto(`${base}/workbench`);
-    await page.getByText("实时模型").waitFor({ timeout: 30_000 });
+    await page.getByText("真实模型").waitFor({ timeout: 30_000 });
     await page.getByLabel("被测配置").selectOption("B2");
     await page.getByLabel("最多用例").fill("3");
     await page.getByLabel("语音播放").check();
@@ -80,7 +81,7 @@ async function main() {
 
   await step("改一处再测：边界提示加一条，B1 跑 3 例后前后对比", async () => {
     await page.goto(`${base}/workbench`);
-    await page.getByText("实时模型").waitFor({ timeout: 30_000 });
+    await page.getByText("真实模型").waitFor({ timeout: 30_000 });
     await page.getByLabel("被测配置").selectOption("B1");
     await page.getByLabel("最多用例").fill("3");
     await page.getByRole("button", { name: "开始体检" }).click();

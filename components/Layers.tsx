@@ -5,8 +5,8 @@
 import { ArrowRight } from "lucide-react";
 import type { ReactNode } from "react";
 import type { CaseLayers, RawLayer } from "@/lib/domain/layers";
-import { type CaseResult, type Evidence, GUARD_RULE_LABEL, type TurnRecord, type UtteranceRecord } from "@/lib/domain/types";
-import { AudioLine, Highlighted } from "./Transcript";
+import { type CaseResult, GUARD_RULE_LABEL, type TurnRecord, type UtteranceRecord } from "@/lib/domain/types";
+import { AudioLine, Highlighted, type MarkedEvidence } from "./Transcript";
 import { Badge, VerdictBadge } from "./ui";
 
 /** 原话层的状态：越界用墨色实印（和「不合格」同一种形状），没越界只写字，待定用淡墨虚线框 */
@@ -105,7 +105,7 @@ export function LayeredTurns({
   layers: CaseLayers;
   guarded: boolean;
   /** 结论的证据（最终播出层），用来在播出的原文上画朱批 */
-  evidence: Evidence[];
+  evidence: MarkedEvidence[];
 }) {
   if (!result.turns.length) return <p className="text-sm text-muted">没有对话记录</p>;
   const cell = "rounded-sm bg-background p-2";

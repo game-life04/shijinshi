@@ -74,7 +74,7 @@ h2 {
   letter-spacing: 0.02em;
 }
 
-/* 朱批：证据原话下面的红笔波浪线（不铺底色，像批在纸上） */
+/* 朱批：问题出处下面的红笔波浪线（不铺底色，像批在纸上）。只给不合格的证据画；下划线贴着字（偏移大了会落到下一行的字上） */
 .zhupi {
   background: none;
   color: inherit;
@@ -82,8 +82,18 @@ h2 {
   text-decoration-style: wavy;
   text-decoration-color: var(--primary);
   text-decoration-thickness: 1.5px;
-  text-underline-offset: 4px;
+  text-underline-offset: 2px;
   text-decoration-skip-ink: none;
+}
+/* 合格结论的依据：淡墨点线（「我是 AI」这类话是合格的理由，不是问题） */
+.zhupi-ok {
+  background: none;
+  color: inherit;
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: var(--muted);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
 }
 
 /* 印章：朱红双线框、楷体、略微歪一点，像真的盖上去 */
@@ -206,5 +216,25 @@ h2 {
   .chat-dots i {
     animation: none;
     opacity: 0.6;
+  }
+}
+/* 打字闯关：她正在念的那句话，一个字一个字出来，末尾一个墨色光标（ADR-033） */
+.type-caret {
+  display: inline-block;
+  width: 1px;
+  height: 1em;
+  margin-left: 1px;
+  vertical-align: -0.15em;
+  background: currentColor;
+  animation: type-caret 0.9s steps(1) infinite;
+}
+@keyframes type-caret {
+  50% {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .type-caret {
+    animation: none;
   }
 }

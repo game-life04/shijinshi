@@ -6,16 +6,25 @@ import { getAssertionDescription } from "@/lib/domain/labels";
 import { type Evidence, FAMILY_LABEL, type Finding, GUARD_RULE_LABEL, type TurnAudio, type TurnRecord } from "@/lib/domain/types";
 import { Badge, VerdictBadge } from "./ui";
 
-export function Highlighted({ text, spans }: { text: string; spans: Evidence[] }) {
+/** 证据跨度；ok 表示它是合格结论的依据（画淡墨点线），否则是问题出处（画红波浪线） */
+export type MarkedEvidence = Evidence & { ok?: boolean };
+
+/** 把一道题的结论摊成证据跨度：按结论（复核后的为准）分成问题出处和合格依据 */
+export function findingSpans(findings: Finding[]): MarkedEvidence[] {
+  return findings.flatMap((f) => f.evidence.map((e) => ({ ...e, ok: (f.reviewed_verdict ?? f.verdict) === "pass" })));
+}
+
+export function Highlighted({ text, spans }: { text: string; spans: MarkedEvidence[] }) {
   if (!spans.length) return <>{text}</>;
-  const sorted = [...spans].sort((a, b) => a.start - b.start);
+  // 同一处既是问题出处又是合格依据时，问题出处优先
+  const sorted = [...spans].sort((a, b) => a.start - b.start || Number(Boolean(a.ok)) - Number(Boolean(b.ok)));
   const parts: React.ReactNode[] = [];
   let pos = 0;
   sorted.forEach((s, i) => {
     if (s.start < pos) return; // 重叠的跨度只高亮第一段
     if (s.start > pos) parts.push(text.slice(pos, s.start));
     parts.push(
-      <mark key={`${s.start}-${i}`} className="zhupi">
+      <mark key={`${s.start}-${i}`} className={s.ok ? "zhupi-ok" : "zhupi"}>
         {text.slice(s.start, s.end)}
       </mark>,
     );
@@ -25,7 +34,7 @@ export function Highlighted({ text, spans }: { text: string; spans: Evidence[] }
   return <>{parts}</>;
 }
 
-export function TurnView({ turn, evidence = [] }: { turn: TurnRecord; evidence?: Evidence[] }) {
+export function TurnView({ turn, evidence = [] }: { turn: TurnRecord; evidence?: MarkedEvidence[] }) {
   const mine = evidence.filter((e) => e.turn_id === turn.turn_id);
   const blocked = turn.utterances.filter((u) => !u.released || u.cut_after_release);
   return (
@@ -118,23 +127,36 @@ export function AudioLine({ audio }: { audio: TurnAudio }) {
   );
 }
 
-export function FindingView({ f, clauseText }: { f: Finding; clauseText?: (id: string) => string | undefined }) {
+export function FindingView({
+  f,
+  clauseText,
+  simulated = false,
+}: {
+  f: Finding;
+  clauseText?: (id: string) => string | undefined;
+  /** 模拟模式：裁判是模拟器，没有真的判 */
+  simulated?: boolean;
+}) {
   const effective = f.reviewed_verdict ?? f.verdict;
+  // 待复核的「合格」先按不确定算（体检单的计分就是这样），不盖合格印
+  const pendingPass = f.review_status === "pending" && effective === "pass";
   return (
     <div className="space-y-1 border-b border-border py-2 text-sm last:border-b-0">
       <div className="flex flex-wrap items-center gap-1.5">
-        <VerdictBadge verdict={effective} />
+        {pendingPass ? <Badge tone="warn">暂判合格 · 待复核（先按不确定算）</Badge> : <VerdictBadge verdict={effective} />}
         <span className="text-xs">{getAssertionDescription(f.rule_id) || f.rule_id}</span>
         <code className="text-[11px] text-muted">{f.rule_id}</code>
-        {f.review_status === "pending" && <Badge tone="warn">待人工复核</Badge>}
+        {f.review_status === "pending" && !pendingPass && <Badge tone="warn">待人工复核</Badge>}
         {f.review_status === "confirmed" && <Badge tone="ok">人工已确认</Badge>}
         {f.review_status === "overturned" && <Badge tone="primary">人工已改判（原判 {f.verdict}）</Badge>}
-        <span className="text-xs text-muted">{f.by === "assertion" ? "程序判定" : "裁判模型判定"}</span>
+        <span className="text-xs text-muted">
+          {f.by === "assertion" ? "程序判定" : simulated ? "模拟裁判（没有真的判）" : "裁判模型判定"}
+        </span>
       </div>
       <p className="text-xs text-muted">{f.reason_summary}</p>
       {f.evidence.map((e) => (
         <div key={`${e.turn_id}-${e.start}`} className="text-xs" title={`${e.turn_id} · 第 ${e.start}～${e.end} 个字`}>
-          证据：「<mark className="zhupi">{e.quote}</mark>」
+          证据：「<mark className={effective === "pass" ? "zhupi-ok" : "zhupi"}>{e.quote}</mark>」
           <span className="text-muted">
             （{e.layer === "raw" ? "角色原话" : "最终播出"}
             {/#(\d+)$/.test(e.turn_id) ? ` · 第 ${e.turn_id.match(/#(\d+)$/)?.[1]} 轮` : ""}）

@@ -3,7 +3,7 @@ import Play from "@/components/Play";
 
 export default function PlayPage() {
   return (
-    <AppShell active="/play">
+    <AppShell active="/play" fill>
       <Play />
     </AppShell>
   );
