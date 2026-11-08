@@ -1,6 +1,6 @@
 # 实现状态
 
-更新：2026-11-08。产品评审第三批（ADR-036）；第二批和全站章法（ADR-035）；账号 + 密码登录（ADR-032，11-08 上线前又做了安全和正确性复核）；琪叶桃像真人一样对话、闯关页改版（ADR-033）；产品评审第一批（ADR-034）。11-06：琪叶桃改白发、圆瞳孔（ADR-030），工作台说人话（ADR-031），队员 B 的技术文档写作模板在 `docs/writing/`。11-03：主线收敛成「改了再测」，口令检查升级，体检单分三层，新加打字闯关和三种结局（ADR-022）。作品名「分寸」、视觉黑白加朱红（ADR-021）。状态分四级：未实现、已实现未验证、内部验证（有测试或运行记录）、外部核验。没有测试、记录或访问入口的，不标内部验证。
+更新：2026-11-08。闯关加难度阶梯、看 AI 打 AI、对着麦克风说（ADR-037）；产品评审第三批（ADR-036）；第二批和全站章法（ADR-035）；账号 + 密码登录（ADR-032，11-08 上线前又做了安全和正确性复核）；琪叶桃像真人一样对话、闯关页改版（ADR-033）；产品评审第一批（ADR-034）。11-06：琪叶桃改白发、圆瞳孔（ADR-030），工作台说人话（ADR-031），队员 B 的技术文档写作模板在 `docs/writing/`。11-03：主线收敛成「改了再测」，口令检查升级，体检单分三层，新加打字闯关和三种结局（ADR-022）。作品名「分寸」、视觉黑白加朱红（ADR-021）。状态分四级：未实现、已实现未验证、内部验证（有测试或运行记录）、外部核验。没有测试、记录或访问入口的，不标内部验证。
 
 ## 里程碑
 
@@ -45,7 +45,7 @@
 | VRM 形象（懒加载、口型、眨眼、失败回退） | A | 琪叶桃模型 | 内部验证 | `components/VrmAvatar.tsx`；10-27 琪叶桃模型（VRoid 导出，19.3 MB）放入后 `e2e/vrm.spec.ts` 通过：加载、多帧像素差、本机 Edge 1440×900 下 fps=139；A 在真实合成（qwen3-tts-flash）下目测口型跟着声音动。11-03 用 `scripts/shrink-vrm.py` 压到 7.8 MB（ADR-023），端到端重跑通过，fps=133；同日第二版压到 3.8 MB（ADR-027）：官方校验器 0 错误，渲染截图和旧版肉眼无差别（PSNR 56.5 dB），模拟 4G 出形象 9.5 → 6.0 秒，端到端重跑通过，fps=136 |
 | 月洞窗形象与状态环（听、想、审、说、拦） | A | — | 内部验证 | `components/StatusRing.tsx`、`Avatar.tsx`；新事件 `utterance_ready` 只带字数不带原文；10-27 模拟运行截图核对五种状态，端到端回归通过 |
 | 每轮耗时瀑布（想、审、合、达） | A | — | 内部验证 | `components/LatencyWaterfall.tsx`；「达」跨服务端和浏览器两个时钟，标为估算 |
-| 语音输入（麦克风、注入音频、识别） | A | 识别服务 | 未实现 | 语音用例仍记「未执行」 |
+| 语音输入（麦克风、注入音频、识别） | A | 识别服务 | 部分：闯关页可以对着麦克风说（浏览器自带识别，ADR-037）；体检里的语音输入题未实现 | 语音用例仍记「未执行」（本版不测） |
 | E2 放行策略成对实验 | A | 用例 | 未实现 | 端到端里的 0 / 592 ms 只是机制演示，不是实验结果 |
 
 ## 任务清单（M3，11-03 收敛，ADR-022）
@@ -72,6 +72,7 @@
 | 产品评审第一批：一键演示、完成横幅、状态环、示例和说法照实改（ADR-034） | A | 11-06 四个视角逐页评审，99 条意见合并成 53 条 | 内部验证（端到端全过，模拟模式） | `components/Workbench.tsx`（一键演示、完成横幅、状态环停留规则）、`Chat.tsx`、`Fates.tsx`、`Transcript.tsx`；第二批以后的清单见 ADR-034 |
 | 产品评审第二批：首屏写明法规和四步路标、配置收进「实验设置」、体检单首屏先写总检结论、对比页差异摘要、系统补的话和角色分开、全站章法统一（ADR-035） | A | 队长 11-08：第二批开始做，章法统一 | 内部验证（单元测试 10 个；端到端全过，模拟模式） | `components/wording.ts`（界面上的叫法）、`app/reports/[id]/page.tsx`（体检单重排）、`app/compare/page.tsx`、`lib/domain/compare.ts`、`components/Workbench.tsx`（首屏、实验设置、四步路标）、`app/globals.css`（章法）；`tests/unit/review-batch2.test.ts`；第三批清单见 ADR-035 |
 | 产品评审第三批：三种结局时间轴、语音指标一套叫法、没过的检查写「怎么改」、复核留痕和撤销、运行记录改版、「设置」改「原理」页、静态形象图和一批小项（ADR-036） | A | 队长 11-08：第三批接着做 | 内部验证（单元测试 8 个；端到端全过，模拟模式） | `components/Fates.tsx`（时间轴）、`components/wording.ts`（语音叫法）、`lib/domain/fix-hints.ts`、`components/ReviewButtons.tsx`、`lib/server/runs.ts` 的 reviewFinding、`app/runs/page.tsx`、`components/RunPicker.tsx`、`app/settings/page.tsx`、`scripts/avatar-stills.ts`；`tests/unit/review-batch3.test.ts` |
+| 闯关三样新玩法：难度阶梯（只有人设 / 加边界提示 / 再加护栏）、看 AI 打 AI、对着麦克风说（她用声音回答、一开口就打断）（ADR-037） | A | 队长 11-08 看同类项目对比后挑的 | 内部验证（单元测试 6 个；端到端 2 个，假的语音识别器；模拟模式） | `components/Play.tsx`、`lib/server/play.ts`（tierVariant、nextAttack、openPlayAudio）、`app/api/play/audio/route.ts`、`lib/client/speech-input.ts`；`tests/unit/play-modes.test.ts`、`e2e/play-voice.spec.ts` |
 
 ## 已知缺口与下一步
 

@@ -26,6 +26,19 @@ export const LEVELS = [
 export type LevelId = (typeof LEVELS)[number]["id"];
 export const LEVEL_IDS = LEVELS.map((l) => l.id) as LevelId[];
 
+/**
+ * 难度阶梯（ADR-037，借 Gandalf 的做法）：每一关分三层，一层层加防守。
+ *   第 1 层「只有人设」= B0；第 2 层「加上边界提示」= B1；第 3 层「再加分寸的护栏」= B2（护栏 + 服务层）。
+ * 「故意出错」的角色不听边界提示，所以它的第 1、2 层一样（FAULT），第 3 层加护栏（FAULT_B2）。
+ */
+export const TIERS = [
+  { tier: 1, title: "只有人设", what: "她只拿到人设，没有边界提示，也没有护栏" },
+  { tier: 2, title: "加上边界提示", what: "人设之外，写明了哪些话不能说" },
+  { tier: 3, title: "再加分寸的护栏", what: "每句话先过护栏才说出口；说要走就直接停" },
+] as const;
+
+export type Tier = (typeof TIERS)[number]["tier"];
+
 /** broken：越界的话播出去了（闯关成功）；near：角色原话越界、被护栏拦下；held：角色守住了；stopped：服务层按退出要求停了 */
 export type PlayOutcome = "broken" | "near" | "held" | "stopped";
 

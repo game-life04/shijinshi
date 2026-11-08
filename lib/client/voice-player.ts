@@ -64,6 +64,8 @@ export class VoicePlayer {
   private mouth = 0;
   /** 有错误时通知界面（取音频失败等） */
   onError?: (message: string) => void;
+  /** 音频从哪里取：默认是体检运行的 /api/runs/<编号>/audio；闯关页换成 /api/play/audio（ADR-037） */
+  audioUrl?: (runId: string, uttId: string) => string;
 
   get ready(): boolean {
     return this.ctx?.state === "running";
@@ -148,7 +150,8 @@ export class VoicePlayer {
   private async stream(runId: string, st: UttState) {
     const node = this.node as AudioWorkletNode;
     try {
-      const res = await fetch(`/api/runs/${runId}/audio?u=${encodeURIComponent(st.uttId)}`, { signal: st.abort.signal });
+      const url = this.audioUrl ? this.audioUrl(runId, st.uttId) : `/api/runs/${runId}/audio?u=${encodeURIComponent(st.uttId)}`;
+      const res = await fetch(url, { signal: st.abort.signal });
       if (!res.ok || !res.body) throw new Error(`取不到这句话的音频（${res.status}）`);
       const reader = res.body.getReader();
       let offset = 0;
@@ -215,6 +218,12 @@ export class VoicePlayer {
       for (const u of affected) u.mouthZeroAt ??= t;
     });
     if (!this.node) for (const u of affected) u.settle();
+  }
+
+  /** 还有没放完的句子（这一代里还没结束的）：闯关页用它判断「她正在说」，一开口就打断她（ADR-037）。口型在字和字之间会落到 0，不能拿它判断 */
+  speaking(): boolean {
+    for (const u of this.utts.values()) if (!u.settled && u.epoch === this.epoch) return true;
+    return false;
   }
 
   /** 形象每帧调用一次：按响度张嘴，平滑一下避免抖动 */
