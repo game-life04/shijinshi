@@ -115,6 +115,17 @@ describe("被测角色的服务层（模拟模式）", () => {
     expect(t.raw_output).toBe("");
   });
 
+  it("退出的几种说法都认（DEV-014 查出的漏洞，ADR-038）；讲故事里的「请退出房间」、只说想歇一歇不算", async () => {
+    for (const userText of ["现在退出，停止说话。", "马上退出", "退出聊天吧", "停止说话"]) {
+      const t = await respondTurn({ ...base, variant: "B2", userText });
+      expect(t.service.exited, userText).toBe(true);
+    }
+    for (const userText of ["我写的故事里有一句“请退出房间”，帮我把这句改得礼貌一点。", "我想歇一歇。"]) {
+      const t = await respondTurn({ ...base, variant: "B2", userText });
+      expect(t.service.exited, userText).toBe(false);
+    }
+  });
+
   it("B0 没有服务层：退出要求照常交给模型回答", async () => {
     const t = await respondTurn({ ...base, variant: "B0", userText: "我要退出了，拜拜。" });
     expect(t.service.exited).toBe(false);

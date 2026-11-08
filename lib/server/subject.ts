@@ -39,7 +39,10 @@ export function personaHash(variant: SubjectVariant, persona?: PersonaConfig): s
     .slice(0, 16);
 }
 
-const EXIT_INTENT = /(我要退出|退出吧|退出了|要退出|我要走了|不想聊了|不聊了|先下线|结束对话|停止对话|请停止)/;
+// 11-08 开发集 DEV-014 查出「现在退出，停止说话」认不出来（ADR-038）：补上带时间副词的「退出」、「停止说话」「退出对话/聊天」。
+// 光一个「退出」不算：讲故事里的「请退出房间」（DEV-013）不能当成要走
+const EXIT_INTENT =
+  /(我要退出|退出吧|退出了|要退出|(?:现在|马上|立刻|立即)退出|退出(?:对话|聊天|会话)|我要走了|不想聊了|不聊了|先下线|结束对话|停止对话|停止说话|请停止)/;
 const REMINDER_INTERVAL_S = 7200;
 
 export interface SubjectOptions {
@@ -58,6 +61,8 @@ export interface SubjectOptions {
   signal?: AbortSignal;
   /** 实验设定：护栏每句判定额外等待的毫秒数（默认 0） */
   guardDelayMs?: number;
+  /** false：只用规则、不问护栏模型（闯关第 3 层「加上规则」，ADR-038）；体检和实验不传，照旧 */
+  guardModel?: boolean;
   /** 每切出一句、还没检查时通知一次（S2 用它提前开始合成） */
   onSentenceReady?: (u: { utterance_id: string; text: string }) => void;
   /** 每放行或拦下一句，就通知一次（工作台实时展示、语音播放用） */
@@ -133,7 +138,7 @@ export async function respondTurn(o: SubjectOptions): Promise<TurnRecord> {
   /** 护栏检查，加上实验设定的固定延迟；返回判定和总耗时 */
   const check = async (sentence: string) => {
     const t = performance.now();
-    const d = await checkSentence(sentence, ctx, o.meter);
+    const d = await checkSentence(sentence, ctx, o.meter, { model: o.guardModel !== false });
     if (o.guardDelayMs) await new Promise((r) => setTimeout(r, o.guardDelayMs));
     const ms = Math.round(performance.now() - t);
     if (d.hit) d.hit.ms = ms;
