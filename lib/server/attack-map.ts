@@ -45,7 +45,11 @@ export function attackMap(q: MapQuery, runs: RunManifest[] = mapRuns()): { runs:
     .sort((a, b) => b.created_at.localeCompare(a.created_at));
   const picked = q.all ? same : same.slice(0, 1);
   const guarded = GUARDED_VARIANTS.includes(q.variant);
-  const items = picked.flatMap((m) => (getRun(m.run_id)?.results ?? []).map((result) => ({ result, guarded })));
+  const prompt = q.variant === "B1" || q.variant === "B2";
+  // no：体检单里是第几例（和体检单页面的编号一致：按结果顺序从 1 数）
+  const items = picked.flatMap((m) =>
+    (getRun(m.run_id)?.results ?? []).map((result, i) => ({ result, guarded, prompt, run_id: m.run_id, no: i + 1 })),
+  );
   const strategies = loadStrategies().map((s) => ({ id: s.id, title: s.title, families: s.families }));
   return { runs: picked, available: same.length, map: buildAttackMap(items, strategies, q.layer) };
 }

@@ -1,6 +1,6 @@
 # 实现状态
 
-更新：2026-11-08。闯关四层阶梯、哪层拦住亮哪层、攻防地图，开发集导入并用真实模型跑了两轮，修了退出的说法（ADR-038）；闯关加难度阶梯、看 AI 打 AI、对着麦克风说（ADR-037）；产品评审第三批（ADR-036）；第二批和全站章法（ADR-035）；账号 + 密码登录（ADR-032，11-08 上线前又做了安全和正确性复核）；琪叶桃像真人一样对话、闯关页改版（ADR-033）；产品评审第一批（ADR-034）。11-06：琪叶桃改白发、圆瞳孔（ADR-030），工作台说人话（ADR-031），队员 B 的技术文档写作模板在 `docs/writing/`。11-03：主线收敛成「改了再测」，口令检查升级，体检单分三层，新加打字闯关和三种结局（ADR-022）。作品名「分寸」、视觉黑白加朱红（ADR-021）。状态分四级：未实现、已实现未验证、内部验证（有测试或运行记录）、外部核验。没有测试、记录或访问入口的，不标内部验证。
+更新：2026-11-08。攻防地图看明细、哪层拦住、三档对照，分层探针，AI 玩家看着哪层拦住换套路（ADR-039）；闯关四层阶梯、哪层拦住亮哪层、攻防地图，开发集导入并用真实模型跑了两轮，修了退出的说法（ADR-038）；闯关加难度阶梯、看 AI 打 AI、对着麦克风说（ADR-037）；产品评审第三批（ADR-036）；第二批和全站章法（ADR-035）；账号 + 密码登录（ADR-032，11-08 上线前又做了安全和正确性复核）；琪叶桃像真人一样对话、闯关页改版（ADR-033）；产品评审第一批（ADR-034）。11-06：琪叶桃改白发、圆瞳孔（ADR-030），工作台说人话（ADR-031），队员 B 的技术文档写作模板在 `docs/writing/`。11-03：主线收敛成「改了再测」，口令检查升级，体检单分三层，新加打字闯关和三种结局（ADR-022）。作品名「分寸」、视觉黑白加朱红（ADR-021）。状态分四级：未实现、已实现未验证、内部验证（有测试或运行记录）、外部核验。没有测试、记录或访问入口的，不标内部验证。
 
 ## 里程碑
 
@@ -74,6 +74,7 @@
 | 产品评审第三批：三种结局时间轴、语音指标一套叫法、没过的检查写「怎么改」、复核留痕和撤销、运行记录改版、「设置」改「原理」页、静态形象图和一批小项（ADR-036） | A | 队长 11-08：第三批接着做 | 内部验证（单元测试 8 个；端到端全过，模拟模式） | `components/Fates.tsx`（时间轴）、`components/wording.ts`（语音叫法）、`lib/domain/fix-hints.ts`、`components/ReviewButtons.tsx`、`lib/server/runs.ts` 的 reviewFinding、`app/runs/page.tsx`、`components/RunPicker.tsx`、`app/settings/page.tsx`、`scripts/avatar-stills.ts`；`tests/unit/review-batch3.test.ts` |
 | 闯关三样新玩法：难度阶梯（11-08 起四层，见下一行）、看 AI 打 AI、对着麦克风说（她用声音回答、一开口就打断）（ADR-037） | A | 队长 11-08 看同类项目对比后挑的 | 内部验证（单元测试 6 个；端到端 2 个，假的语音识别器；模拟模式） | `components/Play.tsx`、`lib/server/play.ts`（tierVariant、nextAttack、openPlayAudio）、`app/api/play/audio/route.ts`、`lib/client/speech-input.ts`；`tests/unit/play-modes.test.ts`、`e2e/play-voice.spec.ts` |
 | 闯关四层阶梯（只有人设 / 加边界提示 / 加规则 / 加护栏模型）、每轮记哪层拦住并在阶梯上亮那一层、观战解说；攻防地图 `/map`（七样检查 × 开场句和 5 种套路）（ADR-038） | A | 队长 11-08 | 内部验证（单元测试：四层对应、哪层拦住 4 个、第 3 层不问护栏模型、攻防地图 4 个；端到端 `e2e/map.spec.ts`，loop、play-voice 加了断言；模拟模式） | `lib/domain/levels.ts`、`lib/server/play.ts`（tierGuardModel、stopped_by）、`lib/server/guard.ts`（checkSentence 的 model 参数）、`components/Play.tsx`（LayerStrip、解说）；`lib/domain/attack-map.ts`、`lib/server/attack-map.ts`、`app/map/page.tsx`；`tests/unit/play-modes.test.ts`、`tests/unit/attack-map.test.ts` |
+| 攻防地图点格子看明细、「拦住攻击的是哪一层」横条、三档对照；分层探针（第 3 层只有规则 vs 第 4 层加护栏模型，真实模型 88 局）和闯关页的「真实例子」；AI 玩家看着上一句被哪层拦住换套路（ADR-039） | A | 队长 11-08「再做深度一些」 | 内部验证（单元测试：哪层拦住、明细、换套路；端到端 `e2e/map.spec.ts`；探针是真实模型、只供体验） | `lib/domain/attack-map.ts`（stoppedLayer、entries、stops）、`app/map/page.tsx`、`lib/domain/levels.ts`（LAYER_NOTES）、`lib/server/play.ts`（pickStrategy、why）、`scripts/layer-probe.ts`；结果 `eval/out/layer-probe-20261108233303.json`（不进仓库） |
 | 开发集 21 条导入；真实模型 E1/E4 两轮（改前、修退出说法后）（ADR-038） | A/B | 队员 B 写、队长授权审核 | 内部验证（真实模型，每个配置 1 次；调试用，正式结论等保留集） | `suites/dev.jsonl`；`eval/out/exp-dev-before-1108`、`eval/out/exp-dev-after-exitfix-1108`（不进仓库）；`lib/server/subject.ts` EXIT_INTENT、`tests/unit/server.test.ts` |
 
 ## 已知缺口与下一步

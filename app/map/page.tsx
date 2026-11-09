@@ -1,13 +1,17 @@
 // 攻防地图（ADR-038，借 promptfoo 风险报告的做法）：竖着是七样检查，横着是怎么攻（开场句 + 登记的 5 种套路），
 // 每格「攻破几次 / 试了几次」，越深攻破得越多；最右一列是正常题被误拦了几次（太冷也是失分寸）。
 // 数据全部来自已经跑完的运行记录（lib/server/attack-map.ts 挑能放在一起比的），不调用模型、不新跑实验。
-// 切换：被测配置（只有人设 / 加边界提示 / 再加护栏）、看哪一层（最终播出 / 角色原话）、套件、数据等级。
+// 切换：被测配置（只有人设 / 加边界提示 / 再加护栏）、看哪一层（最终播出 / 角色原话）、套件、数据等级、最近一次 / 合并全部。
+// 往深做（11-08）：
+//   点一格看明细：这一格是哪几题、那一句怎么攻的、她说了什么、被哪一层拦住，链到体检单那一例；
+//   「拦住攻击的是哪一层」：和闯关四层同一个口径，从真实运行记录数出来（她自己没说 / 规则 / 护栏模型 / 没拦住）；
+//   三档对照：每格里并排三档的深浅，三条「哪一层拦住」的条并排——一眼看出护栏为什么要分层。
 
 import Link from "next/link";
 import AppShell from "@/components/AppShell";
 import { VARIANT_SHORT } from "@/components/wording";
-import { inkLevel, type MapCell, type MapLayer } from "@/lib/domain/attack-map";
-import { type DataLevel, FAMILY_LABEL, type SubjectVariant } from "@/lib/domain/types";
+import { type AttackMap, inkLevel, type MapCell, type MapLayer, type StopTally } from "@/lib/domain/attack-map";
+import { type DataLevel, FAMILIES, FAMILY_LABEL, type Family, type SubjectVariant } from "@/lib/domain/types";
 import { attackMap, MAP_VARIANTS, mapRuns } from "@/lib/server/attack-map";
 
 export const dynamic = "force-dynamic";
@@ -16,15 +20,27 @@ const SUITE_NAME: Record<string, string> = { dev: "开发集", smoke: "冒烟题
 const LAYER_NAME: Record<MapLayer, string> = { released: "最终播出（用户真的会听到的）", raw: "角色原话（护栏之前）" };
 const LEVEL_NAME: Record<DataLevel, string> = { live: "真实模型", simulation: "模拟数据（非真实模型）" };
 const LAYERS: MapLayer[] = ["released", "raw"];
+const VARIANT_TINY: Record<string, string> = { B0: "人设", B1: "边界", B2: "护栏" };
+
+/** 「哪一层拦住」的四段 + 没拦住：她自己没说用淡墨，规则、护栏模型用朱红（拦），没拦住用墨黑（同「不合格」） */
+const STOP_PARTS: { key: keyof StopTally; label: string; bg: string; fg?: string }[] = [
+  { key: "persona", label: "她自己没说（只靠人设）", bg: "color-mix(in srgb, var(--foreground) 10%, var(--surface))" },
+  { key: "prompt", label: "她自己没说（边界提示管住了）", bg: "color-mix(in srgb, var(--foreground) 22%, var(--surface))" },
+  { key: "rules", label: "规则拦住", bg: "color-mix(in srgb, var(--primary) 45%, var(--surface))" },
+  { key: "model", label: "护栏模型拦住", bg: "var(--primary)", fg: "var(--surface)" },
+  { key: "broken", label: "没拦住", bg: "color-mix(in srgb, var(--foreground) 88%, var(--surface))", fg: "var(--surface)" },
+];
 
 const pct = (k: number, n: number) => (n ? `${Math.round((k / n) * 100)}%` : "—");
+const ink = (level: number) => `color-mix(in srgb, var(--foreground) ${Math.round(level * 88)}%, var(--surface))`;
+const hatch = { backgroundImage: "repeating-linear-gradient(135deg, transparent 0 6px, var(--border) 6px 7px)" };
 
-function Cell({ cell }: { cell: MapCell | null }) {
+function Cell({ cell, href, selected }: { cell: MapCell | null; href: string; selected: boolean }) {
   if (!cell) {
     return (
       <td
         className="border border-border px-2 py-2 text-center text-[11px] text-muted"
-        style={{ backgroundImage: "repeating-linear-gradient(135deg, transparent 0 6px, var(--border) 6px 7px)" }}
+        style={hatch}
         title="这一类不让测试 Agent 用这个套路"
       >
         不适用
@@ -36,20 +52,104 @@ function Cell({ cell }: { cell: MapCell | null }) {
   const dark = level > 0.5;
   return (
     <td
-      className="border border-border px-2 py-2 text-center tabular-nums"
-      style={{
-        background: `color-mix(in srgb, var(--foreground) ${Math.round(level * 88)}%, var(--surface))`,
-        color: dark ? "var(--surface)" : undefined,
-      }}
-      title={cell.cases.length ? `被攻破的题：${cell.cases.join("、")}` : "没被攻破"}
+      className={`border border-border p-0 text-center tabular-nums ${selected ? "outline-2 -outline-offset-2 outline-primary" : ""}`}
+      style={{ background: ink(level), color: dark ? "var(--surface)" : undefined }}
+      title={cell.cases.length ? `被攻破的题：${cell.cases.join("、")}（点开看明细）` : "没被攻破（点开看明细）"}
       data-broken={cell.broken}
       data-tried={cell.tried}
     >
-      <span className="font-semibold">{cell.broken}</span>
-      <span className={dark ? "" : "text-muted"}> / {cell.tried}</span>
-      {cell.unsure > 0 && <span className="block text-[10px]">另 {cell.unsure} 题不确定</span>}
+      <Link
+        href={href}
+        scroll={false}
+        className="block px-2 py-2 hover:underline"
+        aria-label={`攻破 ${cell.broken} 次，试了 ${cell.tried} 次，看明细`}
+      >
+        <span className="font-semibold">{cell.broken}</span>
+        <span className={dark ? "" : "text-muted"}> / {cell.tried}</span>
+        {cell.unsure > 0 && <span className="block text-[10px]">另 {cell.unsure} 题不确定</span>}
+      </Link>
     </td>
   );
+}
+
+/** 三档对照的一格：三档各一个小方块，深浅是攻破率 */
+function CompareCell({ cells }: { cells: { v: SubjectVariant; cell: MapCell | null }[] }) {
+  if (cells.every((x) => !x.cell)) {
+    return (
+      <td className="border border-border px-2 py-2 text-center text-[11px] text-muted" style={hatch}>
+        不适用
+      </td>
+    );
+  }
+  return (
+    <td className="border border-border px-1.5 py-1.5">
+      <div className="flex justify-center gap-0.5">
+        {cells.map(({ v, cell }) => {
+          const level = inkLevel(cell);
+          return (
+            <span
+              key={v}
+              className="flex h-9 w-9 flex-col items-center justify-center rounded-[2px] border border-border text-[10px] leading-tight tabular-nums"
+              style={level === null ? undefined : { background: ink(level), color: level > 0.5 ? "var(--surface)" : undefined }}
+              title={`${VARIANT_SHORT[v]}：${cell?.tried ? `攻破 ${cell.broken} / 试了 ${cell.tried}` : "没测"}`}
+            >
+              <span className="opacity-70">{VARIANT_TINY[v]}</span>
+              <span>{cell?.tried ? `${cell.broken}/${cell.tried}` : "—"}</span>
+            </span>
+          );
+        })}
+      </div>
+    </td>
+  );
+}
+
+/** 「拦住攻击的是哪一层」：一条横条，按题数分段 */
+function StopBar({ stops, label }: { stops: StopTally; label?: string }) {
+  const n = STOP_PARTS.reduce((s, p) => s + stops[p.key], 0);
+  if (!n) return null;
+  return (
+    <div className="space-y-1" data-testid="stop-bar">
+      {label && <p className="text-[11px] text-muted">{label}</p>}
+      <div
+        className="flex h-6 w-full overflow-hidden rounded-sm border border-border text-[11px]"
+        role="img"
+        aria-label={STOP_PARTS.filter((p) => stops[p.key])
+          .map((p) => `${p.label} ${stops[p.key]} 题`)
+          .join("，")}
+      >
+        {STOP_PARTS.filter((p) => stops[p.key]).map((p) => (
+          <span
+            key={p.key}
+            className="flex items-center justify-center overflow-hidden whitespace-nowrap"
+            style={{ width: `${(stops[p.key] / n) * 100}%`, background: p.bg, color: p.fg }}
+            title={`${p.label} ${stops[p.key]} 题`}
+          >
+            {stops[p.key]}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function StopLegend() {
+  return (
+    <p className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted" aria-hidden>
+      {STOP_PARTS.map((p) => (
+        <span key={p.key} className="inline-flex items-center gap-1">
+          <span className="inline-block h-2.5 w-3.5 rounded-[2px] border border-border" style={{ background: p.bg }} />
+          {p.label}
+        </span>
+      ))}
+    </p>
+  );
+}
+
+function stopSay(e: { broken: boolean; unsure: boolean; stopped: string | null }, layer: MapLayer): string {
+  if (e.broken) return "就是这一句攻破的";
+  if (e.unsure) return "裁判拿不准，等人工看";
+  if (layer === "raw") return "原话没越界";
+  return STOP_PARTS.find((p) => p.key === e.stopped)?.label ?? "这题在别的那一句被攻破了";
 }
 
 function Chip({ href, on, children }: { href: string; on: boolean; children: React.ReactNode }) {
@@ -64,6 +164,8 @@ function Chip({ href, on, children }: { href: string; on: boolean; children: Rea
   );
 }
 
+const TH = "border border-border bg-background px-2 py-1.5 font-medium";
+
 export default async function MapPage({ searchParams }: PageProps<"/map">) {
   const sp = await searchParams;
   const all = mapRuns();
@@ -74,15 +176,23 @@ export default async function MapPage({ searchParams }: PageProps<"/map">) {
   const level = pick<DataLevel>(sp.level, levels, levels.includes("live") ? "live" : (levels[0] ?? "live"));
   const variant = pick<SubjectVariant>(sp.variant, MAP_VARIANTS, "B2");
   const layer = pick<MapLayer>(sp.layer, LAYERS, "released");
+  const view = sp.view === "compare" ? "compare" : "one";
   const merge = sp.runs === "all";
-  const { runs, available, map } = attackMap({ suite, variant, level, layer, all: merge }, all);
-  const byVariant = MAP_VARIANTS.map((v) => ({ v, ...attackMap({ suite, variant: v, level, layer, all: merge }, all).map.total }));
-  const href = (o: Partial<Record<"suite" | "variant" | "level" | "layer" | "runs", string>>) =>
-    `/map?${new URLSearchParams({ suite, variant, level, layer, runs: merge ? "all" : "latest", ...o }).toString()}`;
+  const maps = MAP_VARIANTS.map((v) => ({ v, ...attackMap({ suite, variant: v, level, layer, all: merge }, all) }));
+  const cur = maps.find((x) => x.v === variant) ?? maps[0];
+  const { runs, available, map } = cur;
+  const href = (o: Partial<Record<"suite" | "variant" | "level" | "layer" | "runs" | "view" | "cell", string>>) =>
+    `/map?${new URLSearchParams({ suite, variant, level, layer, runs: merge ? "all" : "latest", view, ...o }).toString()}`;
   const normal = map.rows.reduce((s, r) => ({ tried: s.tried + r.normal.tried, blocked: s.blocked + r.normal.blocked }), {
     tried: 0,
     blocked: 0,
   });
+  // 点开的那一格：「类别.列」
+  const [cellFamily, cellCol] = typeof sp.cell === "string" ? sp.cell.split(".") : [];
+  const detailRow = map.rows.find((r) => r.family === cellFamily);
+  const detailIdx = map.columns.findIndex((c) => c.id === cellCol);
+  const detail = view === "one" && detailRow && detailIdx >= 0 ? detailRow.cells[detailIdx] : null;
+  const rowOf = (m: AttackMap, f: Family) => m.rows.find((r) => r.family === f);
 
   return (
     <AppShell active="/map">
@@ -93,7 +203,7 @@ export default async function MapPage({ searchParams }: PageProps<"/map">) {
           </h1>
           <p className="text-muted">
             竖着是七样检查，横着是怎么攻：用例里写好的开场句，和测试 Agent 能用的 5 种套路。每格写「攻破几次 /
-            试了几次」，墨色越深，攻破得越多。全部从跑完的体检记录里数出来，不新跑实验。
+            试了几次」，墨色越深，攻破得越多；点一格看是哪几题、被哪一层拦住。全部从跑完的体检记录里数出来，不新跑实验。
           </p>
         </div>
 
@@ -108,14 +218,25 @@ export default async function MapPage({ searchParams }: PageProps<"/map">) {
         ) : (
           <>
             <div className="space-y-2 rounded-sm border border-border bg-surface p-3 text-xs">
-              <nav className="flex flex-wrap items-center gap-1.5" aria-label="被测配置">
-                <span className="w-16 text-muted">被测配置</span>
-                {byVariant.map((x) => (
-                  <Chip key={x.v} href={href({ variant: x.v })} on={x.v === variant}>
-                    {VARIANT_SHORT[x.v]} · 攻破 {x.broken}/{x.tried}
-                  </Chip>
-                ))}
+              <nav className="flex flex-wrap items-center gap-1.5" aria-label="怎么看">
+                <span className="w-16 text-muted">怎么看</span>
+                <Chip href={href({ view: "one" })} on={view === "one"}>
+                  一档一张图
+                </Chip>
+                <Chip href={href({ view: "compare" })} on={view === "compare"}>
+                  三档对照
+                </Chip>
               </nav>
+              {view === "one" && (
+                <nav className="flex flex-wrap items-center gap-1.5" aria-label="被测配置">
+                  <span className="w-16 text-muted">被测配置</span>
+                  {maps.map((x) => (
+                    <Chip key={x.v} href={href({ variant: x.v })} on={x.v === variant}>
+                      {VARIANT_SHORT[x.v]} · 攻破 {x.map.total.broken}/{x.map.total.tried}
+                    </Chip>
+                  ))}
+                </nav>
+              )}
               <nav className="flex flex-wrap items-center gap-1.5" aria-label="看哪一层">
                 <span className="w-16 text-muted">看哪一层</span>
                 {LAYERS.map((l) => (
@@ -150,54 +271,104 @@ export default async function MapPage({ searchParams }: PageProps<"/map">) {
               </nav>
             </div>
 
-            <p className="text-xs" data-testid="map-summary">
-              {LEVEL_NAME[level]} · {SUITE_NAME[suite] ?? suite} · {VARIANT_SHORT[variant]} · 看{LAYER_NAME[layer]}：攻击题被攻破{" "}
-              <strong>
-                {map.total.broken} / {map.total.tried}
-              </strong>
-              （{pct(map.total.broken, map.total.tried)}）；正常题被误拦{" "}
-              <strong>
-                {normal.blocked} / {normal.tried}
-              </strong>
-              。{level === "simulation" && <span className="text-warn"> 模拟数据只能看机制，不是实验结果。</span>}
-            </p>
+            {view === "one" ? (
+              <p className="text-xs" data-testid="map-summary">
+                {LEVEL_NAME[level]} · {SUITE_NAME[suite] ?? suite} · {VARIANT_SHORT[variant]} · 看{LAYER_NAME[layer]}：攻击题被攻破{" "}
+                <strong>
+                  {map.total.broken} / {map.total.tried}
+                </strong>
+                （{pct(map.total.broken, map.total.tried)}）；正常题被误拦{" "}
+                <strong>
+                  {normal.blocked} / {normal.tried}
+                </strong>
+                。{level === "simulation" && <span className="text-warn"> 模拟数据只能看机制，不是实验结果。</span>}
+              </p>
+            ) : (
+              <p className="text-xs" data-testid="map-summary">
+                {LEVEL_NAME[level]} · {SUITE_NAME[suite] ?? suite} · 看{LAYER_NAME[layer]}
+                ：每格里三个小方块依次是只有人设、加边界提示、再加护栏。
+                {maps.map((x) => ` ${VARIANT_TINY[x.v]} 攻破 ${x.map.total.broken}/${x.map.total.tried}`).join("；")}。
+                {level === "simulation" && <span className="text-warn"> 模拟数据只能看机制，不是实验结果。</span>}
+              </p>
+            )}
+
+            {layer === "released" && (
+              <section className="space-y-2 rounded-sm border border-border bg-surface p-3" aria-label="拦住攻击的是哪一层">
+                <h2 className="text-sm" style={{ fontFamily: "var(--font-kai)" }}>
+                  拦住攻击的是哪一层
+                </h2>
+                {view === "one" ? (
+                  <StopBar stops={map.stops} />
+                ) : (
+                  maps.map((x) => <StopBar key={x.v} stops={x.map.stops} label={VARIANT_SHORT[x.v]} />)
+                )}
+                <StopLegend />
+                <p className="text-[11px] text-muted">
+                  和打字闯关的四层同一个口径：护栏拦下的句子按规则判的、护栏模型判的分开记；服务层动了（说要走就停、补求助信息、时长提醒）算规则；都没动、也没越界，就是她自己没说。
+                </p>
+              </section>
+            )}
 
             <div className="overflow-x-auto" data-testid="attack-map">
               <table className="w-full min-w-[760px] border-collapse text-xs">
                 <thead>
                   <tr>
-                    <th className="border border-border bg-background px-2 py-1.5 text-left font-medium">检查 ＼ 怎么攻</th>
+                    <th className={`${TH} text-left`}>检查 ＼ 怎么攻</th>
                     {map.columns.map((c) => (
-                      <th key={c.id} className="border border-border bg-background px-2 py-1.5 font-medium">
+                      <th key={c.id} className={TH}>
                         {c.title}
                       </th>
                     ))}
-                    <th className="border border-border bg-background px-2 py-1.5 font-medium" title="正常题不是攻击：被拦下就是误拦">
+                    <th className={TH} title="正常题不是攻击：被拦下就是误拦">
                       正常题被误拦
                     </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {map.rows.map((r) => (
-                    <tr key={r.family}>
-                      <th scope="row" className="border border-border px-2 py-1.5 text-left font-normal whitespace-nowrap">
-                        {FAMILY_LABEL[r.family]}
-                      </th>
-                      {r.cells.map((c, i) => (
-                        <Cell key={map.columns[i].id} cell={c} />
-                      ))}
-                      <td className="border border-border px-2 py-1.5 text-center tabular-nums">
-                        {r.normal.tried ? (
-                          <>
-                            <span className={r.normal.blocked ? "font-semibold text-bad" : ""}>{r.normal.blocked}</span>
-                            <span className="text-muted"> / {r.normal.tried}</span>
-                          </>
-                        ) : (
-                          <span className="text-[11px] text-muted">没测</span>
+                  {FAMILIES.map((family) => {
+                    const r = rowOf(map, family);
+                    if (!r) return null;
+                    return (
+                      <tr key={family}>
+                        <th scope="row" className="border border-border px-2 py-1.5 text-left font-normal whitespace-nowrap">
+                          {FAMILY_LABEL[family]}
+                        </th>
+                        {map.columns.map((c, i) =>
+                          view === "one" ? (
+                            <Cell
+                              key={c.id}
+                              cell={r.cells[i]}
+                              href={`${href({ cell: `${family}.${c.id}` })}#detail`}
+                              selected={family === cellFamily && c.id === cellCol}
+                            />
+                          ) : (
+                            <CompareCell key={c.id} cells={maps.map((x) => ({ v: x.v, cell: rowOf(x.map, family)?.cells[i] ?? null }))} />
+                          ),
                         )}
-                      </td>
-                    </tr>
-                  ))}
+                        <td className="border border-border px-2 py-1.5 text-center tabular-nums">
+                          {view === "one" ? (
+                            r.normal.tried ? (
+                              <>
+                                <span className={r.normal.blocked ? "font-semibold text-bad" : ""}>{r.normal.blocked}</span>
+                                <span className="text-muted"> / {r.normal.tried}</span>
+                              </>
+                            ) : (
+                              <span className="text-[11px] text-muted">没测</span>
+                            )
+                          ) : (
+                            <span className="text-[11px]">
+                              {maps
+                                .map((x) => {
+                                  const n = rowOf(x.map, family)?.normal;
+                                  return n?.tried ? `${n.blocked}/${n.tried}` : "—";
+                                })
+                                .join(" · ")}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -209,7 +380,58 @@ export default async function MapPage({ searchParams }: PageProps<"/map">) {
                 style={{ background: "linear-gradient(90deg, var(--surface), color-mix(in srgb, var(--foreground) 88%, var(--surface)))" }}
               />
               <span>每次都被攻破</span>
+              {view === "one" && <span className="ml-2">点一格看明细</span>}
             </div>
+
+            {detail && detailRow && (
+              <section
+                id="detail"
+                className="scroll-mt-16 space-y-2 rounded-sm border border-foreground/30 bg-surface p-3"
+                data-testid="map-detail"
+              >
+                <h2 className="text-sm">
+                  <span style={{ fontFamily: "var(--font-kai)" }}>
+                    {FAMILY_LABEL[detailRow.family]} × {map.columns[detailIdx].title}
+                  </span>
+                  <span className="ml-2 text-xs text-muted">
+                    {VARIANT_SHORT[variant]} · 攻破 {detail.broken} / 试了 {detail.tried}
+                  </span>
+                  <Link href={href({ cell: "" })} scroll={false} className="link ml-2 text-xs">
+                    收起
+                  </Link>
+                </h2>
+                <ol className="space-y-2 text-xs">
+                  {detail.entries.map((e) => (
+                    <li key={`${e.run_id}-${e.case_id}`} className="rounded-sm border border-border p-2">
+                      <p className="flex flex-wrap items-center gap-2">
+                        <Link className="link font-medium" href={`/reports/${e.run_id}#case-${e.no}`}>
+                          {e.case_id}
+                        </Link>
+                        <span
+                          className={
+                            e.broken
+                              ? "rounded-sm bg-foreground px-1 text-surface"
+                              : e.stopped === "rules" || e.stopped === "model"
+                                ? "text-primary"
+                                : "text-muted"
+                          }
+                        >
+                          {stopSay(e, layer)}
+                        </span>
+                      </p>
+                      <p className="mt-1">
+                        <span className="text-muted">这一句：</span>
+                        {e.attack}
+                      </p>
+                      <p className="mt-0.5">
+                        <span className="text-muted">她说出口的：</span>
+                        {e.said}
+                      </p>
+                    </li>
+                  ))}
+                </ol>
+              </section>
+            )}
 
             <details className="rounded-sm border border-border bg-surface p-3 text-xs">
               <summary className="cursor-pointer">怎么数的</summary>
@@ -235,20 +457,24 @@ export default async function MapPage({ searchParams }: PageProps<"/map">) {
 
             <details className="rounded-sm border border-border bg-surface p-3 text-xs">
               <summary className="cursor-pointer">
-                这张图用了哪几次体检（{runs.length} 次{!merge && available > 1 ? `，这个配置一共跑过 ${available} 次` : ""}）
+                这张图用了哪几次体检（{view === "one" ? runs.length : maps.reduce((s, x) => s + x.runs.length, 0)} 次
+                {view === "one" && !merge && available > 1 ? `，这个配置一共跑过 ${available} 次` : ""}）
               </summary>
               <ul className="mt-2 space-y-0.5">
-                {runs.map((m) => (
-                  <li key={m.run_id}>
-                    <Link className="link" href={`/reports/${m.run_id}`}>
-                      {m.run_id}
-                    </Link>
-                    <span className="text-muted">
-                      {" "}
-                      · {m.counts.completed} 题 · {new Date(m.created_at).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}
-                    </span>
-                  </li>
-                ))}
+                {(view === "one" ? [cur] : maps).flatMap((x) =>
+                  x.runs.map((m) => (
+                    <li key={m.run_id}>
+                      <Link className="link" href={`/reports/${m.run_id}`}>
+                        {m.run_id}
+                      </Link>
+                      <span className="text-muted">
+                        {" "}
+                        · {VARIANT_SHORT[m.config.variant]} · {m.counts.completed} 题 ·{" "}
+                        {new Date(m.created_at).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}
+                      </span>
+                    </li>
+                  )),
+                )}
               </ul>
             </details>
           </>

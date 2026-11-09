@@ -19,7 +19,7 @@ import type { CueAck } from "@/lib/client/avatar/types";
 import { EXPIRED_MESSAGE, toLoginIfExpired } from "@/lib/client/session-expired";
 import { useSpeechInput } from "@/lib/client/speech-input";
 import { VoicePlayer } from "@/lib/client/voice-player";
-import { LEVELS, type LevelId, PLAY_MAX_TURNS, type PlayLayer, type PlayOutcome, TIERS, type Tier } from "@/lib/domain/levels";
+import { LAYER_NOTES, LEVELS, type LevelId, PLAY_MAX_TURNS, type PlayLayer, type PlayOutcome, TIERS, type Tier } from "@/lib/domain/levels";
 import { DEFAULT_PERSONA, isDefaultPersona, PERSONA_STORAGE_KEY, type PersonaConfig } from "@/lib/domain/persona";
 import { type Evidence, GUARD_RULE_LABEL, type TurnRecord } from "@/lib/domain/types";
 import Avatar from "./Avatar";
@@ -57,6 +57,8 @@ const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 interface AttackBy {
   strategy: string;
   scripted: boolean;
+  /** 为什么换这一招：上一招被哪一层拦住（ADR-038） */
+  why?: string;
 }
 
 interface SendResult {
@@ -204,6 +206,7 @@ function PlayTurn({ a, name, shown, onSkip }: { a: Attempt; name: string; shown:
         chop={<Chop char={a.by ? "AI" : "你"} tone="ink" />}
       >
         <p className={`${bubble} border-border bg-background`}>{turn.user_text}</p>
+        {a.by?.why && <p className="text-[11px] text-muted">{a.by.why}</p>}
       </Row>
       {turn.service.exited ? (
         <Note icon={<LogOut size={12} aria-hidden />}>你说了要走，服务马上停了：她没有再说话</Note>
@@ -574,7 +577,10 @@ export default function Play() {
     try {
       while (n < 4 && !stopWatch.current && leftRef.current > 0) {
         const s = await ensureSession();
-        const atk = await post<{ text: string; strategy: string; scripted: boolean }>({ action: "next_attack", session_id: s.id });
+        const atk = await post<{ text: string; strategy: string; scripted: boolean; why?: string }>({
+          action: "next_attack",
+          session_id: s.id,
+        });
         if (stopWatch.current) break;
         // 在输入框里一个字一个字打出来，她看着你打字
         for (let i = 1; i <= atk.text.length && !stopWatch.current; i++) {
@@ -583,7 +589,7 @@ export default function Play() {
           await wait(28);
         }
         n++;
-        const res = await send(atk.text, undefined, { strategy: atk.strategy, scripted: atk.scripted });
+        const res = await send(atk.text, undefined, { strategy: atk.strategy, scripted: atk.scripted, why: atk.why });
         if (!res) break;
         const final = res.verdict ? await res.verdict : res;
         result = final.outcome;
@@ -692,7 +698,8 @@ export default function Play() {
               {commentary.map((a, i) => (
                 <li key={`${a.session}-${a.turn.turn_id}`} className="leading-5">
                   <span className="text-muted">第 {i + 1} 招</span>「{a.by?.strategy}」
-                  <span className="text-muted">{a.by?.scripted ? "（写好的句子）" : "（AI 现想的）"}</span>→{" "}
+                  <span className="text-muted">{a.by?.scripted ? "（写好的句子）" : "（AI 现想的）"}</span>
+                  {a.by?.why && <span className="block text-[11px] text-muted">　{a.by.why}</span>}→{" "}
                   {a.judging ? (
                     <span className="text-muted">裁判在判……</span>
                   ) : (
@@ -827,6 +834,11 @@ export default function Play() {
               <p className="text-xs text-muted">模拟模式下不调用护栏模型，第 3、4 层一样；接上真实模型才看得出第 4 层多拦了什么。</p>
             )}
             <p className="text-xs text-muted">提示：{hint}</p>
+            {LAYER_NOTES[level]?.[tier] && (
+              <p className="border-l-2 border-primary pl-2 text-xs" data-testid="layer-note">
+                <span style={{ fontFamily: "var(--font-kai)" }}>真实例子</span>：{LAYER_NOTES[level]?.[tier]}
+              </p>
+            )}
             {live === false && !fault && tier < 3 && (
               <p className="text-xs text-warn">
                 模拟模式下角色用固定句子回答，前两层也不会说漏；勾上「换成『故意出错』的角色」再试，或者接上真实模型。

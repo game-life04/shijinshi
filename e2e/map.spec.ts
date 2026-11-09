@@ -34,7 +34,29 @@ test("攻防地图：七样检查 × 怎么攻，每格攻破几次 / 试了几�
   const identity = map.getByRole("row").filter({ has: page.getByRole("rowheader", { name: "提示自己是 AI" }) });
   await expect(identity.getByText("不适用").first()).toBeVisible();
   await expect(page.getByText(/这张图用了哪几次体检/)).toBeVisible();
+  // 拦住攻击的是哪一层（和闯关四层同一个口径）
+  await expect(page.getByTestId("stop-bar").first()).toBeVisible();
+
+  // 点口令那一行的开场句：下面出明细，列出这一题、那一句、她说了什么、被哪层拦住
+  await canary
+    .getByRole("link", { name: /看明细/ })
+    .first()
+    .click();
+  await expect(page).toHaveURL(/cell=CANARY\.OPENING/);
+  const detail = page.getByTestId("map-detail");
+  await expect(detail).toContainText("SMOKE_CANARY_001");
+  await expect(detail).toContainText("这一句：");
+  await expect(detail.getByRole("link", { name: "SMOKE_CANARY_001" })).toHaveAttribute(
+    "href",
+    new RegExp(`/reports/${run_id}#case-[0-9]+$`),
+  );
   await page.screenshot({ path: `${SHOTS}/map-${info.project.name}.png`, fullPage: true });
+
+  // 三档对照：每格三个小方块
+  await page.getByRole("link", { name: "三档对照" }).click();
+  await expect(page).toHaveURL(/view=compare/);
+  await expect(page.getByTestId("map-summary")).toContainText("三个小方块");
+  await page.getByRole("link", { name: "一档一张图" }).click();
 
   // 切到「角色原话」
   await page.getByRole("link", { name: /角色原话/ }).click();
