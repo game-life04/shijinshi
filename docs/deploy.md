@@ -69,6 +69,46 @@ chmod 600 .env.local           # 里面有模型密钥和会话密钥，只给�
 
    只用 `npm start`（它带了 `-H 127.0.0.1`）。不要写成 `npx next start`：不带 `-H` 时会在所有网卡上监听，别人绕过 nginx 直接连 3000 端口，就能自己写来源请求头、绕过按来源的上限，登录 cookie 也不带 Secure。用 pm2、systemd 托管时同样照 `npm start` 写。
 
+6. 交给 systemd 托管，评审期间一直开着：进程崩了 5 秒后自动拉起，服务器重启后自动启动。假设代码放在 `/opt/shijinshi`、用一个普通用户 `fencun` 跑（不要用 root）：
+
+   ```bash
+   sudo useradd --system --home /opt/shijinshi --shell /usr/sbin/nologin fencun
+   sudo chown -R fencun:fencun /opt/shijinshi      # 运行记录写在 data/runs，要能写
+   sudo chmod 600 /opt/shijinshi/.env.local       # 密钥文件只给这个用户读
+   which npm                                      # 看 npm 的实际路径，填进下面的 ExecStart
+   ```
+
+   新建 `/etc/systemd/system/fencun.service`：
+
+   ```ini
+   [Unit]
+   Description=fencun demo
+   After=network-online.target
+   Wants=network-online.target
+
+   [Service]
+   User=fencun
+   WorkingDirectory=/opt/shijinshi
+   Environment=NODE_ENV=production
+   ExecStart=/usr/bin/npm start
+   Restart=always
+   RestartSec=5
+
+   [Install]
+   WantedBy=multi-user.target
+   ```
+
+   `ExecStart` 写 `which npm` 打出来的全路径（用 nvm 装的 Node 在用户目录下，systemd 找不到，要写全路径或改用系统包装的 Node 22+）。然后：
+
+   ```bash
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now fencun     # 现在启动，并且开机自启
+   systemctl status fencun                # 看到 active (running)
+   journalctl -u fencun -f                # 看日志
+   ```
+
+   以后改了 `.env.local`（加账号、换密钥）用 `sudo systemctl restart fencun`。nginx 也要开机自启：`sudo systemctl enable nginx`。
+
 ## 二、账号怎么管
 
 改了 `.env.local` 都要重启服务才生效。重启**不会**让已经登录的人掉线（会话不存在服务器内存里）；只会清零次数计数，并把正在跑的体检标成失败。
@@ -147,3 +187,13 @@ server {
 6. 点「退出」后再打开工作台，要重新登录；
 7. 退出登录的状态下，登录页的背景图能显示，模型文件 `/models/qiyetao.vrm` 拿不到（跳到登录页）；
 8. 在百炼控制台给密钥设好消费上限（这是最后一道保险，比程序里的上限更可靠）。
+9. `systemctl is-enabled fencun nginx` 两个都是 `enabled`；`sudo kill` 掉 node 进程，5 秒后网站自己回来；`sudo reboot` 以后不用登录服务器，网站照常能打开；
+10. 给评委单独建一个账号（`scripts/account.ts add`，不写进 `AUTH_REVIEWERS`，只能看不能改判），用它从手机流量（不走公司或学校网络）完整走一遍：登录、一键演示、闯关、对着麦克风说（要 https 才有麦克风权限）；账号密码只填在大赛提交表里，不写进仓库、文档和聊天；
+11. 线上跑的代码和提交的仓库是同一个版本：`git log -1 --oneline` 记下来，打一个标签（如 `git tag submit-provincial`）；交了以后不再往线上推新代码（大赛规定提交后不得修改）。
+
+## 七、评审期间
+
+- 每天打开一次网址，确认能登录、能跑一次一键演示；
+- 百炼控制台看一眼余额和当天用量，余额要撑到评审结束；
+- 服务器到期日要晚于评审结束（问清评审期到哪天再续费）；
+- 出问题先看 `journalctl -u fencun -n 200`；重启用 `sudo systemctl restart fencun`（会清零次数计数，已登录的人不掉线）。
