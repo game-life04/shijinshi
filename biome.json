@@ -15,6 +15,7 @@
       "!build",
       "!data",
       "!eval/out",
+      "!docs/evidence/experiments",
       "!kb/sources",
       "!test-results",
       "!playwright-report",

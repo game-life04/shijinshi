@@ -13,7 +13,7 @@
 | R07 | 选题创新（10） | — | 需求核验与外部访谈未完成 | 未完成 | 未完成 | 未完成 |
 | R08 | 技术方案创新（8） | subject.ts（S1/S2/S3）、audio-store.ts、lib/audio/intervals.ts | 违规音频渲染时长按采样交集计量：端到端里同一口令句在判决延迟 1000 / 4000 ms 下漏出 0 / 592 ms（模拟发声，机制演示，不是实验结果）；E2 成对实验未做 | 未完成 | 未完成 | 部分内部验证 |
 | R09 | 交互模式创新（7） | components/Workbench.tsx、Transcript.tsx | 截图 docs/evidence/screenshots/m1/ | 未完成 | 未完成 | 部分内部验证 |
-| R10 | 代码质量（4） | 全仓库 | lint、typecheck、单元测试 203 个、端到端 53 个通过（三种尺寸合计，另 28 个按设计跳过；2026-11-08） | 未完成 | 未完成 | 内部验证 |
+| R10 | 代码质量（4） | 全仓库 | lint、typecheck、单元测试 207 个、端到端 53 个通过（三种尺寸合计，另 28 个按设计跳过；2026-11-08） | 未完成 | 未完成 | 内部验证 |
 | R11 | 组件与架构（3） | lib/domain（共享）、lib/server、components | UI、评测脚本共用 runs.ts 服务 | 未完成 | 未完成 | 内部验证 |
 | R12 | 前端性能（3） | components/Avatar.tsx（next/dynamic 懒加载）、VrmAvatar.tsx（帧率写在 data-fps）；音频在 AudioWorklet 线程 | e2e/vrm.spec.ts 用示例模型验证过加载和画面在动；规定设备的加载时间和帧率未测 | 未完成 | 未完成 | 已实现未验证 |
 | R13 | 真实场景（5） | — | 外部角色作者需求未核验 | 未完成 | 未完成 | 未完成 |
