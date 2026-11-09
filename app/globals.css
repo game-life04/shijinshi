@@ -296,3 +296,179 @@ h2 {
     animation: none;
   }
 }
+
+/* ---------- 闯关和攻防地图的小动画（11-09，队长：再加一点趣味性、少些文字） ---------- */
+/* 盖章：攻破时一方墨色「破」、被拦时一方朱红「拦」，从大到小砸下来，停一下再淡出 */
+.stamp-burst {
+  position: absolute;
+  left: 50%;
+  top: 42%;
+  z-index: 20;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 7.5rem;
+  height: 7.5rem;
+  margin: -3.75rem 0 0 -3.75rem;
+  border-radius: 6px;
+  font-family: var(--font-kai);
+  font-size: 4.6rem;
+  line-height: 1;
+  animation: stamp-burst 1.5s cubic-bezier(0.2, 0.9, 0.3, 1.2) forwards;
+}
+.stamp-burst[data-kind="破"] {
+  background: var(--foreground);
+  color: var(--surface);
+}
+.stamp-burst[data-kind="拦"] {
+  background: var(--primary);
+  color: var(--surface);
+}
+@keyframes stamp-burst {
+  0% {
+    opacity: 0;
+    transform: scale(2.6) rotate(-14deg);
+  }
+  22% {
+    opacity: 0.95;
+    transform: scale(0.94) rotate(-6deg);
+  }
+  30% {
+    transform: scale(1) rotate(-6deg);
+  }
+  75% {
+    opacity: 0.92;
+    transform: scale(1) rotate(-6deg);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.04) rotate(-6deg);
+  }
+}
+/* 防守塔：拦住你的那一块砖闪一下；被攻破的砖裂开 */
+.tower-brick[data-lit="1"] {
+  animation: brick-lit 0.9s ease-out;
+}
+@keyframes brick-lit {
+  0% {
+    transform: translateX(0);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 60%, transparent);
+  }
+  20% {
+    transform: translateX(-3px);
+  }
+  40% {
+    transform: translateX(3px);
+  }
+  60% {
+    transform: translateX(-1px);
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--primary) 0%, transparent);
+  }
+  100% {
+    transform: translateX(0);
+  }
+}
+.tower-crack {
+  stroke-dasharray: 60;
+  stroke-dashoffset: 0;
+  animation: tower-crack 0.6s ease-out;
+}
+@keyframes tower-crack {
+  from {
+    stroke-dashoffset: 60;
+  }
+}
+/* 攻防地图：格子像墨一样一格格晕开；「哪一层拦住」的横条从左边长出来 */
+.ink-in {
+  animation: ink-in 0.5s ease-out both;
+}
+@keyframes ink-in {
+  from {
+    opacity: 0;
+    filter: blur(3px);
+  }
+}
+.bar-grow > span {
+  transform-origin: left center;
+  animation: bar-grow 0.7s ease-out both;
+}
+@keyframes bar-grow {
+  from {
+    transform: scaleX(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .stamp-burst {
+    animation: stamp-still 1.2s linear forwards;
+  }
+  .tower-brick[data-lit="1"],
+  .tower-crack,
+  .ink-in,
+  .bar-grow > span {
+    animation: none;
+  }
+}
+@keyframes stamp-still {
+  0%,
+  80% {
+    opacity: 0.9;
+    transform: rotate(-6deg);
+  }
+  100% {
+    opacity: 0;
+    transform: rotate(-6deg);
+  }
+}
+/* 慢放这一句：纸条从出发站走到停下的站；被拦的门前晚一点盖「拦」 */
+.journey-slip {
+  left: var(--to);
+  animation: journey-go 0.9s cubic-bezier(0.3, 0.7, 0.4, 1) both;
+}
+@keyframes journey-go {
+  from {
+    left: var(--from);
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  to {
+    left: var(--to);
+  }
+}
+.journey-stamp {
+  animation: journey-stamp 0.45s cubic-bezier(0.2, 0.9, 0.3, 1.3) both;
+}
+/* 居中用的是 Tailwind 的 translate 属性，这里只管缩放和转角，不再写位移 */
+@keyframes journey-stamp {
+  from {
+    opacity: 0;
+    transform: scale(2.4) rotate(-12deg);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) rotate(-4deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .journey-slip,
+  .journey-stamp {
+    animation: none;
+  }
+}
+/* 印谱：新拿到的印从上面掉下来 */
+.seal-toast {
+  animation: seal-toast 0.5s cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+}
+@keyframes seal-toast {
+  from {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.92);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .seal-toast {
+    animation: none;
+  }
+}

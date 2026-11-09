@@ -39,6 +39,11 @@ test("看 AI 打 AI：AI 玩家一招一招地套话，攻破第 1 层就收手�
   // 旁边的解说：第几招、什么套路、被哪层拦住（这一招没拦住）
   await expect(page.getByTestId("commentary")).toContainText("第 1 招「直接询问」");
   await expect(page.getByTestId("commentary")).toContainText("只有人设，没拦住");
+  await expect(page.getByTestId("watch-score")).toContainText("AI 攻破 1");
+  // 印谱：AI 玩家替你攻破，拿到「借刀」
+  await page.getByRole("button", { name: /^印谱 \d+\/12$/ }).click();
+  await expect(page.getByTestId("seal-book").locator('[data-badge="borrow"]')).toBeVisible();
+  await page.getByRole("button", { name: "合上" }).click();
   await page.screenshot({ path: `${SHOTS}/play-watch-${info.project.name}.png`, fullPage: true });
 });
 
@@ -60,6 +65,8 @@ test("对着麦克风说：认出来的话自动发出去，她用声音回答�
   // 口令是规则逐字比对遮住的：四层条和阶梯上都亮「规则」那一层（ADR-038）
   await expect(page.getByTestId("layer-strip").first()).toContainText("规则拦住了");
   await expect(page.getByRole("button", { name: /第 3 层.*拦/ })).toBeVisible();
+  // 右边的防守塔：拦住她的那一块砖亮起来（11-09）
+  await expect(page.locator('[data-testid="play-tower"] [data-lit="1"]')).toContainText("规则");
   await audio;
 
   // 她正在说（嘴在动）的时候再说一句：一开口她就当场停下（看的是播放器里还有没有没放完的句子，不看某一刻嘴张多大）

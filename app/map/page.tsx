@@ -35,7 +35,7 @@ const pct = (k: number, n: number) => (n ? `${Math.round((k / n) * 100)}%` : "�
 const ink = (level: number) => `color-mix(in srgb, var(--foreground) ${Math.round(level * 88)}%, var(--surface))`;
 const hatch = { backgroundImage: "repeating-linear-gradient(135deg, transparent 0 6px, var(--border) 6px 7px)" };
 
-function Cell({ cell, href, selected }: { cell: MapCell | null; href: string; selected: boolean }) {
+function Cell({ cell, href, selected, delay }: { cell: MapCell | null; href: string; selected: boolean; delay: number }) {
   if (!cell) {
     return (
       <td
@@ -52,8 +52,8 @@ function Cell({ cell, href, selected }: { cell: MapCell | null; href: string; se
   const dark = level > 0.5;
   return (
     <td
-      className={`border border-border p-0 text-center tabular-nums ${selected ? "outline-2 -outline-offset-2 outline-primary" : ""}`}
-      style={{ background: ink(level), color: dark ? "var(--surface)" : undefined }}
+      className={`ink-in border border-border p-0 text-center tabular-nums ${selected ? "outline-2 -outline-offset-2 outline-primary" : ""}`}
+      style={{ background: ink(level), color: dark ? "var(--surface)" : undefined, animationDelay: `${delay}ms` }}
       title={cell.cases.length ? `被攻破的题：${cell.cases.join("、")}（点开看明细）` : "没被攻破（点开看明细）"}
       data-broken={cell.broken}
       data-tried={cell.tried}
@@ -111,7 +111,7 @@ function StopBar({ stops, label }: { stops: StopTally; label?: string }) {
     <div className="space-y-1" data-testid="stop-bar">
       {label && <p className="text-[11px] text-muted">{label}</p>}
       <div
-        className="flex h-6 w-full overflow-hidden rounded-sm border border-border text-[11px]"
+        className="bar-grow flex h-6 w-full overflow-hidden rounded-sm border border-border text-[11px]"
         role="img"
         aria-label={STOP_PARTS.filter((p) => stops[p.key])
           .map((p) => `${p.label} ${stops[p.key]} 题`)
@@ -201,9 +201,11 @@ export default async function MapPage({ searchParams }: PageProps<"/map">) {
           <h1 className="text-xl font-semibold" style={{ fontFamily: "var(--font-serif)" }}>
             攻防地图
           </h1>
-          <p className="text-muted">
-            竖着是七样检查，横着是怎么攻：用例里写好的开场句，和测试 Agent 能用的 5 种套路。每格写「攻破几次 /
-            试了几次」，墨色越深，攻破得越多；点一格看是哪几题、被哪一层拦住。全部从跑完的体检记录里数出来，不新跑实验。
+          <p
+            className="text-muted"
+            title="竖着是七样检查，横着是用例里写好的开场句和测试 Agent 能用的 5 种套路；每格「攻破几次 / 试了几次」。全部从跑完的体检记录里数出来，不新跑实验。"
+          >
+            越黑越容易被攻破，点一格看是哪几题。
           </p>
         </div>
 
@@ -259,7 +261,11 @@ export default async function MapPage({ searchParams }: PageProps<"/map">) {
                     </Chip>
                   ))}
               </nav>
-              <nav className="flex flex-wrap items-center gap-1.5" aria-label="用哪几次">
+              <nav
+                className="flex flex-wrap items-center gap-1.5"
+                aria-label="用哪几次"
+                title="代码一直在改，默认只看每个配置最近一次；合并以后次数多，但混着改之前的结果"
+              >
                 <span className="w-16 text-muted">用哪几次</span>
                 <Chip href={href({ runs: "latest" })} on={!merge}>
                   每个配置最近一次
@@ -267,7 +273,6 @@ export default async function MapPage({ searchParams }: PageProps<"/map">) {
                 <Chip href={href({ runs: "all" })} on={merge}>
                   合并跑过的全部
                 </Chip>
-                <span className="text-muted">代码一直在改，默认只看最近一次；合并以后次数多，但混着改之前的结果</span>
               </nav>
             </div>
 
@@ -294,7 +299,11 @@ export default async function MapPage({ searchParams }: PageProps<"/map">) {
 
             {layer === "released" && (
               <section className="space-y-2 rounded-sm border border-border bg-surface p-3" aria-label="拦住攻击的是哪一层">
-                <h2 className="text-sm" style={{ fontFamily: "var(--font-kai)" }}>
+                <h2
+                  className="text-sm"
+                  style={{ fontFamily: "var(--font-kai)" }}
+                  title="和打字闯关的四层同一个口径：护栏拦下的句子按规则判的、护栏模型判的分开记；服务层动了（说要走就停、补求助信息、时长提醒）算规则；都没动、也没越界，就是她自己没说。"
+                >
                   拦住攻击的是哪一层
                 </h2>
                 {view === "one" ? (
@@ -303,9 +312,6 @@ export default async function MapPage({ searchParams }: PageProps<"/map">) {
                   maps.map((x) => <StopBar key={x.v} stops={x.map.stops} label={VARIANT_SHORT[x.v]} />)
                 )}
                 <StopLegend />
-                <p className="text-[11px] text-muted">
-                  和打字闯关的四层同一个口径：护栏拦下的句子按规则判的、护栏模型判的分开记；服务层动了（说要走就停、补求助信息、时长提醒）算规则；都没动、也没越界，就是她自己没说。
-                </p>
               </section>
             )}
 
@@ -340,6 +346,7 @@ export default async function MapPage({ searchParams }: PageProps<"/map">) {
                               cell={r.cells[i]}
                               href={`${href({ cell: `${family}.${c.id}` })}#detail`}
                               selected={family === cellFamily && c.id === cellCol}
+                              delay={(FAMILIES.indexOf(family) + i) * 45}
                             />
                           ) : (
                             <CompareCell key={c.id} cells={maps.map((x) => ({ v: x.v, cell: rowOf(x.map, family)?.cells[i] ?? null }))} />

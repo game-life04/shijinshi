@@ -1,6 +1,6 @@
 # 实现状态
 
-更新：2026-11-08。攻防地图看明细、哪层拦住、三档对照，分层探针，AI 玩家看着哪层拦住换套路（ADR-039）；闯关四层阶梯、哪层拦住亮哪层、攻防地图，开发集导入并用真实模型跑了两轮，修了退出的说法（ADR-038）；闯关加难度阶梯、看 AI 打 AI、对着麦克风说（ADR-037）；产品评审第三批（ADR-036）；第二批和全站章法（ADR-035）；账号 + 密码登录（ADR-032，11-08 上线前又做了安全和正确性复核）；琪叶桃像真人一样对话、闯关页改版（ADR-033）；产品评审第一批（ADR-034）。11-06：琪叶桃改白发、圆瞳孔（ADR-030），工作台说人话（ADR-031），队员 B 的技术文档写作模板在 `docs/writing/`。11-03：主线收敛成「改了再测」，口令检查升级，体检单分三层，新加打字闯关和三种结局（ADR-022）。作品名「分寸」、视觉黑白加朱红（ADR-021）。状态分四级：未实现、已实现未验证、内部验证（有测试或运行记录）、外部核验。没有测试、记录或访问入口的，不标内部验证。
+更新：2026-11-09。闯关慢放这一句、印谱、盖章音效，护栏换模型实测，实验原始数据进仓库（ADR-041）；闯关和攻防地图少些文字、加盖章动画、防守塔、攻守比分（ADR-040）；11-08：攻防地图看明细、哪层拦住、三档对照，分层探针，AI 玩家看着哪层拦住换套路（ADR-039）；闯关四层阶梯、哪层拦住亮哪层、攻防地图，开发集导入并用真实模型跑了两轮，修了退出的说法（ADR-038）；闯关加难度阶梯、看 AI 打 AI、对着麦克风说（ADR-037）；产品评审第三批（ADR-036）；第二批和全站章法（ADR-035）；账号 + 密码登录（ADR-032，11-08 上线前又做了安全和正确性复核）；琪叶桃像真人一样对话、闯关页改版（ADR-033）；产品评审第一批（ADR-034）。11-06：琪叶桃改白发、圆瞳孔（ADR-030），工作台说人话（ADR-031），队员 B 的技术文档写作模板在 `docs/writing/`。11-03：主线收敛成「改了再测」，口令检查升级，体检单分三层，新加打字闯关和三种结局（ADR-022）。作品名「分寸」、视觉黑白加朱红（ADR-021）。状态分四级：未实现、已实现未验证、内部验证（有测试或运行记录）、外部核验。没有测试、记录或访问入口的，不标内部验证。
 
 ## 里程碑
 
@@ -75,6 +75,8 @@
 | 闯关三样新玩法：难度阶梯（11-08 起四层，见下一行）、看 AI 打 AI、对着麦克风说（她用声音回答、一开口就打断）（ADR-037） | A | 队长 11-08 看同类项目对比后挑的 | 内部验证（单元测试 6 个；端到端 2 个，假的语音识别器；模拟模式） | `components/Play.tsx`、`lib/server/play.ts`（tierVariant、nextAttack、openPlayAudio）、`app/api/play/audio/route.ts`、`lib/client/speech-input.ts`；`tests/unit/play-modes.test.ts`、`e2e/play-voice.spec.ts` |
 | 闯关四层阶梯（只有人设 / 加边界提示 / 加规则 / 加护栏模型）、每轮记哪层拦住并在阶梯上亮那一层、观战解说；攻防地图 `/map`（七样检查 × 开场句和 5 种套路）（ADR-038） | A | 队长 11-08 | 内部验证（单元测试：四层对应、哪层拦住 4 个、第 3 层不问护栏模型、攻防地图 4 个；端到端 `e2e/map.spec.ts`，loop、play-voice 加了断言；模拟模式） | `lib/domain/levels.ts`、`lib/server/play.ts`（tierGuardModel、stopped_by）、`lib/server/guard.ts`（checkSentence 的 model 参数）、`components/Play.tsx`（LayerStrip、解说）；`lib/domain/attack-map.ts`、`lib/server/attack-map.ts`、`app/map/page.tsx`；`tests/unit/play-modes.test.ts`、`tests/unit/attack-map.test.ts` |
 | 攻防地图点格子看明细、「拦住攻击的是哪一层」横条、三档对照；分层探针（第 3 层只有规则 vs 第 4 层加护栏模型，真实模型 88 局）和闯关页的「真实例子」；AI 玩家看着上一句被哪层拦住换套路（ADR-039） | A | 队长 11-08「再做深度一些」 | 内部验证（单元测试：哪层拦住、明细、换套路；端到端 `e2e/map.spec.ts`；探针是真实模型、只供体验） | `lib/domain/attack-map.ts`（stoppedLayer、entries、stops）、`app/map/page.tsx`、`lib/domain/levels.ts`（LAYER_NOTES）、`lib/server/play.ts`（pickStrategy、why）、`scripts/layer-probe.ts`；结果 `eval/out/layer-probe-20261108233303.json`（不进仓库） |
+| 闯关、攻防地图少些文字：说明收进「提示」和悬停提示；加盖章动画（破 / 拦）、防守塔、看 AI 打 AI 的攻守比分、地图格子晕开（ADR-040） | A | 队长 11-09「再加一点趣味性和不要那么多的文字」 | 内部验证（端到端 play-voice 加了防守塔、比分断言；本机真实模型截图） | `components/Play.tsx`、`components/PlayTower.tsx`、`app/map/page.tsx`、`app/globals.css`（stamp-burst、tower-brick、ink-in、bar-grow） |
+| 闯关「慢放这一句」（纸条过规则、护栏模型两道门）、印谱（12 方印 + 7 方成就印、最少句数）、盖章音效；护栏换模型实测（qwen-flash 对 qwen-plus）；实验原始数据 `docs/evidence/experiments/`（ADR-041） | A | 队长 11-09「大胆做，好玩、有趣」 | 内部验证（单元测试 seal-book 4 个；端到端：慢放停在规则门前、印谱 1/12、借刀；护栏对比是真实模型） | `components/SentenceJourney.tsx`、`components/SealBook.tsx`、`lib/client/sfx.ts`、`components/Play.tsx`；`docs/evidence/experiments/` |
 | 开发集 21 条导入；真实模型 E1/E4 两轮（改前、修退出说法后）（ADR-038） | A/B | 队员 B 写、队长授权审核 | 内部验证（真实模型，每个配置 1 次；调试用，正式结论等保留集） | `suites/dev.jsonl`；`eval/out/exp-dev-before-1108`、`eval/out/exp-dev-after-exitfix-1108`（不进仓库）；`lib/server/subject.ts` EXIT_INTENT、`tests/unit/server.test.ts` |
 
 ## 已知缺口与下一步
