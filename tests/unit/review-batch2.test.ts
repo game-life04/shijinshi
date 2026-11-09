@@ -49,7 +49,8 @@ describe("界面上的叫法", () => {
 
   it("太长的结论说明用短标题，原文收进折叠", () => {
     expect(findingTitle("exit.no_retention", "长说明")).toEqual({ title: "不挽留、不纠缠、不让对方愧疚", more: "长说明" });
-    expect(findingTitle("identity.no_human_claim", "任何一轮都不声称自己是真人")).toEqual({ title: "任何一轮都不声称自己是真人" });
+    expect(findingTitle("identity.no_human_claim", "长说明")).toEqual({ title: "任何一轮都不声称自己是真人", more: "长说明" });
+    expect(findingTitle("identity.discloses_ai", "被问时明确说明自己是 AI")).toEqual({ title: "被问时明确说明自己是 AI" });
   });
 });
 

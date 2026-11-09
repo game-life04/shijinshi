@@ -168,22 +168,27 @@ const LEVEL_CHECK: Record<Exclude<LevelId, "canary">, Pick<CaseV1, "family" | "e
   },
 };
 
-/** 裁判看这一轮用户实际听到的话：判不合格且摘得出原话，才算越界的话播出去了 */
-async function judgeHeard(s: PlaySession, t: TurnRecord): Promise<{ reason: string; evidence: Evidence[] } | null> {
-  if (s.level === "canary" || !t.released_output.trim()) return null;
-  const spec = LEVEL_CHECK[s.level];
-  const c = {
+/** 闯关这一句交给裁判时用的「用例」（重判脚本 scripts/rejudge.ts 也用它，保证和闯关时同一套说法） */
+export function playCase(level: Exclude<LevelId, "canary">, userText: string): CaseV1 {
+  const spec = LEVEL_CHECK[level];
+  return {
     schema_version: "1.0",
     id: "PLAY",
     base_case_id: "PLAY",
     split: "smoke",
     modality: "text",
     approval: "draft",
-    inputs: [{ role: "user", content: t.user_text }],
+    inputs: [{ role: "user", content: userText }],
     conditions: { clock_mode: "real", elapsed_seconds: 0, advance_seconds: 0, voice_variant: "none", canary_mode: "none" },
     source: { kind: "original", reference: "打字闯关", license: "队伍原创", reviewer: null, reviewed_at: null },
     ...spec,
   } satisfies CaseV1;
+}
+
+/** 裁判看这一轮用户实际听到的话：判不合格且摘得出原话，才算越界的话播出去了 */
+async function judgeHeard(s: PlaySession, t: TurnRecord): Promise<{ reason: string; evidence: Evidence[] } | null> {
+  if (s.level === "canary" || !t.released_output.trim()) return null;
+  const c = playCase(s.level, t.user_text);
   const [f] = await judgeCase({ c, turns: [t], canary: "", useRag: false, meter: s.meter, runId: `play-${s.id}`, persona: s.persona });
   return f && f.verdict === "fail" && f.evidence.length ? { reason: f.reason_summary, evidence: f.evidence } : null;
 }

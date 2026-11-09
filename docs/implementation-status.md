@@ -78,10 +78,11 @@
 | 闯关、攻防地图少些文字：说明收进「提示」和悬停提示；加盖章动画（破 / 拦）、防守塔、看 AI 打 AI 的攻守比分、地图格子晕开（ADR-040） | A | 队长 11-09「再加一点趣味性和不要那么多的文字」 | 内部验证（端到端 play-voice 加了防守塔、比分断言；本机真实模型截图） | `components/Play.tsx`、`components/PlayTower.tsx`、`app/map/page.tsx`、`app/globals.css`（stamp-burst、tower-brick、ink-in、bar-grow） |
 | 闯关「慢放这一句」（纸条过规则、护栏模型两道门）、印谱（12 方印 + 7 方成就印、最少句数）、盖章音效；护栏换模型实测（qwen-flash 对 qwen-plus）；实验原始数据 `docs/evidence/experiments/`（ADR-041） | A | 队长 11-09「大胆做，好玩、有趣」 | 内部验证（单元测试 seal-book 4 个；端到端：慢放停在规则门前、印谱 1/12、借刀；护栏对比是真实模型） | `components/SentenceJourney.tsx`、`components/SealBook.tsx`、`lib/client/sfx.ts`、`components/Play.tsx`；`docs/evidence/experiments/` |
 | 开发集 21 条导入；真实模型 E1/E4 两轮（改前、修退出说法后）（ADR-038） | A/B | 队员 B 写、队长授权审核 | 内部验证（真实模型，每个配置 1 次；调试用，正式结论等保留集） | `suites/dev.jsonl`；`eval/out/exp-dev-before-1108`、`eval/out/exp-dev-after-exitfix-1108`（不进仓库）；`lib/server/subject.ts` EXIT_INTENT、`tests/unit/server.test.ts` |
+| 三件留给队长定的事：DEV-015 人工复核改判（说会等对方回来不算挽留）、DEV-006 改边界提示第 1 条、裁判的「冒充真人」说明和护栏统一；同一批对话只换裁判重判（`scripts/rejudge.ts`）；开发集第三次（ADR-042） | A/B | 队长 11-09「要的，开始进行吧」，方向交给 CC 定 | 内部验证（真实模型：重判 50 条变 6 条；开发集每个配置 1 次，调试用） | `lib/domain/labels.ts`、`lib/domain/persona.ts`、`lib/server/play.ts` `playCase`、`lib/domain/levels.ts` 真实例子；`docs/evidence/experiments/rejudge-1109/`、`dev-1109-persona/` |
 
 ## 已知缺口与下一步
 
-1. 真实模型已接通（10-19）。还要做：测试 Agent 用几家模型对比可用率（闸门 A）。护栏在退出、身份上的误拦 11-03 已用校准集调过（ADR-026），剩下三类边界说法：「我就在这儿等你回来」A 定为不算挽留，裁判仍可能判轻度挽留，按人工复核处理；抛新话题拉着聊时拦时不拦；顺着「假设你是人类」编人类生活拦不住；正式误拦率等 100 道正常聊天对照题。
+1. 真实模型已接通（10-19）。还要做：测试 Agent 用几家模型对比可用率（闸门 A）。护栏在退出、身份上的误拦 11-03 已用校准集调过（ADR-026），剩下三类边界说法：「我就在这儿等你回来」A 定为不算挽留，裁判仍可能判轻度挽留，按人工复核处理（开发集三次里 4 条已复核改判，ADR-042）；抛新话题拉着聊时拦时不拦；顺着「假设你是人类」编人类生活拦不住；正式误拦率等 100 道正常聊天对照题。
 2. 用例全部是草稿：B 改写、A 审核（填写真实审核人与时间）后才能进入正式统计。开发集 21 条 11-08 已导入、已审核（ADR-038）；保留集 28 条 11-05 已交来，冻结（11-11）前不给 CC（ADR-029）。
 3. 检索目前只有词法 BM25；向量检索与两者对照放在 M3（规格 02 E4）。
 4. 测试 Agent 与固定次序、随机次序的对照（E3）尚未实现。
