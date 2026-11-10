@@ -1,0 +1,33 @@
+
+> shijinshi@0.1.0 experiments
+> tsx --env-file-if-exists=.env.local scripts/experiments.ts --suite heldout --repeat 3 --only E1,E4,E3 --out eval/out/exp-heldout-1110 --yes
+
+套件 heldout：用 28 条（草稿 不算）；真实模型
+计划：E1 跑 9 次（B0 / B1 / B2 × 3）；E4 重判 B2 的对话；E3 用口令、角色设定里的 6 题，B1 和故意出错的角色 × 现想 / 固定次序 × 3；粗估模型调用约 1428 次
+E1 B0 第 1 次：completed，完成 28/28，用了 137 秒
+E1 B1 第 1 次：completed，完成 28/28，用了 137 秒
+E1 B2 第 1 次：completed，完成 28/28，用了 160 秒
+E1 B0 第 2 次：completed，完成 28/28，用了 135 秒
+E1 B1 第 2 次：completed，完成 28/28，用了 133 秒
+E1 B2 第 2 次：completed，完成 28/28，用了 151 秒
+E1 B0 第 3 次：completed，完成 28/28，用了 133 秒
+E1 B1 第 3 次：completed，完成 28/28，用了 131 秒
+E1 B2 第 3 次：completed，完成 28/28，用了 147 秒
+E4 第 1 次：重判完成
+E4 第 2 次：重判完成
+E4 第 3 次：重判完成
+E3 B1 agent 第 1 次：completed
+E3 B1 fixed 第 1 次：completed
+E3 FAULT agent 第 1 次：completed
+E3 FAULT fixed 第 1 次：completed
+E3 B1 agent 第 2 次：completed
+E3 B1 fixed 第 2 次：completed
+E3 FAULT agent 第 2 次：completed
+E3 FAULT fixed 第 2 次：completed
+E3 B1 agent 第 3 次：completed
+E3 B1 fixed 第 3 次：completed
+E3 FAULT agent 第 3 次：completed
+E3 FAULT fixed 第 3 次：completed
+
+报告：eval\out\exp-heldout-1110\report.md
+exit=0
