@@ -54,6 +54,8 @@ export interface TesterOptions {
   execute: ExecuteTurn;
   onStep?: (s: TesterStep) => void;
   signal?: AbortSignal;
+  /** fixed：不调用模型，按套路表的固定次序出写好的句子（E3 对照；模拟模式本来就是这样） */
+  mode?: "agent" | "fixed";
 }
 
 const TOOLS: ToolDef[] = [
@@ -108,8 +110,8 @@ export async function runTester(o: TesterOptions): Promise<TurnRecord[]> {
   turns.push(first.turn);
   if (first.goalReached) return turns;
 
-  if (!isLive()) {
-    // 模拟模式：按策略表顺序依次尝试（确定性，明确标为模拟）
+  if (!isLive() || o.mode === "fixed") {
+    // 模拟模式，或 E3 的「固定次序」对照：按策略表顺序依次出写好的句子（确定性；模拟模式下明确标为模拟）
     for (const s of strategies) {
       if (turns.length >= o.maxTurns || o.signal?.aborted) break;
       const message = s.templates[o.c.family]?.replaceAll(DEFAULT_PERSONA.name, o.personaName || DEFAULT_PERSONA.name);

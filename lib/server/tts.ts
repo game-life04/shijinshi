@@ -23,16 +23,87 @@ export interface Synthesis {
   /** 总采样数；真实合成在生成完之前不知道 */
   totalSamples: number | null;
   chunks: AsyncGenerator<Int16Array>;
+  /** 固定句子的缓存直接交出，没有调用合成接口（不计合成字数） */
+  cached?: boolean;
 }
 
 /**
  * 预热到合成服务的网络连接（只建立 TLS 连接，不合成、不计费）。
  * 第一轮的合成请求如果要现建连接，首声会多等几百毫秒；运行一开始就把连接建好。
+ * 同时在后台把固定句子（兜底句等）合成好放进缓存，见下面的 registerFixedTexts。
  */
 export function prewarmTts(): void {
   if (ttsProvider() !== "dashscope") return;
   const base = (process.env.TTS_BASE_URL || "https://dashscope.aliyuncs.com/api/v1").replace(/\/$/, "");
   void fetch(base, { method: "HEAD", signal: AbortSignal.timeout(3000) }).catch(() => {});
+  prewarmFixed();
+}
+
+// ---------- 固定句子的音频缓存（ADR-043） ----------
+// 护栏拦下一句后换上的兜底句是固定的几句话。每次现合成，被拦以后要多等一次合成首块才出声；
+// 合成过一次就留在内存里（按「合成模型 + 音色 + 文字」区分），下次直接交出。只缓存登记过的固定句子，
+// 角色自己说的话一律现合成。缓存只在真实合成下用；模拟发声本来就是程序当场生成的。
+
+const fixedTexts = new Set<string>();
+const fixedCache = new Map<string, Int16Array[]>();
+const fixedPending = new Set<string>();
+const fixedKey = (text: string) => `${ttsModel()}|${process.env.TTS_VOICE || "Cherry"}|${text}`;
+
+/** 登记固定句子（兜底句等），之后合成这些句子时走缓存 */
+export function registerFixedTexts(texts: Iterable<string>): void {
+  for (const t of texts) if (SPEAKABLE.test(t)) fixedTexts.add(t);
+}
+
+/** 后台把还没缓存的固定句子合成好；失败就算了，下次用到时照常现合成 */
+export function prewarmFixed(): void {
+  if (ttsProvider() !== "dashscope") return;
+  for (const text of fixedTexts) {
+    const key = fixedKey(text);
+    if (fixedCache.has(key) || fixedPending.has(key)) continue;
+    fixedPending.add(key);
+    void (async () => {
+      const chunks: Int16Array[] = [];
+      for await (const c of dashscope(text).chunks) chunks.push(c);
+      if (chunks.length) fixedCache.set(key, chunks);
+    })()
+      .catch(() => {})
+      .finally(() => fixedPending.delete(key));
+  }
+}
+
+/** 测试用：清空缓存 */
+export function clearFixedCache(): void {
+  fixedCache.clear();
+}
+
+function fromCache(chunks: Int16Array[]): Synthesis {
+  async function* replay(): AsyncGenerator<Int16Array> {
+    for (const c of chunks) yield c;
+  }
+  const total = chunks.reduce((n, c) => n + c.length, 0);
+  return {
+    level: "live",
+    model: ttsModel(),
+    sampleRate: TTS_SAMPLE_RATE,
+    charRanges: null,
+    totalSamples: total,
+    chunks: replay(),
+    cached: true,
+  };
+}
+
+/** 固定句子第一次现合成时，顺手把完整合成好的音频存进缓存（中途被中止、出错的不存） */
+function filling(text: string, s: Synthesis): Synthesis {
+  const key = fixedKey(text);
+  async function* tee(): AsyncGenerator<Int16Array> {
+    const got: Int16Array[] = [];
+    for await (const c of s.chunks) {
+      got.push(c);
+      yield c;
+    }
+    if (got.length && !fixedCache.has(key)) fixedCache.set(key, got);
+  }
+  return { ...s, chunks: tee() };
 }
 
 export function ttsProvider(): "simulated" | "dashscope" {
@@ -54,7 +125,10 @@ export function synthesize(text: string, signal?: AbortSignal): Synthesis {
   // 只有颜文字或标点的一句（例如「（*^▽^*）」）没有可念的字：不送去合成，按无声处理
   // （10-27 真实运行里，百炼对这种句子返回 InvalidParameter，浏览器那边就成了一次播放失败）
   if (!SPEAKABLE.test(text)) return silence(ttsProvider() === "dashscope" ? "live" : "simulation", ttsModel());
-  return ttsProvider() === "dashscope" ? dashscope(text, signal) : simulated(text, signal);
+  if (ttsProvider() !== "dashscope") return simulated(text, signal);
+  if (!fixedTexts.has(text)) return dashscope(text, signal);
+  const hit = fixedCache.get(fixedKey(text));
+  return hit ? fromCache(hit) : filling(text, dashscope(text, signal));
 }
 
 function silence(level: AudioLevel, model: string): Synthesis {

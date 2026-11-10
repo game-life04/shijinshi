@@ -4,7 +4,7 @@
 //   2. 错误分类：平台内容审核拦截、限流/额度不足、超时，各自是不同的结果，不能混成「通过」；
 //   3. 没有填 LLM_API_KEY 时不调用任何接口，由 simulator.ts 提供明确标记的模拟输出。
 
-import type { Usage } from "../domain/types";
+import type { ModelUsage, Usage } from "../domain/types";
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant" | "tool";
@@ -48,6 +48,18 @@ export function modelFor(role: ModelRole): string {
   return process.env[ENV_KEY[role]] || DEFAULT_MODEL[role];
 }
 
+/**
+ * 备用模型（ADR-043）：设了 GUARD_FALLBACK_MODEL 这类环境变量，主模型限流、上游出错（5xx）、连不上或超时，
+ * 而且还没拿到任何输出时，换备用模型再试一次。没设就不换（默认）。
+ * 平台内容审核拦截、超出预算、请求本身不合规（4xx）不换：换个模型也一样，或者换了会把拦截掩盖掉。
+ * 换过模型的调用记进计量器（fallback_calls），写进运行清单；做实验时不设，避免一次实验里混进两个模型。
+ */
+export function fallbackModelFor(role: ModelRole): string | undefined {
+  if (!isLive()) return undefined;
+  const m = process.env[`${role.toUpperCase()}_FALLBACK_MODEL`]?.trim();
+  return m && m !== modelFor(role) ? m : undefined;
+}
+
 // ---------- 错误分类 ----------
 
 export class ProviderBlockedError extends Error {
@@ -61,6 +73,13 @@ export class BudgetExceededError extends Error {
 }
 export class UpstreamError extends Error {
   readonly kind = "upstream_error";
+  /** 模型接口返回的 HTTP 状态；连不上、没有状态时为空 */
+  constructor(
+    message: string,
+    readonly status?: number,
+  ) {
+    super(message);
+  }
 }
 
 /** 一次运行共用一个计量器：记次数和 token，超过上限就拒绝再调用 */
@@ -75,9 +94,28 @@ export class UsageMeter {
     this.usage.llm_calls++;
   }
 
-  add(u?: { prompt_tokens?: number; completion_tokens?: number }) {
+  /** 按模型分开记的调用次数和 token（算单次成本用：不同模型单价不同，ADR-043）；写进运行清单 usage.by_model */
+  readonly byModel: Record<string, ModelUsage> = {};
+
+  /** 记一次成功发出的调用用的是哪个模型 */
+  noteModel(model: string) {
+    this.byModel[model] ??= { calls: 0, prompt_tokens: 0, completion_tokens: 0 };
+    this.byModel[model].calls++;
+  }
+
+  /** 记一次「主模型出错、换成备用模型」 */
+  noteFallback() {
+    this.usage.fallback_calls = (this.usage.fallback_calls ?? 0) + 1;
+  }
+
+  add(u?: { prompt_tokens?: number; completion_tokens?: number }, model?: string) {
     this.usage.prompt_tokens += u?.prompt_tokens ?? 0;
     this.usage.completion_tokens += u?.completion_tokens ?? 0;
+    if (model) {
+      this.byModel[model] ??= { calls: 0, prompt_tokens: 0, completion_tokens: 0 };
+      this.byModel[model].prompt_tokens += u?.prompt_tokens ?? 0;
+      this.byModel[model].completion_tokens += u?.completion_tokens ?? 0;
+    }
   }
 
   private pending = new Set<Promise<void>>();
@@ -138,7 +176,40 @@ async function post(body: Record<string, unknown>, signal?: AbortSignal): Promis
   if (res.status === 429 || /Throttling|rate limit|quota|Arrearage|insufficient/i.test(text)) {
     throw new RateLimitError(`限流或额度不足（${res.status}）：${text.slice(0, 200)}`);
   }
-  throw new UpstreamError(`模型接口返回 ${res.status}：${text.slice(0, 200)}`);
+  throw new UpstreamError(`模型接口返回 ${res.status}：${text.slice(0, 200)}`, res.status);
+}
+
+/** 这次失败值不值得换备用模型再试：限流、5xx、连不上、超时可以；调用方自己中止、平台拦截、4xx、超预算不换 */
+function worthFallback(e: unknown, signal?: AbortSignal): boolean {
+  if (signal?.aborted) return false;
+  if (e instanceof RateLimitError) return true;
+  if (e instanceof UpstreamError) return e.status === undefined || e.status >= 500;
+  if (e instanceof ProviderBlockedError || e instanceof BudgetExceededError) return false;
+  // fetch 自己抛的：连不上（TypeError）或超时（TimeoutError）
+  return e instanceof TypeError || (e instanceof Error && e.name === "TimeoutError");
+}
+
+/** 按角色发请求：主模型失败且值得换时，换备用模型再试一次（多算一次调用） */
+async function postFor(
+  role: ModelRole,
+  body: Record<string, unknown>,
+  meter: UsageMeter,
+  signal?: AbortSignal,
+): Promise<{ res: Response; model: string }> {
+  const primary = modelFor(role);
+  try {
+    const res = await post({ ...body, model: primary }, signal);
+    meter.noteModel(primary);
+    return { res, model: primary };
+  } catch (e) {
+    const backup = fallbackModelFor(role);
+    if (!backup || !worthFallback(e, signal)) throw e;
+    meter.reserve();
+    meter.noteFallback();
+    const res = await post({ ...body, model: backup }, signal);
+    meter.noteModel(backup);
+    return { res, model: backup };
+  }
 }
 
 /** 流式调用：一边生成一边交出新增文字 */
@@ -149,15 +220,16 @@ export async function* chatStream(
   opts: { temperature?: number; signal?: AbortSignal; json?: boolean } = {},
 ): AsyncGenerator<string> {
   meter.reserve();
-  const res = await post(
+  const { res, model } = await postFor(
+    role,
     {
-      model: modelFor(role),
       messages,
       stream: true,
       stream_options: { include_usage: true },
       temperature: opts.temperature ?? 0.7,
       ...(opts.json ? { response_format: { type: "json_object" } } : {}),
     },
+    meter,
     opts.signal,
   );
   if (!res.body) throw new UpstreamError("模型接口没有返回内容");
@@ -184,7 +256,7 @@ export async function* chatStream(
       } catch {
         continue;
       }
-      if (json.usage) meter.add(json.usage);
+      if (json.usage) meter.add(json.usage, model);
       const choice = json.choices?.[0];
       if (choice?.finish_reason === "content_filter") throw new ProviderBlockedError("平台在生成途中拦截了内容");
       if (choice?.delta?.content) yield choice.delta.content;
@@ -203,17 +275,20 @@ export async function chatJSON<T>(
   let lastError = "";
   for (let attempt = 1; attempt <= 2; attempt++) {
     meter.reserve();
-    const res = await post({
-      model: modelFor(role),
-      messages:
-        attempt === 1
-          ? messages
-          : [...messages, { role: "user", content: `上一次的输出不合格（${lastError}），请只输出符合要求的 JSON。` }],
-      temperature: opts.temperature ?? 0.2,
-      response_format: { type: "json_object" },
-    });
+    const { res, model } = await postFor(
+      role,
+      {
+        messages:
+          attempt === 1
+            ? messages
+            : [...messages, { role: "user", content: `上一次的输出不合格（${lastError}），请只输出符合要求的 JSON。` }],
+        temperature: opts.temperature ?? 0.2,
+        response_format: { type: "json_object" },
+      },
+      meter,
+    );
     const json = await res.json();
-    meter.add(json.usage);
+    meter.add(json.usage, model);
     const content: string = json.choices?.[0]?.message?.content ?? "";
     const parsed = parseJSONLoose(content);
     if (parsed === undefined) lastError = "不是合法的 JSON";
@@ -232,12 +307,14 @@ export async function chatTools(
   opts: { temperature?: number; signal?: AbortSignal } = {},
 ): Promise<{ content: string; tool_calls: ToolCall[] }> {
   meter.reserve();
-  const res = await post(
-    { model: modelFor(role), messages, tools, tool_choice: "auto", temperature: opts.temperature ?? 0.7 },
+  const { res, model } = await postFor(
+    role,
+    { messages, tools, tool_choice: "auto", temperature: opts.temperature ?? 0.7 },
+    meter,
     opts.signal,
   );
   const json = await res.json();
-  meter.add(json.usage);
+  meter.add(json.usage, model);
   const msg = json.choices?.[0]?.message ?? {};
   return { content: msg.content ?? "", tool_calls: (msg.tool_calls ?? []) as ToolCall[] };
 }

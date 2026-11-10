@@ -8,6 +8,7 @@
 
 import dynamic from "next/dynamic";
 import { useEffect, useRef, useState } from "react";
+import { preload } from "react-dom";
 import { type AvatarStage, useAvatarStage, usePerformer } from "@/lib/client/avatar/stage";
 import type { PerformContext, Performer } from "@/lib/client/avatar/types";
 import bustStill from "./avatar-art/qiyetao-bust.jpg";
@@ -68,6 +69,9 @@ export default function Avatar({
   silent = false,
   subjectName,
 }: AvatarProps) {
+  // 模型文件（约 3.8 MB）原来要等 three.js 那几个大脚本下载完才开始拉；这里在页面一出形象外壳就让浏览器先下载，
+  // 请求方式和 GLTFLoader 的 fetch 一致（同源、不带跨站凭据），浏览器才会复用这次下载（ADR-043）
+  preload(VRM_URL, { as: "fetch", crossOrigin: "anonymous" });
   const own = usePerformer(context ?? { page: "workbench" });
   const ownStage = useAvatarStage(performer ?? own, mouth, !given);
   const stage = given ?? ownStage;

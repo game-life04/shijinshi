@@ -54,7 +54,8 @@ export class AudioStore {
       preparedAt: performance.now(),
     };
     this.entries.set(uttId, e);
-    this.chars += text.length;
+    // 固定句子的缓存没调合成接口，不计字数
+    if (!e.synth.cached) this.chars += text.length;
     void this.pump(e);
   }
 

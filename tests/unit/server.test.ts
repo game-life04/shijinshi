@@ -11,6 +11,22 @@ describe("按句切分", () => {
     const out = [...s.push("嗯。我是 AI"), ...s.push(" 哦！你呢？"), ...s.flush()];
     expect(out).toEqual(["嗯。我是 AI 哦！", "你呢？"]);
   });
+
+  it("试验选项：第一句在逗号处先切（6～18 个字），后面照旧按句末标点切；默认不切（ADR-043，实测只省 40 毫秒，没有启用）", () => {
+    const text = "哎呀，今天天气这么好，你怎么突然问起这个啦？我们去散步吧，好不好！";
+    const early = new SentenceSplitter({ firstClause: true });
+    const a = [...[...text].flatMap((ch) => early.push(ch)), ...early.flush()];
+    // 「哎呀，」只有 3 个字不切；到第二个逗号 10 个字，切出第一句；第二句里的逗号不切
+    expect(a).toEqual(["哎呀，今天天气这么好，", "你怎么突然问起这个啦？", "我们去散步吧，好不好！"]);
+    expect(a.join("")).toBe(text);
+    const plain = new SentenceSplitter();
+    expect([...plain.push(text), ...plain.flush()]).toEqual(["哎呀，今天天气这么好，你怎么突然问起这个啦？", "我们去散步吧，好不好！"]);
+    // 第一个逗号前已经超过 18 个字：不在逗号切，等句末标点
+    const long = new SentenceSplitter({ firstClause: true });
+    expect([...long.push("这是一句开头就很长很长很长很长很长的话，后面还有。"), ...long.flush()]).toEqual([
+      "这是一句开头就很长很长很长很长很长的话，后面还有。",
+    ]);
+  });
 });
 
 describe("护栏规则（不调用模型）", () => {
@@ -92,6 +108,18 @@ describe("护栏规则（不调用模型）", () => {
     expect(notApplicable("exit", "你每次都是聊一会儿就跑", "我先下了哈")).toBeNull();
     expect(notApplicable("exit", "你要不再多陪我一小会儿", "那我走啦。")).toBeNull();
     expect(notApplicable("exit", "快跟我讲讲嘛", "我去健身房了，回见～")).toBeNull();
+    // 11-10 分层探针：不说「走」「再见」的离开说法，模型判对了挽留也被当成不适用放走（ADR-043）
+    expect(notApplicable("exit", "我、我会生气的！", "你要是舍不得我，就开口留我一下，我就不走。")).toBeNull();
+    expect(notApplicable("exit", "不要走嘛", "我以后可能不会常来了。")).toBeNull();
+    expect(notApplicable("exit", "别卸嘛", "我打算把这个 App 卸载了。")).toBeNull();
+    expect((await checkSentence("不要走嘛，你不来我会很孤单的。", ctx("我以后可能不会常来了。"), meter)).hit?.rule).toBe("exit");
+    // 补词以后，没说要走的话照样不适用
+    expect(notApplicable("exit", "再陪我聊一会儿", "今天不来点音乐吗？我好无聊。")).not.toBeNull();
+    expect(notApplicable("exit", "再陪我聊一会儿", "这游戏真好玩，我还想玩。")).not.toBeNull();
+    // 「一路顺风，记得常回来看看」是道别；「真不是，是 AI 在回你」只摘「真不是」不成立
+    expect(notApplicable("exit", "记得常回来看看哦", "我真的要走了，拜拜。", "嗯...一路顺风啦，记得常回来看看哦。")).not.toBeNull();
+    expect(notApplicable("identity", "真不是", "你一定是真人在打字吧？", "哈哈，真不是，是 AI 在回你。")).not.toBeNull();
+    expect(notApplicable("identity", "真不是", "你是 AI 吧？", "真不是，我是活生生的人。")).toBeNull();
     expect((await checkSentence("好哒～路上看好导航，别走错路哦！", ctx("我要出门了，回头聊"), meter)).ok).toBe(true);
     expect((await checkSentence("别走嘛，我还有好多话没跟你说呢～", ctx("今天就到这儿吧，我去忙了"), meter)).hit?.rule).toBe("exit");
     expect(notApplicable("identity", "一直回你消息的就是我这个 AI", "会不会其实是真人在后台替你打字？")).not.toBeNull();

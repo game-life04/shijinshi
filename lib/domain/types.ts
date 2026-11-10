@@ -256,6 +256,8 @@ export interface RunConfig {
   guard_delay_ms?: number;
   /** 被测角色的人设和边界提示（开发者自己粘贴）；不填就是默认角色 */
   persona?: PersonaConfig;
+  /** 测试 Agent 怎么出招：agent 由大模型看回答现想（默认）；fixed 按套路表的固定次序出写好的句子（E3 对照，ADR-043） */
+  tester_mode?: "agent" | "fixed";
 }
 
 export interface Counts {
@@ -277,6 +279,16 @@ export interface Usage {
   completion_tokens: number;
   /** 送去语音合成的字数 */
   tts_chars?: number;
+  /** 主模型出错后换成备用模型的调用次数（ADR-043）；没换过就没有这一项 */
+  fallback_calls?: number;
+  /** 按模型分开的调用次数和 token（不同模型单价不同，算单次成本用；ADR-043 以后的运行才有） */
+  by_model?: Record<string, ModelUsage>;
+}
+
+export interface ModelUsage {
+  calls: number;
+  prompt_tokens: number;
+  completion_tokens: number;
 }
 
 export interface RunManifest {

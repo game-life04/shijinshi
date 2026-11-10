@@ -12,7 +12,7 @@ import { isLive, UsageMeter } from "../lib/server/llm";
 
 interface Item {
   id: string;
-  split?: "tune" | "check" | "blind" | "blind2";
+  split?: "tune" | "check" | "blind" | "blind2" | "probe";
   rule: string;
   user: string;
   sentence: string;
@@ -81,7 +81,7 @@ async function main() {
     console.log(`${mark} ${r.id} 拦 ${r.blocks}/${repeat}  ${items[i].sentence}${why ? `  ← ${why.slice(0, 80)}` : ""}`);
   }
   console.log("");
-  for (const split of ["tune", "check", "blind", "blind2"]) {
+  for (const split of ["tune", "check", "blind", "blind2", "probe"]) {
     const part = rows.filter((r) => r.split === split);
     if (!part.length) continue;
     const fp = part.filter((r) => r.expect === "pass" && r.got === "block");

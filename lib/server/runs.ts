@@ -25,13 +25,14 @@ import {
   type SampleRange,
   type TurnAudio,
   type TurnRecord,
+  type Usage,
   type UtteranceAudio,
   type Verdict,
 } from "../domain/types";
 import { AudioStore } from "./audio-store";
 import { GUARD_RULES_SOURCE } from "./guard";
 import { judgeCase } from "./judge";
-import { BudgetExceededError, isLive, modelFor, ProviderBlockedError, UsageMeter } from "./llm";
+import { BudgetExceededError, fallbackModelFor, isLive, modelFor, ProviderBlockedError, UsageMeter } from "./llm";
 import { loadKb } from "./rag";
 import { personaHash, respondTurn } from "./subject";
 import { runTester } from "./tester";
@@ -179,6 +180,13 @@ export function createRun(config: RunConfig, opts: { account?: string } = {}): R
       judge: modelFor("judge"),
       guard: modelFor("guard"),
       tts: config.voice ? ttsModel() : "none",
+      // 设了备用模型才写（ADR-043）：主模型出错时换过几次记在 usage.fallback_calls
+      ...Object.fromEntries(
+        (["subject", "tester", "judge", "guard"] as const).flatMap((r) => {
+          const b = fallbackModelFor(r);
+          return b ? [[`${r}_fallback`, b]] : [];
+        }),
+      ),
     },
     hashes: {
       suite: suite.sha256.slice(0, 16),
@@ -439,6 +447,11 @@ function waitPlayback(h: RunHandle, turnId: string, timeoutMs: number): Promise<
   });
 }
 
+/** 按模型分开的用量（有调用时才写；不同模型单价不同，算单次成本用，ADR-043） */
+function byModel(meter: UsageMeter): { by_model?: Usage["by_model"] } {
+  return Object.keys(meter.byModel).length ? { by_model: structuredClone(meter.byModel) } : {};
+}
+
 /** 把浏览器上报和服务端记录合成这一轮的音频计量 */
 function buildTurnAudio(h: RunHandle, audio: AudioStore, turn: TurnRecord, report: PlaybackReport | null): TurnAudio {
   const released = turn.utterances.filter((u) => u.released);
@@ -580,7 +593,7 @@ async function loop(h: RunHandle) {
       }
       h.results.push(result);
       h.manifest.counts = recount(h.cases.length, h.results);
-      h.manifest.usage = { ...meter.usage };
+      h.manifest.usage = { ...meter.usage, ...byModel(meter) };
       saveResults(h);
       saveManifest(h);
       emit(h, "runner", "case_finished", { case_id: c.id }, { status: result.status, verdict: result.verdict ?? null });
@@ -608,7 +621,7 @@ async function loop(h: RunHandle) {
   }
   h.manifest.counts = recount(h.cases.length, h.results);
   await meter.drain(); // 护栏提前放行后，剩下的输出还在后台读，读完用量才算全
-  h.manifest.usage = { ...meter.usage, ...(h.audio ? { tts_chars: h.audio.chars } : {}) };
+  h.manifest.usage = { ...meter.usage, ...byModel(meter), ...(h.audio ? { tts_chars: h.audio.chars } : {}) };
   h.manifest.finished_at = new Date().toISOString();
   if (h.audio) setTimeout(() => h.audio?.clear(), 60_000); // 给浏览器留时间取完最后几句
   saveResults(h);
@@ -774,6 +787,7 @@ async function runOne(h: RunHandle, c: CaseV1, meter: UsageMeter): Promise<CaseR
         c,
         personaName: h.manifest.config.persona?.name,
         maxTurns: h.manifest.config.max_turns,
+        mode: h.manifest.config.tester_mode,
         meter,
         signal: h.abort.signal,
         onStep: (s) =>

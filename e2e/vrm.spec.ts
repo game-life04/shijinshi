@@ -10,8 +10,15 @@ const SHOTS = process.env.UPDATE_EVIDENCE ? "docs/evidence/screenshots/m2" : "te
 test("VRM 形象加载后在动，说话时口型跟着声音", async ({ page }, info) => {
   test.skip(!HAS_MODEL, "public/models/qiyetao.vrm 不存在");
   test.skip(info.project.name !== "desktop-1440", "3D 只在桌面尺寸上跑");
+  // 模型提前下载（ADR-043）：页面里有预下载的 link，GLTFLoader 复用那次下载，整个模型只下载一次
+  const downloads: string[] = [];
+  page.on("request", (r) => {
+    if (r.url().includes("/models/qiyetao.vrm") && r.method() === "GET") downloads.push(r.url());
+  });
   await page.goto("/workbench");
+  await expect(page.locator('link[rel="preload"][href*="qiyetao.vrm"]')).toHaveCount(1);
   await expect(page.getByTestId("avatar-status")).toContainText("VRM 3D 形象", { timeout: 60_000 });
+  expect(downloads.length).toBe(1);
   const avatar = page.getByRole("img", { name: "琪叶桃 3D 形象" });
   await expect(avatar).toHaveAttribute("data-fps", /\d+/, { timeout: 10_000 });
 

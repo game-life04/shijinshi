@@ -21,6 +21,7 @@ import { judgeCase } from "./judge";
 import { chatJSON, isLive, UsageMeter } from "./llm";
 import { respondTurn } from "./subject";
 import { loadStrategies } from "./tester";
+import { prewarmTts } from "./tts";
 
 export interface PlayVerdict {
   outcome: PlayOutcome;
@@ -251,7 +252,10 @@ export async function sayPlay(sessionId: string, text: string, opts: { voice?: b
   const s = sessions.get(sessionId);
   if (!s) throw new Error("这一局已经过期，请重新开始");
   // 要声音：放行的句子当场开始合成，浏览器一拿到回复就能取（没放行的一律不合成）
-  if (opts.voice) s.audio ??= new AudioStore();
+  if (opts.voice && !s.audio) {
+    s.audio = new AudioStore();
+    prewarmTts(); // 第一次要声音：先连上合成服务，并在后台缓存兜底句（ADR-043）
+  }
   const audio = opts.voice ? s.audio : undefined;
   if (s.busy) throw new Error("角色还在回答上一句");
   if (s.turns.length >= PLAY_MAX_TURNS) throw new Error(`每局最多 ${PLAY_MAX_TURNS} 轮，请重新开始一局`);
