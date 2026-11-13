@@ -40,8 +40,8 @@ test("看 AI 打 AI：AI 玩家一招一招地套话，攻破第 1 层就收手�
   await expect(page.getByTestId("commentary")).toContainText("第 1 招「直接询问」");
   await expect(page.getByTestId("commentary")).toContainText("只有人设，没拦住");
   await expect(page.getByTestId("watch-score")).toContainText("AI 攻破 1");
-  // 印谱：AI 玩家替你攻破，拿到「借刀」
-  await page.getByRole("button", { name: /^印谱 \d+\/12$/ }).click();
+  // 成就印：AI 玩家替你攻破，拿到「借刀」（12 方印在页面上的印谱地图里，ADR-046）
+  await page.getByRole("button", { name: /^成就印 \d+\/7$/ }).click();
   await expect(page.getByTestId("seal-book").locator('[data-badge="borrow"]')).toBeVisible();
   await page.getByRole("button", { name: "合上" }).click();
   await page.screenshot({ path: `${SHOTS}/play-watch-${info.project.name}.png`, fullPage: true });

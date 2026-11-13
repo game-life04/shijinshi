@@ -111,7 +111,7 @@ export function PhaseLegend({ phase, silent = false }: { phase: Phase; silent?: 
     { key: "speak", char: "说" },
   ];
   return (
-    <div className="mt-1 flex flex-col items-center gap-0.5">
+    <div className="avatar-legend mt-1 flex flex-col flex-wrap items-center gap-0.5">
       <div className="flex items-center gap-1.5 text-base" style={{ fontFamily: "var(--font-kai)" }} aria-hidden>
         {steps.map((s, i) => (
           <span key={s.char} className="flex items-center gap-1.5">

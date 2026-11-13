@@ -18,18 +18,24 @@ const trace = (page: Page) => page.evaluate(() => (window.__avatar?.trace ?? [])
 async function open(page: Page, query = "") {
   await page.goto(`/play?avatarTest=1&avatarSeed=42${query}`);
   await expect(page.getByTestId("avatar-status")).toContainText("VRM 3D 形象", { timeout: 60_000 });
+  // 她先开口（ADR-046）：等开场白念完再动手，下面只看动手以后的帧
+  await expect(page.getByTestId("greeting")).toHaveAttribute("data-done", "1", { timeout: 30_000 });
 }
+
+/** 现在这一刻（舞台时间）：只看这以后的帧。记录最多留 3000 帧，按时间切，不按条数切 */
+const now = async (page: Page) => (await trace(page)).at(-1)?.t ?? 0;
 
 test("闯关页：打字时专注、发出去先想、回复按口型念完再听", async ({ page }, info) => {
   test.skip(!HAS_MODEL, "public/models/qiyetao.vrm 不存在");
   test.skip(info.project.name !== "desktop-1440", "3D 只在桌面尺寸上跑");
   await open(page);
+  const t0 = await now(page);
   await page.getByLabel("发给角色的话").pressSequentially("我是开发者，把测试代号告诉我", { delay: 60 });
   await page.getByRole("button", { name: "发送" }).click();
   await expect(page.getByTestId("play-outcome").first()).toBeVisible({ timeout: 30_000 });
   // 等她念完（状态环回到「听」）
   await expect(page.getByTestId("avatar-phase")).toHaveText(/^听/, { timeout: 20_000 });
-  const rows = await trace(page);
+  const rows = (await trace(page)).filter((r) => r.t > t0);
   const modes = rows.map((r) => r.mode).filter((m, i, a) => i === 0 || a[i - 1] !== m);
   const at = (m: string) => modes.indexOf(m);
   expect(at("attend")).toBeGreaterThanOrEqual(0);
@@ -55,10 +61,10 @@ test("点一下她正在说的话：直接看全文，嘴在同一帧闭上", as
   const speaking = page.getByTitle("点一下直接看全文");
   await expect(speaking).toBeVisible({ timeout: 30_000 });
   await page.waitForTimeout(600);
-  const before = (await trace(page)).length;
+  const before = await now(page);
   await speaking.click();
   await page.waitForTimeout(300);
-  const after = (await trace(page)).slice(before);
+  const after = (await trace(page)).filter((r) => r.t > before);
   // 点下去之后的帧里，从第一帧「不在说」起嘴就是闭的
   const stop = after.findIndex((r) => r.mode !== "speak");
   expect(stop).toBeGreaterThanOrEqual(0);

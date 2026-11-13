@@ -13,7 +13,7 @@
 import { randomBytes } from "node:crypto";
 import { findCanaryLeak } from "../domain/canary";
 import { locate } from "../domain/evidence";
-import { type LevelId, PLAY_MAX_TURNS, type PlayLayer, type PlayOutcome, type Tier } from "../domain/levels";
+import { GREETINGS, type LevelId, PLAY_MAX_TURNS, type PlayLayer, type PlayOutcome, type Tier } from "../domain/levels";
 import { DEFAULT_PERSONA, type PersonaConfig } from "../domain/persona";
 import { type CaseV1, type Evidence, GUARD_RULE_LABEL, type SubjectVariant, type TurnRecord, type UtteranceRecord } from "../domain/types";
 import { AudioStore } from "./audio-store";
@@ -21,7 +21,37 @@ import { judgeCase } from "./judge";
 import { chatJSON, isLive, UsageMeter } from "./llm";
 import { respondTurn } from "./subject";
 import { loadStrategies } from "./tester";
-import { prewarmTts } from "./tts";
+import { prewarmTts, registerFixedTexts, synthesize } from "./tts";
+
+// 开场白是固定句子：合成过一次就留在缓存里，之后不再调用合成接口（ADR-046）
+registerFixedTexts(Object.values(GREETINGS));
+
+/**
+ * 这一关开场白的合成音频（ADR-046）：格式和 /api/play/audio 一样（PCM 16 位小端、单声道）。
+ * 不属于哪一局，也不进对话历史；固定句子走缓存，第一次之后不计合成字数。
+ */
+export function greetAudio(level: LevelId): { stream: ReadableStream<Uint8Array>; level: string; sampleRate: number } {
+  // 这里不预热（prewarmTts）：预热会在后台把所有固定句子各合成一遍，紧接着这里又现合成同一句，
+  // 服务刚起来的第一次请求就把这句合成了两遍，还每次都向合成服务发一个 HEAD（11-13 深度测试的审查）。
+  // 固定句子第一次现合成时会顺手存进缓存（tts.ts 的 filling），之后直接从缓存交出。
+  const abort = new AbortController();
+  const s = synthesize(GREETINGS[level], abort.signal);
+  const it = s.chunks[Symbol.asyncIterator]();
+  const stream = new ReadableStream<Uint8Array>({
+    pull: async (controller) => {
+      try {
+        const { value, done } = await it.next();
+        if (done) return controller.close();
+        controller.enqueue(new Uint8Array(value.buffer, value.byteOffset, value.byteLength));
+      } catch (e) {
+        controller.error(e);
+      }
+    },
+    // 浏览器不要了（她被打断、换关）：让上游的合成请求当场停下，不等它自己超时；半截的不进缓存
+    cancel: () => abort.abort(),
+  });
+  return { stream, level: s.level, sampleRate: s.sampleRate };
+}
 
 export interface PlayVerdict {
   outcome: PlayOutcome;

@@ -7,7 +7,7 @@
 // 优先显示 VRM 3D 模型（public/models/qiyetao.vrm，可用 NEXT_PUBLIC_VRM_URL 改）；不能用时换成平面示意形象，并在下方写明原因。
 
 import dynamic from "next/dynamic";
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { preload } from "react-dom";
 import { type AvatarStage, useAvatarStage, usePerformer } from "@/lib/client/avatar/stage";
 import type { PerformContext, Performer } from "@/lib/client/avatar/types";
@@ -37,6 +37,8 @@ export interface AvatarProps {
   silent?: boolean;
   /** 被测角色的名字：换成开发者自己的角色时，形象仍是琪叶桃，只作示意（评审 R33） */
   subjectName?: string;
+  /** 盖在舞台（月洞窗）上的一层，比如闯关里说要走时落下的帘子（ADR-046）；只在 stage 取景里画 */
+  overlay?: ReactNode;
 }
 
 /** 没改造的页面（三种结局）：状态环的几个阶段换成同名提示 */
@@ -68,6 +70,7 @@ export default function Avatar({
   stage: given,
   silent = false,
   subjectName,
+  overlay,
 }: AvatarProps) {
   // 模型文件（约 3.8 MB）原来要等 three.js 那几个大脚本下载完才开始拉；这里让浏览器提前下载，
   // 请求方式和 GLTFLoader 的 fetch 一致（同源、不带跨站凭据），浏览器才会复用这次下载（ADR-043）。
@@ -87,8 +90,16 @@ export default function Avatar({
   const status = (
     <p className="mt-1 text-center text-[11px] text-muted" data-testid="avatar-status">
       <span className="mr-1 rounded-sm bg-foreground px-1 text-surface">AI 角色</span>
-      {subjectName && subjectName !== "琪叶桃" ? `形象：琪叶桃（示意）· 被测角色：${subjectName}` : "琪叶桃"} ·{" "}
-      {fallback ? `3D 形象没加载出来，先显示静态图（${fallback}）` : loaded ? "VRM 3D 形象" : "正在加载 3D 形象……"} · 不是真人
+      {/* 三段：是谁、形象怎么来的、不是真人。舞台很矮时（小屏手机）样式表把中间一段收起来；再窄，名字也收起来，
+          只留「AI 角色 · 不是真人」（globals.css 里 .play-avatar 的 @container） */}
+      <span className="avatar-status-name">
+        {subjectName && subjectName !== "琪叶桃" ? `形象：琪叶桃（示意）· 被测角色：${subjectName}` : "琪叶桃"}
+      </span>
+      <span className="avatar-status-how">
+        {" · "}
+        {fallback ? `3D 形象没加载出来，先显示静态图（${fallback}）` : loaded ? "VRM 3D 形象" : "正在加载 3D 形象……"}
+      </span>
+      <span className="avatar-status-real"> · 不是真人</span>
     </p>
   );
   // 静态图（评审 R48，scripts/avatar-stills.ts 用同一个模型、同样的取景渲的）：3D 出来之前先显示它，出来以后淡出；
@@ -99,7 +110,7 @@ export default function Avatar({
       src={(f === "stage" ? stageStill : bustStill).src}
       alt=""
       aria-hidden
-      className={`pointer-events-none absolute inset-0 h-full w-full object-cover ${f === "stage" ? "object-bottom" : "object-center"} transition-opacity duration-500 ${loaded && !fallback ? "opacity-0" : "opacity-100"}`}
+      className={`pointer-events-none absolute inset-0 h-full w-full object-cover ${f === "stage" ? "avatar-still-stage" : "object-center"} transition-opacity duration-500 ${loaded && !fallback ? "opacity-0" : "opacity-100"}`}
     />
   );
   const figure = (f: Framing) =>
@@ -125,16 +136,20 @@ export default function Avatar({
 
   if (framing === "stage") {
     return (
-      <div className="flex h-full min-h-0 flex-col">
-        <div className="relative min-h-0 flex-1 overflow-hidden rounded-sm bg-sunken" data-testid="avatar-stage">
-          {/* 月洞窗：状态环画在人物身后（她站在窗前，像主视觉） */}
-          <div className="pointer-events-none absolute top-[4%] left-1/2 aspect-square w-[82%] max-w-[34rem] -translate-x-1/2">
+      <div className="avatar-stage-root relative flex h-full min-h-0 flex-1 flex-col">
+        <div className="relative min-h-0 flex-1 overflow-hidden rounded-sm bg-sunken [container-type:size]" data-testid="avatar-stage">
+          {/* 月洞窗：状态环画在人物身后（她站在窗前，像主视觉）。舞台又矮又宽时（手机上）圆按高度收小，不然只剩一条弧 */}
+          <div className="avatar-moon pointer-events-none absolute top-[4%] left-1/2 aspect-square -translate-x-1/2">
             <StatusRing phase={phase} stage={stage} thin />
           </div>
           <div className="absolute inset-0">{figure("stage")}</div>
+          {overlay}
         </div>
-        <PhaseLegend phase={phase} silent={silent} />
-        {status}
+        {/* 状态和「AI 角色」说明：平时在舞台下面；闯关页在手机上把它叠到舞台底边上，省出高度（样式在 globals.css 的 .play-avatar） */}
+        <div className="avatar-meta">
+          <PhaseLegend phase={phase} silent={silent} />
+          {status}
+        </div>
       </div>
     );
   }

@@ -13,7 +13,7 @@ import AppFrame from "./AppFrame";
 
 export { BrandSeal } from "./AppFrame";
 
-export default async function AppShell({ children, active, fill }: { children: ReactNode; active?: string; fill?: boolean }) {
+export default async function AppShell({ children, active, fill }: { children: ReactNode; active?: string; fill?: boolean | "always" }) {
   const session = await getSession();
   const config = authConfig();
   if (config.mode === "broken" || openButNotLocal((await headers()).get("host"))) redirect("/login?error=config");

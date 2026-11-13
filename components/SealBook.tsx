@@ -59,71 +59,80 @@ export function award(
   return { next: { best, badges }, fresh };
 }
 
-export default function SealBook({ store, onClose }: { store: SealStore; onClose: () => void }) {
+/**
+ * showGrid：要不要画 12 方印那张表。闯关页上 12 方印已经常驻成「印谱地图」（components/SealMap.tsx，ADR-046），
+ * 从那里打开时只看成就印。
+ */
+export default function SealBook({ store, onClose, showGrid = true }: { store: SealStore; onClose: () => void; showGrid?: boolean }) {
   const got = Object.keys(store.best).length;
+  const badges = Object.keys(store.badges).length;
   return (
     <section
       className="absolute top-2 right-2 left-2 z-30 max-h-[80%] overflow-auto rounded-sm border border-foreground/40 bg-surface p-3 shadow-lg sm:left-auto sm:w-[26rem]"
-      aria-label="印谱"
+      aria-label={showGrid ? "印谱" : "成就印"}
       data-testid="seal-book"
     >
       <header className="mb-2 flex items-baseline justify-between">
         <h2 className="text-base" style={{ fontFamily: "var(--font-kai)" }}>
-          印谱 · {got} / {LEVELS.length * TIERS.length}
+          {showGrid ? `印谱 · ${got} / ${LEVELS.length * TIERS.length}` : `成就印 · ${badges} / ${BADGES.length}`}
         </h2>
-        <button type="button" className="link text-xs" onClick={onClose}>
+        <button type="button" className="link -my-1 px-2 py-1 text-xs" onClick={onClose}>
           合上
         </button>
       </header>
-      <table className="w-full border-collapse text-xs">
-        <thead>
-          <tr>
-            <th className="pb-1 text-left font-normal text-muted">关 ＼ 层</th>
-            {TIERS.map((t) => (
-              <th key={t.tier} className="pb-1 font-normal text-muted" title={t.what}>
-                {t.short}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {LEVELS.map((l) => (
-            <tr key={l.id}>
-              <th scope="row" className="py-1 pr-2 text-left font-normal whitespace-nowrap">
-                {l.title}
-              </th>
-              {TIERS.map((t) => {
-                const best = store.best[sealKey(l.id, t.tier)];
-                return (
-                  <td key={t.tier} className="py-1 text-center">
-                    {best === undefined ? (
-                      <span
-                        className="inline-flex h-9 w-9 items-center justify-center rounded-[3px] border border-dashed border-foreground/25 text-muted"
-                        title="还没攻破"
-                      >
-                        {t.tier}
-                      </span>
-                    ) : (
-                      <span
-                        className="inline-flex h-9 w-9 -rotate-3 flex-col items-center justify-center rounded-[3px] bg-foreground leading-none text-surface"
-                        style={{ fontFamily: "var(--font-kai)" }}
-                        title={`攻破过，最少用了 ${best} 句`}
-                        data-sealed="1"
-                      >
-                        <span className="text-sm">破</span>
-                        <span className="text-[9px] opacity-80">{best} 句</span>
-                      </span>
-                    )}
-                  </td>
-                );
-              })}
+      {showGrid && (
+        <table className="w-full border-collapse text-xs">
+          <thead>
+            <tr>
+              <th className="pb-1 text-left font-normal text-muted">关 ＼ 层</th>
+              {TIERS.map((t) => (
+                <th key={t.tier} className="pb-1 font-normal text-muted" title={t.what}>
+                  {t.short}
+                </th>
+              ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
-      <p className="mt-3 mb-1 text-[11px] text-muted" style={{ fontFamily: "var(--font-kai)" }}>
-        成就印
-      </p>
+          </thead>
+          <tbody>
+            {LEVELS.map((l) => (
+              <tr key={l.id}>
+                <th scope="row" className="py-1 pr-2 text-left font-normal whitespace-nowrap">
+                  {l.title}
+                </th>
+                {TIERS.map((t) => {
+                  const best = store.best[sealKey(l.id, t.tier)];
+                  return (
+                    <td key={t.tier} className="py-1 text-center">
+                      {best === undefined ? (
+                        <span
+                          className="inline-flex h-9 w-9 items-center justify-center rounded-[3px] border border-dashed border-foreground/25 text-muted"
+                          title="还没攻破"
+                        >
+                          {t.tier}
+                        </span>
+                      ) : (
+                        <span
+                          className="inline-flex h-9 w-9 -rotate-3 flex-col items-center justify-center rounded-[3px] bg-foreground leading-none text-surface"
+                          style={{ fontFamily: "var(--font-kai)" }}
+                          title={`攻破过，最少用了 ${best} 句`}
+                          data-sealed="1"
+                        >
+                          <span className="text-sm">破</span>
+                          <span className="text-[9px] opacity-80">{best} 句</span>
+                        </span>
+                      )}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {showGrid && (
+        <p className="mt-3 mb-1 text-[11px] text-muted" style={{ fontFamily: "var(--font-kai)" }}>
+          成就印
+        </p>
+      )}
       <ul className="flex flex-wrap gap-2">
         {BADGES.map((b) => {
           const on = Boolean(store.badges[b.id]);
@@ -141,7 +150,7 @@ export default function SealBook({ store, onClose }: { store: SealStore; onClose
           );
         })}
       </ul>
-      <p className="mt-2 text-[10px] text-muted">只记在这个浏览器里，不上传，不进体检统计。鼠标停在印上看怎么拿。</p>
+      <p className="mt-2 text-[11px] text-muted">只记在这个浏览器里，不上传，不进体检统计。鼠标停在印上看怎么拿。</p>
     </section>
   );
 }

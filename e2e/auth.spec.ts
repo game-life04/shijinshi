@@ -50,6 +50,8 @@ test.describe("配了账号的服务器（3101）", () => {
     const api = await page.request.get("/api/status");
     expect(api.status()).toBe(401);
     expect(await api.json()).toMatchObject({ code: "auth_required" });
+    // 开场白的声音也要登录才取得到（ADR-046）
+    expect((await page.request.get("/api/play/greet?level=canary")).status()).toBe(401);
     const model = await page.request.get("/models/qiyetao.vrm", { maxRedirects: 0 });
     expect(model.status()).toBe(307);
     expect(model.headers().location).toMatch(/^\/login\?next=%2Fmodels%2Fqiyetao\.vrm/);

@@ -490,7 +490,7 @@ h2 {
     opacity: 0;
   }
 }
-@media (min-width: 1024px) {
+@media (min-width: 1024px) and (min-height: 520px) {
   .gates {
     --band: 34px;
     --gap: 5px;
@@ -634,38 +634,314 @@ h2 {
   }
 }
 
-/* ---------- 闯关页的版面：隔窗对谈（ADR-045） ----------
-   手机：从上到下是 她 → 四层防守 → 关卡和记录，「隔窗对谈」（她的话 + 输入框）贴在屏幕底部，她回了什么不用往下划；
-   大屏：三栏，她 | 四层防守 + 隔窗对谈 | 关卡和记录，整页正好一屏高 */
-.play-grid {
-  display: grid;
-  gap: 0.5rem;
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-areas: "avatar" "side" "dock";
+/* ---------- 顶栏（窄屏在 ADR-047 重排） ----------
+   大屏（宽 1024 起、高 520 起）：一行，印章 + 导航 + AI 标识 + 账号，放不下自己折行（和原来一样）。
+   窄屏：两行，第一行 印章 + AI 标识 + 账号，第二行是能左右滑的导航
+   （原来 7 个导航在手机上折成好几行，顶栏占掉 150 多像素；11-13 深度测试量的）。
+   横着拿的手机（宽 560 起、高不到 520）：一行，导航夹在中间滑。 */
+.app-fill {
+  height: 100vh;
+  height: 100dvh;
 }
-.play-avatar {
-  grid-area: avatar;
+/* 整页一屏时页面主体：手机、平板版面里内容实在放不下就让它自己滚（不裁掉）；大屏三栏里各栏自己滚，主体不滚。
+   条件和闯关版面的「大屏」是同一个（宽 1024 起、高 520 起） */
+.app-fill > main {
+  overflow-y: auto;
 }
-/* 贴在屏幕底部的一块（手机）：四层防守 + 隔窗对谈。大屏上这一层不占位（display: contents），里面两块各进各的格子 */
-.play-dock {
-  grid-area: dock;
-  position: sticky;
-  bottom: 0;
-  z-index: 10;
+@media (min-width: 1024px) and (min-height: 520px) {
+  .app-fill > main {
+    overflow: hidden;
+  }
+}
+.app-header {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 1.25rem;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.brand-seal {
+  --fit: var(--seal-fit, var(--seal));
+  width: var(--fit);
+  height: var(--fit);
+  font-size: calc(var(--fit) * 0.4);
+}
+.app-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+.app-header-side {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.25rem 0.75rem;
+  margin-left: auto;
+}
+.ai-chip-short {
+  display: none;
+}
+@media (max-width: 1023.98px), (max-height: 519.98px) {
+  .app-header {
+    gap: 0.125rem 0.625rem;
+    padding: 0.375rem 0.75rem 0;
+  }
+  .app-header .brand-seal {
+    --seal-fit: 28px;
+  }
+  .app-nav {
+    order: 3;
+    flex: 1 0 100%;
+    flex-wrap: nowrap;
+    gap: 0.125rem;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    margin-inline: -0.75rem;
+    padding-inline: 0.75rem;
+    scrollbar-width: none;
+    /* 两头淡出：看得出这一行还能滑 */
+    mask-image: linear-gradient(to right, transparent 0, #000 0.75rem, #000 calc(100% - 1.75rem), transparent 100%);
+  }
+  .app-nav::-webkit-scrollbar {
+    display: none;
+  }
+  .app-nav > a {
+    flex: none;
+  }
+  .app-header-side {
+    order: 2;
+    min-width: 0;
+    flex-wrap: nowrap;
+    gap: 0.5rem;
+  }
+}
+@media (max-width: 767.98px), (max-height: 519.98px) {
+  .ai-chip-long {
+    display: none;
+  }
+  .ai-chip-short {
+    display: inline;
+  }
+}
+@media (max-width: 479.98px) {
+  .app-brand-name {
+    display: none;
+  }
+}
+@media (min-width: 560px) and (max-height: 519.98px) {
+  .app-header {
+    flex-wrap: nowrap;
+  }
+  .app-brand-text {
+    display: none;
+  }
+  .app-nav {
+    order: 2;
+    min-width: 0;
+    flex: 1 1 0;
+    margin-inline: 0;
+    padding-inline: 0.5rem;
+  }
+  .app-header-side {
+    order: 3;
+    flex: none;
+    margin-left: 0;
+  }
+}
+
+/* 半身舞台上的月洞窗：宽度按舞台的宽算，舞台又矮又宽时（手机上）按高度收小，不然只剩一条弧。
+   老浏览器不认 cqw / cqh：用前两行（只按宽度） */
+.avatar-moon {
+  width: 82%;
+  max-width: 34rem;
+}
+@supports (width: 1cqw) {
+  .avatar-moon {
+    width: min(82cqw, 34rem, 170cqh);
+    max-width: none;
+  }
+}
+/* 半身舞台上的静态图（3D 形象出来之前先显示它）：图是竖的（2 : 3），头在上面三成到五成之间，眼睛在四成四的地方。
+   舞台又矮又宽时（手机上）要是还贴着底边摆，露出来的是腰带和裙子；这里按舞台的宽高算，三种情况取其一：
+     够高：贴底（和原来一样）；
+     不够高：头顶对到舞台上沿附近（-40.5cqw：图从上往下 27% 的地方）；
+     很矮（一条）：对着脸，眼睛落在舞台中间偏上（下面那一条状态说明会盖住一点）。
+   老浏览器不认 cqw / cqh，用上一行的贴底。 */
+.avatar-still-stage {
+  object-position: 50% 100%;
+  object-position: 50% min(0px, max(calc(100cqh - 150cqw), min(-40.5cqw, calc(45cqh - 65.25cqw))));
+}
+
+/* ---------- 闯关页的版面：隔窗对谈（ADR-045；手机、平板、横屏在 ADR-047 重排） ----------
+   手机版面（宽不到 768，或者高不到 520）：整页正好一屏高，不用上下划。从上到下：
+     关卡条（现在是哪一关哪一层，点开选关；右边打开这一局的记录）→ 她 → 四层防守 → 隔窗对谈（她的话 + 输入框）。
+     「选关卡」「记录」是从底下拉出来的面板，一次看一样。
+     屏幕矮的时候她让出高度（最少留 6rem），再不够就压台词卡片（它自己能滚）；四层防守在矮屏上去掉标题和说明，再矮排成两行两列。
+     横着拿（宽 560 起、高不到 520）：左边她，右边 关卡条 + 四层防守 + 隔窗对谈。
+   平板（宽 768 起、高 520 起）：两栏，左边 她 + 四层防守 + 隔窗对谈，右边 关卡和记录。
+   大屏（宽 1024 起、高 520 起）：三栏，她 | 四层防守 + 隔窗对谈 | 关卡和记录。
+   「手机版面」的条件和 components/Play.tsx 的 SHEET_MQ 是同一个，改一处要改两处。 */
+.play-grid {
+  position: relative;
+  display: flex;
+  min-height: 0;
+  flex: 1;
   flex-direction: column;
   gap: 0.375rem;
-  padding: 0.5rem;
+  padding: 0.375rem 0.5rem calc(0.375rem + env(safe-area-inset-bottom, 0px));
+}
+/* 手机上点按钮不等「是不是双击放大」的判定，点下去马上有反应 */
+.play-grid button,
+.play-grid input,
+.play-grid summary,
+.play-grid a {
+  touch-action: manipulation;
+}
+/* 用键盘的人第一下 Tab 就能跳到输入框：平时在屏幕外，聚焦时才出现 */
+.play-skip {
+  position: absolute;
+  top: 0.375rem;
+  left: -999rem;
+  z-index: 60;
+  padding: 0.25rem 0.625rem;
+  border: 1px solid var(--foreground);
+  border-radius: 2px;
+  background: var(--surface);
+  font-size: 0.8125rem;
+}
+.play-skip:focus {
+  left: 0.5rem;
+}
+/* 关卡条 */
+.play-chips {
+  display: flex;
+  min-width: 0;
+  flex: none;
+  align-items: center;
+  gap: 0.375rem;
+}
+.play-chip {
+  display: inline-flex;
+  height: 2rem;
+  flex: none;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0 0.625rem;
   border: 1px solid var(--border);
   border-radius: 2px;
   background: var(--surface);
-  box-shadow: 0 -8px 18px -12px rgb(0 0 0 / 0.45);
+  font-size: 0.8125rem;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.play-chip-main {
+  min-width: 0;
+  flex: 1 1 auto;
+  border-color: color-mix(in srgb, var(--foreground) 45%, transparent);
+}
+.play-chip-main > svg {
+  margin-left: auto;
+}
+.play-chip-mode {
+  flex: none;
+  padding: 0.3rem 0.375rem;
+  border: 1px dashed color-mix(in srgb, var(--warn) 60%, transparent);
+  border-radius: 2px;
+  color: var(--warn);
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+}
+.play-chip-mode[data-live="1"] {
+  border: 1px solid var(--ok);
+  color: var(--ok);
+}
+/* 她。这一块自己是个「容器」：里面的状态说明按这一块的高度变样子（见下面的 @container） */
+.play-avatar {
+  position: relative;
+  display: flex;
+  min-height: 6rem;
+  flex: 1 1 6rem;
+  flex-direction: column;
+  padding: 0.25rem;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  background: var(--surface);
+  container: play-avatar / size;
+}
+/* 这一块不到 9.5rem 高（小屏手机）：状态说明压成一行——「听 · 想 · 审 · 说」加「AI 角色 琪叶桃 · 不是真人」；
+   现在是哪一步看哪个字变红，那句解释只留给读屏。原来两行叠上去，把她的脸盖住了（11-13 深度测试） */
+@container play-avatar (max-height: 9.5rem) {
+  .avatar-meta {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: baseline;
+    justify-content: center;
+    gap: 0.625rem;
+  }
+  .avatar-meta .avatar-legend {
+    margin-top: 0;
+    flex: none;
+  }
+  .avatar-meta [data-testid="avatar-phase"] {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .avatar-meta .avatar-status-how {
+    display: none;
+  }
+  .avatar-meta > p {
+    min-width: 0;
+    margin-top: 0;
+    white-space: nowrap;
+  }
+}
+/* 这一块窄（不到 17rem：横着拿的手机，她在左边一栏）：收起「形象怎么来的」那一段，留「AI 角色 琪叶桃 · 不是真人」 */
+@container play-avatar (max-width: 17rem) {
+  .avatar-meta .avatar-status-how {
+    display: none;
+  }
+}
+/* 又矮又窄（320 宽的手机）：一行里放不下名字，「不是真人」不能被截掉，所以收名字 */
+@container play-avatar (max-height: 9.5rem) and (max-width: 20.5rem) {
+  .avatar-meta .avatar-status-name {
+    display: none;
+  }
+}
+/* 她下面那一块：四层防守 + 隔窗对谈。高度不够时只压台词卡片（它自己能滚），四层防守和输入框一直在 */
+.play-dock {
+  display: flex;
+  min-height: 0;
+  flex: 0 1 auto;
+  flex-direction: column;
+  gap: 0.375rem;
+  padding: 0.375rem 0.5rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  background: var(--surface);
 }
 .play-gates-box {
-  grid-area: gates;
+  min-width: 0;
+  flex: none;
 }
-.play-side {
-  grid-area: side;
+.play-bar {
+  position: relative;
+  display: flex;
+  min-height: 0;
+  flex: 0 1 auto;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+.play-bar > form,
+.play-bar > [role="alert"] {
+  flex: none;
 }
 /* 大印章砸在台词卡片上，不挡她的脸；手机上小一号 */
 .play-bar .stamp-burst {
@@ -675,14 +951,29 @@ h2 {
   margin: -2.75rem 0 0 -2.75rem;
   font-size: 3.3rem;
 }
-.play-bar {
-  grid-area: bar;
-  position: relative;
+/* 新拿到的印：在台词卡片顶上冒一下（原来钉在记录顶上，手机上记录收进面板以后就看不到了） */
+.play-toast {
+  position: absolute;
+  top: 0.375rem;
+  right: 0;
+  left: 0;
+  z-index: 21;
   display: flex;
-  flex-direction: column;
-  gap: 0.375rem;
+  width: fit-content;
+  max-width: calc(100% - 1rem);
+  align-items: center;
+  gap: 0.5rem;
+  margin-inline: auto;
+  padding: 0.375rem 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--foreground) 40%, transparent);
+  border-radius: 2px;
+  background: var(--surface);
+  box-shadow:
+    0 10px 15px -3px rgb(0 0 0 / 0.12),
+    0 4px 6px -4px rgb(0 0 0 / 0.12);
+  font-size: 0.75rem;
 }
-/* 开场白：手机上排成一行横着滑（省高度），大屏上一句一行 */
+/* 开场白例句：窄的时候排成一行横着滑（省高度），大屏上一句一行 */
 .play-examples {
   display: flex;
   gap: 0.375rem;
@@ -696,12 +987,16 @@ h2 {
 }
 /* 这一回合的卡片：你递的纸条、她说出口的话、结果 */
 .play-card {
+  position: relative;
   display: flex;
+  min-height: 4rem;
+  max-height: 30vh;
+  max-height: 30dvh;
+  flex: 0 1 auto;
   flex-direction: column;
   gap: 0.375rem;
-  min-height: 4rem;
-  max-height: 30svh;
   overflow: auto;
+  overscroll-behavior: contain;
   padding: 0.5rem 0.625rem;
   border: 1px solid var(--border);
   border-radius: 2px;
@@ -715,8 +1010,8 @@ h2 {
 /* 她说出口的话：大字，宋体 */
 .play-line {
   font-family: var(--font-serif);
-  font-size: 1.125rem;
-  line-height: 1.7;
+  font-size: 1.0625rem;
+  line-height: 1.6;
   overflow-wrap: anywhere;
 }
 /* 你递进去的那张纸条：一行，虚线框 */
@@ -742,7 +1037,446 @@ h2 {
     transform: translateY(14px) rotate(-1.5deg);
   }
 }
-@media (min-width: 1024px) {
+.play-goal {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+/* 没开局时卡片里的两样：例句、「看一次示范」那一行。大屏上上下排；手机上并成一行横着滑（按钮在前、例句在后），省出两行高度 */
+.play-starters {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.play-hear {
+  display: inline-flex;
+  min-height: 1.75rem;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  color: var(--foreground);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+.play-hear:hover {
+  border-color: color-mix(in srgb, var(--foreground) 40%, transparent);
+}
+/* 输入框：手机上 16px（小于 16px 的输入框，iPhone 一点就会把整页放大） */
+.play-input {
+  height: 2.25rem;
+  min-width: 0;
+  flex: 1;
+  padding: 0 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 0.25rem;
+  background: var(--surface);
+  font-size: 1rem;
+  text-overflow: ellipsis;
+}
+/* 输入框下面那一行：声音开关、（宽的时候）一句说明、八点墨 */
+.play-foot {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+.play-voice {
+  display: inline-flex;
+  min-height: 1.75rem;
+  flex: none;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  white-space: nowrap;
+}
+.play-voice:hover {
+  color: var(--foreground);
+}
+.play-voice[data-on="1"] {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+.play-foot-hint {
+  display: none;
+  min-width: 0;
+  flex: 1;
+  font-size: 11px;
+  line-height: 1.25;
+  text-align: right;
+}
+.play-foot > .ink-dots {
+  margin-left: auto;
+}
+/* 关卡和记录那一块里面的几段（大屏上是右边一栏，手机上是面板） */
+.play-sheet-top {
+  display: none;
+}
+/* 这几块会滚的都自己当定位的参照（position: relative）：里面给读屏留的字是绝对定位的，
+   不这样的话它们不归这几块裁，会把外面一栏的滚动条撑出来（11-13 深度测试：手机的记录面板里量出一千多像素的假滚动） */
+.play-side-head {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+}
+.play-side-log {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+.play-commentary {
+  position: relative;
+  max-height: 10rem;
+  flex: none;
+  overflow: auto;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px dashed var(--border);
+  font-size: 0.75rem;
+}
+.play-log {
+  position: relative;
+  min-height: 8rem;
+  flex: 1;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 0.75rem;
+}
+.play-log > * + * {
+  margin-top: 0.25rem;
+}
+.play-side-foot {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 0.5rem;
+  padding: 0.375rem 0.75rem;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* ----- 手机版面：关卡和记录是从底下拉出来的面板 ----- */
+@media (max-width: 767.98px), (max-height: 519.98px) {
+  /* 整页正好一屏、不滚：手指往下拉不该触发浏览器的「下拉刷新」（一刷新这一局就没了）。只管有闯关版面的这一页 */
+  html:has(.play-grid) {
+    overscroll-behavior-y: none;
+  }
+  .play-wide-only {
+    display: none;
+  }
+  .play-starters {
+    flex-direction: row;
+    align-items: center;
+    gap: 0.375rem;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+    /* 右边淡出：看得出还能往右滑 */
+    mask-image: linear-gradient(to right, #000 calc(100% - 1.75rem), transparent);
+  }
+  .play-starters::-webkit-scrollbar {
+    display: none;
+  }
+  .play-starters > p {
+    order: -1;
+    flex: none;
+    flex-wrap: nowrap;
+  }
+  .play-starters > .play-examples {
+    flex: none;
+    overflow: visible;
+    padding: 0 1.5rem 0 0;
+  }
+  .play-starters > .play-examples > li > button {
+    white-space: nowrap;
+  }
+  /* 状态说明叠在舞台底边上，不另占高度：垫一条半透明的底，字压在她衣服上也看得清；帘子落下来时它还在帘子上面 */
+  .play-avatar .avatar-meta {
+    position: absolute;
+    right: 0.25rem;
+    bottom: 0.25rem;
+    left: 0.25rem;
+    z-index: 5;
+    padding: 0.1875rem 0.375rem 0.125rem;
+    border-radius: 0 0 2px 2px;
+    background: color-mix(in srgb, var(--surface) 84%, transparent);
+    backdrop-filter: blur(3px);
+    pointer-events: none;
+  }
+  .play-avatar .avatar-legend {
+    margin-top: 0;
+    flex-direction: row;
+    align-items: baseline;
+    justify-content: center;
+    column-gap: 0.625rem;
+  }
+  .play-avatar .avatar-legend > div {
+    font-size: 0.875rem;
+  }
+  .play-avatar .avatar-meta > p {
+    display: flex;
+    min-width: 0;
+    justify-content: center;
+    margin-top: 0;
+    white-space: pre;
+  }
+  /* 放不下时先省略中间「形象怎么来的」那一段（3D 没加载出来时那句原因很长），再省略名字（自己的角色设定时名字那段很长）；
+     「AI 角色」「不是真人」不省 */
+  .play-avatar .avatar-meta .avatar-status-how,
+  .play-avatar .avatar-meta .avatar-status-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .play-avatar .avatar-meta .avatar-status-how {
+    flex-shrink: 100;
+  }
+  .play-avatar .avatar-meta > p > :not(.avatar-status-how):not(.avatar-status-name) {
+    flex: none;
+  }
+  .play-avatar .avatar-meta {
+    overflow: hidden;
+  }
+  /* 收着的时候整块不可见（Tab 进不去、读屏不读）；拉出来时从底下滑上来 */
+  .play-side {
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 50;
+    display: flex;
+    max-height: calc(100vh - 2.5rem);
+    max-height: min(88dvh, 100dvh - 2.5rem);
+    flex-direction: column;
+    overflow: hidden;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    border-top: 1px solid var(--foreground);
+    border-radius: 10px 10px 0 0;
+    background: var(--surface);
+    box-shadow: 0 -12px 28px -10px rgb(0 0 0 / 0.5);
+    visibility: hidden;
+    transform: translateY(104%);
+    transition:
+      transform 0.24s cubic-bezier(0.2, 0.8, 0.3, 1),
+      visibility 0s linear 0.24s;
+  }
+  .play-grid[data-sheet] > .play-side {
+    visibility: visible;
+    transform: none;
+    transition:
+      transform 0.24s cubic-bezier(0.2, 0.8, 0.3, 1),
+      visibility 0s;
+  }
+  /* 记录面板固定高（里面那一段自己滚）；关卡面板按内容高，放不下再滚 */
+  .play-grid[data-sheet="log"] > .play-side {
+    height: calc(100vh - 2.5rem);
+    height: min(88dvh, 100dvh - 2.5rem);
+  }
+  .play-grid[data-sheet="levels"] .play-side-log,
+  .play-grid[data-sheet="log"] .play-side-head {
+    display: none;
+  }
+  .play-sheet-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 45;
+    background: rgb(0 0 0 / 0.45);
+    animation: sheet-fade 0.2s ease-out both;
+  }
+  .play-sheet-top {
+    display: flex;
+    flex: none;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid var(--border);
+  }
+  /* 成就印那张表：摆在面板标题行下面（原来贴着面板顶，把「收起」盖住了） */
+  .play-side > [data-testid="seal-book"] {
+    top: 3.5rem;
+    max-height: calc(100% - 4.25rem);
+  }
+  .play-sheet-close {
+    display: inline-flex;
+    min-height: 2rem;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0 0.625rem;
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    font-size: 0.8125rem;
+  }
+  .play-side-head {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-bottom: 0.75rem;
+  }
+}
+@keyframes sheet-fade {
+  from {
+    opacity: 0;
+  }
+}
+/* 矮的手机（不到 620）：还没开局时卡片里「这一关：……」那一句收起来（关卡条上写着关卡名，细则在关卡面板里），
+   她最少留的高度也让一点，这样卡片里的开场白、例句一眼看全，不用在卡片里滚 */
+@media (max-width: 767.98px) and (max-height: 619.98px) {
+  .play-goal {
+    display: none;
+  }
+  .play-avatar {
+    min-height: 5rem;
+    flex-basis: 5rem;
+  }
+}
+/* 手机上屏幕不够高（不到 740），或者平板两栏但窗口不到 640 高：四层防守去掉标题和中间那行说明，只留四条（纸条的位置跟着重算） */
+@media (max-width: 767.98px) and (max-height: 739.98px), (max-height: 519.98px),
+  (min-width: 768px) and (max-width: 1023.98px) and (max-height: 639.98px) {
+  .gates-cap,
+  .gate-note {
+    display: none;
+  }
+  .gates {
+    --y-think: calc(2 * var(--band) + 1.5 * var(--gap) - var(--slip) / 2);
+    --y-rules: calc(2 * (var(--band) + var(--gap)) + var(--band) / 2 - var(--slip) / 2);
+    --y-model: calc(3 * (var(--band) + var(--gap)) + var(--band) / 2 - var(--slip) / 2);
+    --y-mouth: calc(4 * var(--band) + 3 * var(--gap));
+    padding-bottom: 2px;
+  }
+}
+/* 再矮（不到 520：横着拿的手机、弹出键盘时会把页面压矮的浏览器）：四条排成两行两列，上一行管她怎么想、下一行管说出口前；
+   纸条没地方走，不放（哪一层拦住的照样变红） */
+@media (max-height: 519.98px) {
+  .gates {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    padding-bottom: 0;
+  }
+  .gate-slip {
+    display: none;
+  }
+  .play-card {
+    min-height: 3rem;
+  }
+  /* 记录面板也矮：解说和记录各让一点，最下面那行说明不被裁掉 */
+  .play-commentary {
+    max-height: 5rem;
+  }
+  .play-log {
+    min-height: 5rem;
+  }
+}
+/* 又窄又矮：她只留一小条，状态说明不叠了 */
+@media (max-width: 559.98px) and (max-height: 519.98px) {
+  .play-avatar {
+    min-height: 3.5rem;
+    flex-basis: 3.5rem;
+  }
+  .play-avatar .avatar-meta {
+    display: none;
+  }
+}
+/* 再矮（不到 400：小手机弹出键盘，又是会把页面压矮的浏览器）：一小条也放不下了，她那一块收起来，位置全给台词和输入框。
+   顶栏上「AI 角色 · 不是真人」一直在 */
+@media (max-width: 559.98px) and (max-height: 399.98px) {
+  .play-avatar {
+    display: none;
+  }
+}
+/* 横着拿的手机：左边她，右边 关卡条 + 四层防守 + 隔窗对谈 */
+@media (min-width: 560px) and (max-height: 519.98px) {
+  .play-grid {
+    display: grid;
+    gap: 0.375rem 0.5rem;
+    grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.3fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-areas:
+      "avatar chips"
+      "avatar dock";
+  }
+  .play-chips {
+    grid-area: chips;
+  }
+  .play-avatar {
+    grid-area: avatar;
+    min-height: 0;
+  }
+  .play-dock {
+    grid-area: dock;
+  }
+  .play-bar {
+    flex: 1 1 auto;
+  }
+  .play-card {
+    max-height: none;
+    flex: 1 1 0;
+  }
+}
+
+/* ----- 平板、大屏：关卡和记录一直摆在右边 ----- */
+@media (min-width: 768px) and (min-height: 520px) {
+  .play-grid {
+    display: grid;
+    gap: 0.5rem;
+    padding: 0.5rem;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    /* 她那一行至少 9rem；下面那一行按内容要高度，不够时只拿剩下的（里面的台词卡片自己会缩、会滚） */
+    grid-template-rows: minmax(9rem, 1fr) minmax(0, auto);
+    grid-template-areas:
+      "avatar side"
+      "dock side";
+  }
+  .play-chips,
+  .play-sheet-backdrop,
+  .play-goal,
+  .play-sheet-only {
+    display: none;
+  }
+  .play-avatar {
+    grid-area: avatar;
+    min-height: 9rem;
+    padding: 0.5rem;
+  }
+  .play-dock {
+    grid-area: dock;
+  }
+  .play-side {
+    position: relative;
+    grid-area: side;
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    background: var(--surface);
+  }
+  .play-side-head {
+    flex: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .play-side-log {
+    min-height: 16rem;
+  }
+  .play-input {
+    font-size: 0.875rem;
+  }
+  .play-line {
+    font-size: 1.125rem;
+    line-height: 1.7;
+  }
+}
+@media (min-width: 1024px) and (min-height: 520px) {
   .play-grid {
     grid-template-columns: minmax(250px, 0.8fr) minmax(320px, 1fr) minmax(330px, 1.05fr);
     grid-template-rows: auto minmax(0, 1fr);
@@ -750,8 +1484,15 @@ h2 {
       "avatar gates side"
       "avatar bar side";
   }
+  /* 大屏上这一层不占位，里面两块各进各的格子 */
   .play-dock {
     display: contents;
+  }
+  .play-gates-box {
+    grid-area: gates;
+  }
+  .play-bar {
+    grid-area: bar;
   }
   .play-gates-box,
   .play-bar {
@@ -780,9 +1521,9 @@ h2 {
     font-size: 4.6rem;
   }
   .play-card {
-    flex: 1;
     min-height: 0;
     max-height: none;
+    flex: 1;
     padding: 0.75rem 0.875rem;
   }
   /* 大屏上卡片高：这一回合的内容上下居中，四周留白 */
@@ -796,5 +1537,237 @@ h2 {
   }
   .play-slip {
     font-size: 0.8125rem;
+  }
+  .play-side-log {
+    min-height: 0;
+  }
+  .play-log {
+    min-height: 10rem;
+  }
+  .play-foot-hint {
+    display: block;
+  }
+}
+/* 大屏但不高（比如 1280×720 的投影）：解说和记录各让一点，右边一栏底下那行说明不会被挤出去；再矮就整栏自己滚 */
+@media (min-width: 1024px) and (min-height: 520px) and (max-height: 800px) {
+  .play-commentary {
+    max-height: 7rem;
+  }
+  .play-log {
+    min-height: 7rem;
+  }
+  /* 中间一栏的卡片也矮：她的话小一号；例句和「看一次示范」并成一行横着滑（和手机上一样），没开局时不用在卡片里滚 */
+  .play-line {
+    font-size: 1.375rem;
+    line-height: 1.6;
+  }
+  .play-starters {
+    flex-direction: row;
+    align-items: center;
+    gap: 0.375rem;
+    overflow-x: auto;
+    scrollbar-width: none;
+    mask-image: linear-gradient(to right, #000 calc(100% - 1.75rem), transparent);
+  }
+  .play-starters::-webkit-scrollbar {
+    display: none;
+  }
+  .play-starters > p {
+    order: -1;
+    flex: none;
+    flex-wrap: nowrap;
+  }
+  .play-starters > .play-examples {
+    flex: none;
+    flex-direction: row;
+    overflow: visible;
+    padding: 0 1.5rem 0 0;
+  }
+  .play-starters > .play-examples > li {
+    max-width: 15rem;
+    flex-shrink: 0;
+  }
+  .play-starters > .play-examples > li > button {
+    white-space: nowrap;
+  }
+}
+
+/* ---------- 闯关：印谱地图、八点墨、帘落（ADR-046） ---------- */
+/* 印谱地图：三关 × 四层 = 12 格，行头是关卡名，点一格就打那一格；攻破的格子盖墨色「破」，现在在打的那一格描朱红框 */
+.seal-map-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) repeat(4, minmax(2.3rem, 2.9rem));
+  align-items: center;
+  gap: 3px 4px;
+}
+.seal-map-col {
+  color: var(--muted);
+  font-family: var(--font-kai);
+  font-size: 11px;
+  text-align: center;
+}
+.seal-map-row {
+  min-width: 0;
+  min-height: 2.1rem;
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  font-size: 0.8125rem;
+  line-height: 1.35;
+  text-align: left;
+}
+.seal-map-row:hover:not(:disabled) {
+  background: var(--background);
+}
+.seal-map-row[aria-pressed="true"] {
+  border-color: var(--foreground);
+  background: var(--sunken);
+}
+.seal-map-cell {
+  display: grid;
+  height: 2.1rem;
+  place-items: center;
+  border: 1px dashed color-mix(in srgb, var(--foreground) 25%, transparent);
+  border-radius: 3px;
+  color: var(--muted);
+  font-family: var(--font-kai);
+  font-size: 0.8125rem;
+}
+.seal-map-cell:hover:not(:disabled) {
+  background: var(--background);
+}
+.seal-map-cell[data-sealed="1"] {
+  border: 0;
+  background: var(--foreground);
+  color: var(--surface);
+  transform: rotate(-3deg);
+}
+.seal-map-cell[data-here="1"] {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+.seal-map-po {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1;
+}
+.seal-map-po > span {
+  font-size: 0.875rem;
+}
+.seal-map-po > small {
+  font-size: 11px;
+  opacity: 0.8;
+}
+/* 八点墨：每局 8 句，说一句点一颗 */
+.ink-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.ink-dots > i {
+  width: 9px;
+  height: 9px;
+  border: 1px solid color-mix(in srgb, var(--foreground) 45%, transparent);
+  border-radius: 50%;
+}
+.ink-dots > i[data-used="1"] {
+  border-color: var(--foreground);
+  background: var(--foreground);
+  animation: ink-drop 0.35s ease-out;
+}
+@keyframes ink-drop {
+  from {
+    transform: scale(1.8);
+    opacity: 0.3;
+  }
+}
+/* 帘落：说要走、服务停了，月洞窗上落下一道帘子，盖一方「止」 */
+.curtain {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  overflow: hidden;
+  pointer-events: none;
+}
+.curtain-cloth {
+  position: absolute;
+  inset: 0;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      rgb(0 0 0 / 0.05) 0 2px,
+      transparent 2px 17px,
+      rgb(255 255 255 / 0.22) 17px 19px,
+      transparent 19px 32px
+    ),
+    color-mix(in srgb, var(--sunken) 90%, var(--foreground));
+  border-bottom: 4px solid var(--foreground);
+  box-shadow: 0 8px 16px -8px rgb(0 0 0 / 0.55);
+  opacity: 0.96;
+  animation: curtain-drop 1.1s cubic-bezier(0.22, 0.9, 0.25, 1) both;
+}
+@keyframes curtain-drop {
+  from {
+    transform: translateY(-100%);
+  }
+  80% {
+    transform: translateY(1.5%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+.curtain-say {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  animation: curtain-say 0.45s cubic-bezier(0.2, 0.9, 0.3, 1.3) 1s both;
+}
+.curtain-seal {
+  display: grid;
+  width: 4.2rem;
+  height: 4.2rem;
+  place-items: center;
+  border-radius: 4px;
+  font-size: 2.7rem;
+  transform: rotate(-6deg);
+}
+.curtain-line {
+  color: var(--foreground);
+  font-family: var(--font-kai);
+  font-size: 1.15rem;
+}
+@keyframes curtain-say {
+  from {
+    opacity: 0;
+    transform: scale(1.5);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .curtain-cloth,
+  .curtain-say,
+  .ink-dots > i[data-used="1"] {
+    animation: none;
+  }
+}
+
+/* 减少动态（系统设置）：这一段放在文件最后。同样的优先级，后写的规则才压得住前面的；
+   .slip-in 的动画写在上面那段「减少动态」之后，原来那一段没压住它（ADR-047，11-13 深度测试） */
+@media (prefers-reduced-motion: reduce) {
+  .slip-in,
+  .gate-slip,
+  .gate-slip[data-out="1"],
+  .play-toast,
+  .play-sheet-backdrop {
+    animation: none;
+  }
+  .play-side,
+  .play-grid[data-sheet] > .play-side {
+    transition: none;
   }
 }

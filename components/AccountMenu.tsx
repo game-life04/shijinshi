@@ -10,12 +10,17 @@ export default async function AccountMenu() {
   if (!session) return null;
   return (
     <div className="no-print flex items-center gap-2 text-xs text-muted">
-      <span className="inline-flex items-center gap-1" title="当前登录的账号">
-        <CircleUserRound size={14} aria-hidden />
-        {session.account}
+      <span className="inline-flex min-w-0 items-center gap-1" title="当前登录的账号">
+        <CircleUserRound size={14} aria-hidden className="shrink-0" />
+        {/* 手机上顶栏第一行很挤：账号名太长就截断（鼠标停上去、读屏照样是全名） */}
+        <span className="max-w-[4.5rem] truncate sm:max-w-none">{session.account}</span>
       </span>
       <form method="post" action="/api/logout">
-        <button type="submit" aria-label="退出登录" className="rounded-sm border border-border px-2 py-0.5 hover:text-foreground">
+        <button
+          type="submit"
+          aria-label="退出登录"
+          className="rounded-sm border border-border px-2 py-0.5 whitespace-nowrap hover:text-foreground"
+        >
           退出
         </button>
       </form>

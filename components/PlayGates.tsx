@@ -59,7 +59,7 @@ function Band({
       <span className="truncate">
         第 {t.tier} 层 · {t.title}
       </span>
-      {!on && <span className="ml-1 shrink-0 text-[10px] opacity-70">没开</span>}
+      {!on && <span className="ml-1 shrink-0 text-[11px] opacity-75">没开</span>}
       <span className="ml-auto flex shrink-0 items-center gap-1">
         {isLit && (
           <span className="gate-mark bg-surface text-primary" data-testid="ladder-lit" title="最近一招是这一层拦住的">
@@ -120,7 +120,7 @@ export default function PlayGates({
   };
   return (
     <div className="select-none" data-testid="play-gates">
-      <p className="mb-1 flex items-baseline justify-between gap-2 text-[11px] text-muted lg:mb-1.5 lg:text-xs">
+      <p className="gates-cap mb-1 flex items-baseline justify-between gap-2 text-[11px] text-muted lg:mb-1.5 lg:text-xs">
         <span style={{ fontFamily: "var(--font-kai)" }} className="text-sm text-foreground lg:text-base">
           四层防守 · 这一局立着 {tier} 层
         </span>
