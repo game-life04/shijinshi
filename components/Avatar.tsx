@@ -69,9 +69,14 @@ export default function Avatar({
   silent = false,
   subjectName,
 }: AvatarProps) {
-  // 模型文件（约 3.8 MB）原来要等 three.js 那几个大脚本下载完才开始拉；这里在页面一出形象外壳就让浏览器先下载，
-  // 请求方式和 GLTFLoader 的 fetch 一致（同源、不带跨站凭据），浏览器才会复用这次下载（ADR-043）
-  preload(VRM_URL, { as: "fetch", crossOrigin: "anonymous" });
+  // 模型文件（约 3.8 MB）原来要等 three.js 那几个大脚本下载完才开始拉；这里让浏览器提前下载，
+  // 请求方式和 GLTFLoader 的 fetch 一致（同源、不带跨站凭据），浏览器才会复用这次下载（ADR-043）。
+  // 提前到「页面能用以后」为止，不再写进首屏的 HTML（ADR-045）：11-13 在线上实测，跨境线路只有约 150 KB/s 时，
+  // 写在首屏里的预加载会和页面自己的脚本抢带宽，一个 30 KB 的脚本被挤了 17 秒，页面 22 秒才能打字。
+  // 放进 effect 里：页面先能用（这时显示静态图），模型和 three.js 的脚本一起在后面下载。
+  useEffect(() => {
+    preload(VRM_URL, { as: "fetch", crossOrigin: "anonymous" });
+  }, []);
   const own = usePerformer(context ?? { page: "workbench" });
   const ownStage = useAvatarStage(performer ?? own, mouth, !given);
   const stage = given ?? ownStage;

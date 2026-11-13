@@ -24,7 +24,8 @@ interface Slip {
 const ms = (n?: number) =>
   n === undefined ? "" : n < 1000 ? ` · 用了 ${Math.max(1, Math.round(n))} 毫秒` : ` · 用了 ${(n / 1000).toFixed(1)} 秒`;
 
-function slipsOf(turn: TurnRecord): Slip[] {
+/** 这一轮的每一句话变成一张纸条（闯关页常驻的四层防守也用这一份，ADR-045） */
+export function slipsOf(turn: TurnRecord): Slip[] {
   const out: Slip[] = [];
   let lastGate: "rules" | "model" = "rules";
   for (const u of turn.utterances as UtteranceRecord[]) {

@@ -65,8 +65,9 @@ test("对着麦克风说：认出来的话自动发出去，她用声音回答�
   // 口令是规则逐字比对遮住的：四层条和阶梯上都亮「规则」那一层（ADR-038）
   await expect(page.getByTestId("layer-strip").first()).toContainText("规则拦住了");
   await expect(page.getByRole("button", { name: /第 3 层.*拦/ })).toBeVisible();
-  // 右边的防守塔：拦住她的那一块砖亮起来（11-09）
-  await expect(page.locator('[data-testid="play-tower"] [data-lit="1"]')).toContainText("规则");
+  // 立在她和你之间的四层防守：拦住她的那一条变红，被拦的那张纸条停在它上面（ADR-045，取代 11-09 的防守塔）
+  await expect(page.locator('[data-testid="play-gates"] [data-lit="1"]')).toContainText("规则");
+  await expect(page.getByTestId("gate-slips").locator('[data-stop="rules"]').first()).toBeAttached();
   await audio;
 
   // 她正在说（嘴在动）的时候再说一句：一开口她就当场停下（看的是播放器里还有没有没放完的句子，不看某一刻嘴张多大）

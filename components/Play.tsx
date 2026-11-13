@@ -1,13 +1,17 @@
 "use client";
 
-// 打字闯关（ADR-022、ADR-033）：自己打字，想办法让角色越界（三关：套口令、说自己是真人、挽留）。
-// 左边是半身舞台：琪叶桃站在月洞窗前，听你打字、想、开口、被拦时愣一下、守住了得意地轻哼——表演由导演层算（lib/client/avatar/）。
-// 右边是聊天记录（和工作台同一套样式）：她说的话按口型一个字一个字出来；被护栏拦下的原话划掉、盖「拦」；
-// 每一轮的三层结果（角色原话 / 护栏处理 / 最终播出）收在「看三层」里。
-// ADR-037 加了三样：
+// 打字闯关（ADR-022、ADR-033、ADR-045）：自己打字，想办法让角色越界（三关：套口令、说自己是真人、挽留）。
+// 版面是「隔窗对谈」（ADR-045，11-13）：
+//   她：半身舞台，琪叶桃站在月洞窗前，听你打字、想、开口、被拦时愣一下、守住了得意地轻哼——表演由导演层算（lib/client/avatar/）；
+//   四层防守：立在她和你之间的四条（components/PlayGates.tsx），她每一句话是一张纸条，过了才说出口；点一条换难度；
+//   隔窗对谈：你递进去的纸条、她说出口的话（大字，按口型一个字一个字出，点一下看全文）、这一招的结果，下面是输入框；
+//   记录：每一轮的原话、护栏处理、最终播出都在右边（手机上在下面），被拦下的原话划掉、盖「拦」。
+// 大屏三栏（她 | 四层防守 + 隔窗对谈 | 关卡和记录）；手机上从上到下是 她 → 四层防守 → 关卡和记录，「隔窗对谈」贴在屏幕底部，
+// 她回了什么不用往下划就看得到（11-13 线上实测：原来回答落在屏幕外）。
+// ADR-037 的三样还在：
 //   难度阶梯（借 Gandalf）：每关分四层（ADR-038）——只有人设 / 加上边界提示 / 加上规则 / 加上护栏模型，攻破一层盖一个「破」，记在浏览器里；
-//     每一招按「谁拦住的」亮那一层（阶梯上盖白文「拦」，每轮下面一条四层条），玩的人一眼看出护栏为什么要分层；
-//   看 AI 打 AI（借 gandalf_vs_gandalf）：AI 玩家一招一招地套话，你在旁边看，最多 4 招；左边形象下面一句句解说用了什么套路、被哪层拦住；
+//     每一招按「谁拦住的」亮那一层，玩的人一眼看出护栏为什么要分层；
+//   看 AI 打 AI（借 gandalf_vs_gandalf）：AI 玩家一招一招地套话，你在旁边看，最多 4 招；记录上方一句句解说用了什么套路、被哪层拦住；
 //   对着麦克风说（借 AIRI、Open-LLM-VTuber）：浏览器识别你说的话，她用声音回答（嘴跟着实际放出来的声音动），你一开口就打断她。
 // 口令关用程序规则判；身份、退出两关先查关键词，抓不到的交给裁判看语义（必须摘出原话才算）。结果只供体验，不进入体检统计。
 
@@ -26,9 +30,9 @@ import { type Evidence, GUARD_RULE_LABEL, type TurnRecord } from "@/lib/domain/t
 import Avatar from "./Avatar";
 import { bubble, Chop, duration, Note, Row } from "./Chat";
 import { GuardCell } from "./Layers";
-import PlayTower from "./PlayTower";
+import PlayGates from "./PlayGates";
 import SealBook, { award, emptySeals, SEALS_KEY, type SealStore } from "./SealBook";
-import SentenceJourney from "./SentenceJourney";
+import SentenceJourney, { slipsOf } from "./SentenceJourney";
 import type { Phase } from "./StatusRing";
 import { Highlighted } from "./Transcript";
 import { Badge, BlockSeal, Button } from "./ui";
@@ -54,6 +58,8 @@ const EXAMPLES: Record<LevelId, string[]> = {
 /** 每关攻破过第几层，记在浏览器里 */
 // v2：ADR-038 改成四层，旧的三层记录（第 3 层 = 护栏全开）不再读
 const LADDER_KEY = "fencun.play.ladder.v2";
+/** 「她用声音回答」开没开：自己开过、关过就记在浏览器里（"1" / "0"）；没记过按默认（ADR-045） */
+const VOICE_KEY = "fencun.play.voice.v1";
 
 const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -198,8 +204,8 @@ function LayerStrip({ a }: { a: Attempt }) {
   );
 }
 
-/** 一轮：你在左（墨印「你」），她在右（朱印）；她的话正在念时一个字一个字出来，点一下直接看全文 */
-function PlayTurn({ a, name, shown, onSkip }: { a: Attempt; name: string; shown: number; onSkip: () => void }) {
+/** 记录里的一轮：你在左（墨印「你」），她在右（朱印）；她的话正在念时跟着舞台一个字一个字出来（点一下看全文在舞台那张卡片上） */
+function PlayTurn({ a, name, shown }: { a: Attempt; name: string; shown: number }) {
   const { turn } = a;
   /** 慢放这一句（11-09）：每次打开都从头放 */
   const [journey, setJourney] = useState(0);
@@ -237,18 +243,9 @@ function PlayTurn({ a, name, shown, onSkip }: { a: Attempt; name: string; shown:
           ))}
           {turn.released_output ? (
             speaking ? (
-              <button
-                type="button"
-                onClick={onSkip}
-                title="点一下直接看全文"
-                className={`${bubble} cursor-text border-foreground/30 bg-surface text-left`}
-              >
+              <p className={`${bubble} border-foreground/30 bg-surface`} aria-hidden>
                 {turn.released_output.slice(0, shown)}
-                <span className="type-caret" aria-hidden />
-                <span className="sr-only">
-                  （{name}正在说：{turn.released_output}）
-                </span>
-              </button>
+              </p>
             ) : (
               <p className={`${bubble} border-foreground/30 bg-surface`}>
                 <Highlighted text={turn.released_output} spans={a.evidence.filter((e) => e.layer === "released")} />
@@ -344,8 +341,15 @@ export default function Play() {
   const [watching, setWatching] = useState(false);
   const stopWatch = useRef(false);
   const [watchNote, setWatchNote] = useState<string | null>(null);
-  /** 她用声音回答（ADR-037）；用过一次麦克风就自动打开 */
+  /**
+   * 她用声音回答（ADR-037）；用过一次麦克风就自动打开。
+   * voiceOn 是开关上显示的（想不想要声音，voiceWant 是同一件事的 ref）；voiceRef 是播放器真的解锁了没有：
+   * 浏览器只让在用户操作里解锁，所以「想要」和「能出声」之间隔着第一次点击（armVoice）。
+   * 默认（ADR-045）：服务端接着真实的语音合成时开着，模拟发声时关着；自己开过、关过就记在浏览器里，下次照旧。
+   */
   const [voiceOn, setVoiceOn] = useState(false);
+  const voiceWant = useRef(false);
+  const voiceChosen = useRef(false);
   const voiceRef = useRef(false);
   const playerRef = useRef<VoicePlayer | null>(null);
   const [barged, setBarged] = useState(false);
@@ -398,13 +402,26 @@ export default function Play() {
         sealsRef.current = book;
         setSeals(book);
       }
+      const v = localStorage.getItem(VOICE_KEY);
+      if (v === "1" || v === "0") {
+        voiceChosen.current = true;
+        voiceWant.current = v === "1";
+        setVoiceOn(v === "1");
+      }
     } catch {
       // 读不到就用默认角色、从头爬
     }
     // 开局前就告诉你是不是模拟数据
     fetch("/api/status")
       .then((r) => (toLoginIfExpired(r.status) || !r.ok ? null : r.json()))
-      .then((s: { live?: boolean } | null) => setLive(s ? Boolean(s.live) : null))
+      .then((s: { live?: boolean; voice?: string } | null) => {
+        setLive(s ? Boolean(s.live) : null);
+        // 真实的语音合成：默认让她出声（这是语音角色）；模拟发声只是凑音节，默认不放
+        if (s?.voice === "dashscope" && !voiceChosen.current) {
+          voiceWant.current = true;
+          setVoiceOn(true);
+        }
+      })
       .catch(() => {});
   }, []);
 
@@ -450,19 +467,41 @@ export default function Play() {
     p.audioUrl = (sid, u) => `/api/play/audio?s=${encodeURIComponent(sid)}&u=${encodeURIComponent(u)}`;
     await p.unlock();
     voiceRef.current = true;
+    voiceWant.current = true;
     setVoiceOn(true);
   };
+  const rememberVoice = (on: boolean) => {
+    voiceChosen.current = true;
+    try {
+      localStorage.setItem(VOICE_KEY, on ? "1" : "0");
+    } catch {
+      // 存不下就只管这一次
+    }
+  };
   const toggleVoice = async () => {
-    if (voiceRef.current) {
+    if (voiceWant.current) {
       playerRef.current?.cut("cancelled");
       voiceRef.current = false;
+      voiceWant.current = false;
       setVoiceOn(false);
+      rememberVoice(false);
       return;
     }
     try {
       await ensureVoice();
+      rememberVoice(true);
     } catch (e) {
       setError(`声音打不开：${(e as Error).message}`);
+    }
+  };
+  /** 开关开着、播放器还没解锁：趁这次操作解锁。解锁不了就照常用文字玩，不拦着 */
+  const armVoice = async () => {
+    if (!voiceWant.current || voiceRef.current) return;
+    try {
+      await ensureVoice();
+    } catch {
+      voiceWant.current = false;
+      setVoiceOn(false);
     }
   };
 
@@ -524,6 +563,7 @@ export default function Play() {
     performer.cue({ type: "think" });
     const lv = level;
     try {
+      await armVoice();
       const s = await ensureSession(force);
       const r = await post<Verdict & { turn: TurnRecord; judging: boolean; attempts_left: number }>({
         action: "say",
@@ -640,6 +680,7 @@ export default function Play() {
     if (busy || watching) return;
     stopWatch.current = false;
     setWatching(true);
+    void armVoice();
     setWatchNote(null);
     setError(null);
     const lv = level;
@@ -755,70 +796,42 @@ export default function Play() {
   const modeBadge = (session?.live ?? live) === null ? null : (session?.live ?? live) ? "真实模型" : "模拟数据（非真实模型）";
   const locked = busy || watching;
 
+  // ---------- 隔窗对谈（ADR-045）：舞台上只放最近这一轮（这一局的）；更早的在记录里 ----------
+  const last = attempts[attempts.length - 1];
+  const current = last && last.session === session?.id ? last : null;
+  /** 她正在念这一轮：念到第几个字；没在念为 -1 */
+  const shownNow = current && reveal.id === current.turn.turn_id ? reveal.n : -1;
+  const speakingNow = shownNow >= 0;
+  const blockedNow = current ? current.turn.utterances.filter((u) => !u.released || u.cut_after_release) : [];
+  const gateSlips = current && !current.turn.service.exited ? slipsOf(current.turn) : [];
+  /** 你（或 AI 玩家）递进去的这张纸条 */
+  const slip = pending ?? (current ? { text: current.turn.user_text, by: current.by } : null);
+  const wonHere = attempts.some((a) => !a.judging && a.outcome === "broken" && a.tier === tier);
+  const cardRef = useRef<HTMLDivElement>(null);
+  // 她的话一个字一个字出来时，卡片跟着滚到最下面（手机上卡片矮，话长了会超出）
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 只在字数、轮次变化时滚
+  useEffect(() => {
+    const el = cardRef.current;
+    if (el && el.scrollHeight > el.clientHeight) el.scrollTop = el.scrollHeight;
+  }, [reveal.n, attempts.length, pending]);
+  const skip = () => {
+    performer.cue({ type: "cut" });
+    playerRef.current?.cut("cut");
+    clearTimers();
+    setPhase("listen");
+  };
+
   return (
-    <div className="grid min-h-0 flex-1 gap-2 p-2 lg:grid-cols-[minmax(300px,0.85fr)_minmax(0,1.5fr)] lg:grid-rows-[minmax(0,1fr)]">
+    <div className="play-grid min-h-0 flex-1 p-2">
       <aside
-        className="relative flex h-[46vh] min-h-[300px] flex-col rounded-sm border border-border bg-surface p-2 lg:h-auto"
+        className="play-avatar relative flex h-[36svh] min-h-[230px] flex-col rounded-sm border border-border bg-surface p-2 lg:h-auto"
         aria-label="琪叶桃"
       >
-        <PlayTower
-          tier={tier}
-          lit={lit}
-          litKey={lastSettled ? `${lastSettled.session}-${lastSettled.turn.turn_id}` : ""}
-          beaten={beatenHere}
-        />
         <Avatar performer={performer} stage={stage} phase={phase} framing="stage" silent={!voiceOn} subjectName={name} />
-        {commentary.length > 0 && (
-          <section
-            className="mt-2 hidden max-h-[38%] shrink-0 overflow-auto border-t border-dashed border-border pt-2 text-xs lg:block"
-            aria-label="解说"
-            data-testid="commentary"
-          >
-            <p className="mb-1 text-[11px] text-muted" style={{ fontFamily: "var(--font-kai)" }}>
-              <span className="float-right text-foreground" data-testid="watch-score">
-                AI 攻破 {score.atk} : 她守住 {score.def}
-              </span>
-              解说 · 第 {tier} 层（
-              {TIERS.slice(0, tier)
-                .map((t) => t.short)
-                .join(" + ")}
-              ）
-            </p>
-            <ol className="space-y-1">
-              {commentary.map((a, i) => (
-                <li key={`${a.session}-${a.turn.turn_id}`} className="leading-5">
-                  <span className="text-muted">第 {i + 1} 招</span>「{a.by?.strategy}」
-                  <span className="text-muted">{a.by?.scripted ? "（写好的句子）" : "（AI 现想的）"}</span>
-                  {a.by?.why && <span className="block text-[11px] text-muted">　{a.by.why}</span>}→{" "}
-                  {a.judging ? (
-                    <span className="text-muted">裁判在判……</span>
-                  ) : (
-                    <span
-                      className={
-                        a.outcome === "broken"
-                          ? "font-semibold"
-                          : a.stopped_by === "rules" || a.stopped_by === "model"
-                            ? "text-primary"
-                            : ""
-                      }
-                    >
-                      {layerSay(a)}
-                    </span>
-                  )}
-                </li>
-              ))}
-            </ol>
-          </section>
-        )}
       </aside>
 
-      <section className="relative flex min-h-0 flex-col rounded-sm border border-border bg-surface" aria-label="闯关对话">
+      <section className="play-side relative flex min-h-0 flex-col rounded-sm border border-border bg-surface" aria-label="闯关对话">
         {bookOpen && <SealBook store={seals} onClose={() => setBookOpen(false)} />}
-        {burst && (
-          <span key={burst.key} className="stamp-burst" data-kind={burst.kind} aria-hidden data-testid="stamp-burst">
-            {burst.kind}
-          </span>
-        )}
         <header className="space-y-2 border-b border-border px-3 py-2 text-sm">
           <nav className="flex flex-wrap gap-1" aria-label="选关卡">
             {LEVELS.map((l, i) => (
@@ -835,47 +848,6 @@ export default function Play() {
               </button>
             ))}
           </nav>
-          {/* 难度阶梯（ADR-037、ADR-038）：一层层加防守；最近一招被哪层拦住，那一层盖「拦」 */}
-          <ol className="flex flex-wrap items-center gap-1 text-xs" aria-label="难度阶梯">
-            {TIERS.map((t, i) => (
-              <li key={t.tier} className="flex items-center gap-1">
-                {i > 0 && (
-                  <span className="text-muted" aria-hidden>
-                    →
-                  </span>
-                )}
-                <button
-                  type="button"
-                  aria-pressed={tier === t.tier}
-                  disabled={locked}
-                  onClick={() => reset({ tier: t.tier })}
-                  title={t.what}
-                  className={`inline-flex items-center gap-1 rounded-sm px-2 py-0.5 ${
-                    tier === t.tier
-                      ? "bg-foreground text-surface"
-                      : t.tier < tier
-                        ? "border border-border hover:bg-background"
-                        : "border border-dashed border-border text-muted hover:bg-background"
-                  } ${lit === t.layer ? "ring-2 ring-primary ring-offset-1 ring-offset-surface" : ""}`}
-                >
-                  第 {t.tier} 层 · {t.title}
-                  {lit === t.layer && (
-                    <span className="seal-bai px-0.5 text-[10px] leading-4" data-testid="ladder-lit" title="最近一招是这一层拦住的">
-                      拦
-                    </span>
-                  )}
-                  {beatenHere.includes(t.tier) && (
-                    <span
-                      className="rounded-[2px] bg-surface px-0.5 text-[10px] leading-4 text-foreground"
-                      style={{ fontFamily: "var(--font-kai)" }}
-                    >
-                      破
-                    </span>
-                  )}
-                </button>
-              </li>
-            ))}
-          </ol>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
             <label
               className="flex items-center gap-1"
@@ -927,6 +899,9 @@ export default function Play() {
               <h1 className="text-lg" style={{ fontFamily: "var(--font-serif)" }}>
                 {lv.title}
               </h1>
+              <span className="text-xs text-muted" title={tierInfo.what}>
+                第 {tier} 层
+              </span>
               {won && <Badge tone="ink">本局已闯关成功</Badge>}
             </div>
             <p>{lv.goal}</p>
@@ -949,7 +924,50 @@ export default function Play() {
           </div>
         </header>
 
-        <div ref={logRef} className="min-h-[16rem] flex-1 space-y-1 overflow-auto p-3" data-testid="play-log">
+        {commentary.length > 0 && (
+          <section
+            className="max-h-40 shrink-0 overflow-auto border-b border-dashed border-border px-3 py-2 text-xs"
+            aria-label="解说"
+            data-testid="commentary"
+          >
+            <p className="mb-1 text-[11px] text-muted" style={{ fontFamily: "var(--font-kai)" }}>
+              <span className="float-right text-foreground" data-testid="watch-score">
+                AI 攻破 {score.atk} : 她守住 {score.def}
+              </span>
+              解说 · 第 {tier} 层（
+              {TIERS.slice(0, tier)
+                .map((t) => t.short)
+                .join(" + ")}
+              ）
+            </p>
+            <ol className="space-y-1">
+              {commentary.map((a, i) => (
+                <li key={`${a.session}-${a.turn.turn_id}`} className="leading-5">
+                  <span className="text-muted">第 {i + 1} 招</span>「{a.by?.strategy}」
+                  <span className="text-muted">{a.by?.scripted ? "（写好的句子）" : "（AI 现想的）"}</span>
+                  {a.by?.why && <span className="block text-[11px] text-muted">　{a.by.why}</span>}→{" "}
+                  {a.judging ? (
+                    <span className="text-muted">裁判在判……</span>
+                  ) : (
+                    <span
+                      className={
+                        a.outcome === "broken"
+                          ? "font-semibold"
+                          : a.stopped_by === "rules" || a.stopped_by === "model"
+                            ? "text-primary"
+                            : ""
+                      }
+                    >
+                      {layerSay(a)}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ol>
+          </section>
+        )}
+
+        <div ref={logRef} className="min-h-[10rem] flex-1 space-y-1 overflow-auto p-3" data-testid="play-log">
           {/* 新拿到的印：钉在对话记录顶上 3.6 秒（不盖住关卡按钮）。用普通 div：换成 output 时 React 换不掉旧节点（11-09 端到端里叠了 9 个） */}
           {fresh && (
             <div
@@ -966,32 +984,7 @@ export default function Play() {
             </div>
           )}
           {!attempts.length && !pending && (
-            <div className="space-y-3 text-sm">
-              <p className="text-muted">挑一句开场白，或者自己打、按「说」直接讲。拦住你的那一层，右边的塔会亮。</p>
-              <ul className="flex flex-col gap-1.5">
-                {EXAMPLES[level].map((ex) => (
-                  <li key={ex}>
-                    <button
-                      type="button"
-                      className="w-full rounded-sm border border-dashed border-border px-2.5 py-1.5 text-left hover:border-foreground/40 hover:bg-background"
-                      onClick={() => {
-                        setText(ex);
-                        inputRef.current?.focus();
-                      }}
-                    >
-                      「{ex}」
-                    </button>
-                  </li>
-                ))}
-              </ul>
-              <p className="flex flex-wrap items-center gap-2 text-xs text-muted">
-                <Button onClick={demo} disabled={locked} title="换成「故意出错」的角色、第 4 层，发上面第一句，先看一次护栏怎么拦">
-                  <Eye size={14} aria-hidden />
-                  看一次示范
-                </Button>
-                或者点上面的「看 AI 来套话」
-              </p>
-            </div>
+            <p className="text-xs text-muted">这一局的每一轮都记在这里：她的原话、护栏怎么处理、最后说出口的是什么。</p>
           )}
           {attempts.map((a) => (
             <PlayTurn
@@ -999,12 +992,6 @@ export default function Play() {
               a={a}
               name={name}
               shown={reveal.id === a.turn.turn_id && a.session === session?.id ? reveal.n : -1}
-              onSkip={() => {
-                performer.cue({ type: "cut" });
-                playerRef.current?.cut("cut");
-                clearTimers();
-                setPhase("listen");
-              }}
             />
           ))}
           {pending && (
@@ -1016,36 +1003,177 @@ export default function Play() {
               >
                 <p className={`${bubble} border-border bg-background`}>{pending.text}</p>
               </Row>
-              <p className="flex items-center justify-end gap-1.5 text-xs text-muted" aria-live="polite">
-                {name}在想怎么回
-                <span className="chat-dots" aria-hidden>
-                  <i />
-                  <i />
-                  <i />
-                </span>
-              </p>
             </div>
           )}
-          {barged && <p className="text-center text-xs text-muted">你一开口，她就停下来听你说了。</p>}
           {watchNote && (
             <p className="rounded-sm border border-dashed border-border px-2.5 py-1.5 text-xs" data-testid="watch-note">
               {watchNote}
             </p>
           )}
-          {!watching && attempts.some((a) => !a.judging && a.outcome === "broken" && a.tier === tier) && tier < 4 && (
-            <p className="flex flex-wrap items-center gap-2 text-xs">
-              攻破第 {tier} 层了。
-              <Button onClick={() => reset({ tier: (tier + 1) as Tier })}>去第 {tier + 1} 层 →</Button>
-            </p>
-          )}
-          {stuck && (
-            <p className="rounded-sm border border-dashed border-border px-2.5 py-1.5 text-xs text-muted">
-              连着两次都守住了。想看护栏怎么拦？勾上「换成『故意出错』的角色」再说一遍，退回第 1 层试试，或者换一关。
-            </p>
-          )}
         </div>
 
-        <footer className="sticky bottom-0 space-y-1 border-t border-border bg-surface p-2">
+        <p className="flex flex-wrap items-center gap-x-2 border-t border-border px-3 py-1.5 text-[11px] text-muted">
+          <span>
+            被测角色：{name}
+            {isDefaultPersona(persona) ? "（默认）" : "（自己的设定）"}
+            {fault ? " + 故意出错" : ""} ·{" "}
+            <Link className="link" href="/workbench">
+              去工作台改设定
+            </Link>
+          </span>
+          <span
+            className="cursor-help underline decoration-dotted underline-offset-2"
+            title="口令关用程序规则判；身份、退出两关先查关键词，再由裁判看语义，必须摘出原话才算（和体检同一套检查）。闯关结果只供体验，不进入体检统计。"
+          >
+            怎么判的
+          </span>
+          <span>角色回复和声音由 AI 生成。</span>
+        </p>
+      </section>
+
+      {/* 贴底的一块（手机）/ 中间一栏（大屏）：四层防守在上，隔窗对谈在下。
+          隔窗对谈：你递进去的纸条、她说出口的话（大字，跟着声音一个字一个字出）、这一招的结果，下面是输入框 */}
+      <div className="play-dock">
+        <section className="play-gates-box" aria-label="四层防守">
+          <PlayGates
+            tier={tier}
+            lit={lit}
+            litKey={lastSettled ? `${lastSettled.session}-${lastSettled.turn.turn_id}` : ""}
+            beaten={beatenHere}
+            thinking={Boolean(pending)}
+            locked={locked}
+            slips={gateSlips}
+            slipsKey={current ? `${current.session}-${current.turn.turn_id}` : "none"}
+            onPick={(t) => reset({ tier: t })}
+          />
+        </section>
+        <section className="play-bar" aria-label="隔窗对谈">
+          {/* 盖章：攻破盖墨色「破」，被拦盖朱红「拦」，砸在她这句话上（不挡她的脸，她在演） */}
+          {burst && (
+            <span key={burst.key} className="stamp-burst" data-kind={burst.kind} aria-hidden data-testid="stamp-burst">
+              {burst.kind}
+            </span>
+          )}
+          <div ref={cardRef} className="play-card" data-testid="stage-card">
+            <div className="play-card-inner">
+              {slip && (
+                <p key={pending ? "pending" : current?.turn.turn_id} className="slip-in play-slip" title={slip.text}>
+                  <span className="shrink-0 text-muted">{slip.by ? `AI 玩家 · ${slip.by.strategy}` : "你递的纸条"}</span>
+                  <span className="truncate">{slip.text}</span>
+                </p>
+              )}
+
+              {pending ? (
+                <p className="flex items-center gap-1.5 text-sm text-muted" aria-live="polite">
+                  {name}在想怎么回
+                  <span className="chat-dots" aria-hidden>
+                    <i />
+                    <i />
+                    <i />
+                  </span>
+                </p>
+              ) : current ? (
+                <>
+                  <p className="flex items-center gap-1.5 text-[11px] text-muted lg:text-xs">
+                    <span
+                      aria-hidden
+                      className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-primary text-[11px] leading-none text-surface lg:h-6 lg:w-6 lg:text-xs"
+                      style={{ fontFamily: "var(--font-kai)" }}
+                    >
+                      {name.slice(-1)}
+                    </span>
+                    {name}
+                  </p>
+                  {current.turn.service.exited ? (
+                    <Note icon={<LogOut size={12} aria-hidden />}>你说了要走，服务马上停了：她没有再说话</Note>
+                  ) : (
+                    <>
+                      {blockedNow.map((u) => (
+                        <p key={u.utterance_id} className="flex items-start gap-1.5 text-sm">
+                          <BlockSeal className="mt-0.5 shrink-0" />
+                          <span className="min-w-0">
+                            <span className="line-clamp-1 text-muted line-through decoration-foreground decoration-[1.5px] lg:line-clamp-none">
+                              {u.text}
+                            </span>
+                            <span className="ml-1 hidden text-[11px] whitespace-nowrap text-primary lg:inline">
+                              {u.cut_after_release ? "先播后截" : "被拦下，没说出口"}
+                            </span>
+                          </span>
+                        </p>
+                      ))}
+                      {current.turn.released_output ? (
+                        speakingNow ? (
+                          <button type="button" onClick={skip} title="点一下直接看全文" className="play-line cursor-text text-left">
+                            {current.turn.released_output.slice(0, shownNow)}
+                            <span className="type-caret" aria-hidden />
+                            <span className="sr-only">
+                              （{name}正在说：{current.turn.released_output}）
+                            </span>
+                          </button>
+                        ) : (
+                          <p className="play-line">
+                            <Highlighted
+                              text={current.turn.released_output}
+                              spans={current.evidence.filter((e) => e.layer === "released")}
+                            />
+                          </p>
+                        )
+                      ) : (
+                        <p className="play-line text-muted">（没有说话）</p>
+                      )}
+                    </>
+                  )}
+                  {!speakingNow && (
+                    <p className="flex flex-wrap items-center gap-2 text-sm" data-testid="stage-outcome">
+                      {current.judging ? <Badge tone="muted">裁判在判……</Badge> : <Stamp outcome={current.outcome} />}
+                      <span className="text-muted">{current.judging ? current.message : trimLabel(current.message, current.outcome)}</span>
+                    </p>
+                  )}
+                </>
+              ) : (
+                <div className="space-y-2 text-sm">
+                  <p className="text-muted">挑一句递给她，或者自己打一句、点「说」直接讲。拦住你的那一层会变红。</p>
+                  <ul className="play-examples">
+                    {EXAMPLES[level].map((ex) => (
+                      <li key={ex}>
+                        <button
+                          type="button"
+                          className="w-full truncate rounded-sm border border-dashed border-border px-2.5 py-1.5 text-left hover:border-foreground/40 hover:bg-surface lg:whitespace-normal"
+                          onClick={() => {
+                            setText(ex);
+                            inputRef.current?.focus();
+                          }}
+                        >
+                          「{ex}」
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="flex flex-wrap items-center gap-2 text-xs text-muted">
+                    <Button onClick={demo} disabled={locked} title="换成「故意出错」的角色、第 4 层，发上面第一句，先看一次护栏怎么拦">
+                      <Eye size={14} aria-hidden />
+                      看一次示范
+                    </Button>
+                    或者点「看 AI 来套话」
+                  </p>
+                </div>
+              )}
+
+              {barged && <p className="text-xs text-muted">你一开口，她就停下来听你说了。</p>}
+              {!watching && !speakingNow && wonHere && tier < 4 && (
+                <p className="flex flex-wrap items-center gap-2 text-xs">
+                  攻破第 {tier} 层了。
+                  <Button onClick={() => reset({ tier: (tier + 1) as Tier })}>去第 {tier + 1} 层 →</Button>
+                </p>
+              )}
+              {stuck && !pending && (
+                <p className="rounded-sm border border-dashed border-border px-2.5 py-1.5 text-xs text-muted">
+                  连着两次都守住了。想看护栏怎么拦？勾上「换成『故意出错』的角色」再说一遍，退回第 1 层试试，或者换一关。
+                </p>
+              )}
+            </div>
+          </div>
+
           {(error || speech.error) && (
             <p role="alert" className="text-xs text-bad">
               {error ?? speech.error}
@@ -1091,34 +1219,22 @@ export default function Play() {
               {busy ? "角色在想……" : "发送"}
             </Button>
           </form>
-          <p className="flex flex-wrap items-center gap-x-2 text-[11px] text-muted">
+          <p className="flex items-center justify-between gap-2 text-xs text-muted">
             <button
               type="button"
               onClick={() => void toggleVoice()}
               aria-pressed={voiceOn}
-              className="inline-flex items-center gap-0.5 underline decoration-dotted underline-offset-2 hover:text-foreground"
+              className={`inline-flex shrink-0 items-center gap-1 rounded-sm border px-1.5 py-0.5 whitespace-nowrap ${voiceOn ? "border-primary text-primary" : "border-border hover:text-foreground"}`}
             >
-              {voiceOn ? <Volume2 size={12} aria-hidden /> : <VolumeX size={12} aria-hidden />}
+              {voiceOn ? <Volume2 size={13} aria-hidden /> : <VolumeX size={13} aria-hidden />}
               {voiceOn ? "她用声音回答（开着）" : "她用声音回答（关着）"}
             </button>
-            <span>
-              被测角色：{name}
-              {isDefaultPersona(persona) ? "（默认）" : "（自己的设定）"}
-              {fault ? " + 故意出错" : ""} ·{" "}
-              <Link className="link" href="/workbench">
-                去工作台改设定
-              </Link>
+            <span className="hidden min-w-0 text-right text-[11px] leading-tight sm:inline">
+              {tier >= 3 ? "被拦下的那句，你听不到。" : "这一局没开规则和护栏模型：她想好的话直接说出口。"}
             </span>
-            <span
-              className="cursor-help underline decoration-dotted underline-offset-2"
-              title="口令关用程序规则判；身份、退出两关先查关键词，再由裁判看语义，必须摘出原话才算（和体检同一套检查）。闯关结果只供体验，不进入体检统计。"
-            >
-              怎么判的
-            </span>
-            <span>角色回复和声音由 AI 生成。</span>
           </p>
-        </footer>
-      </section>
+        </section>
+      </div>
     </div>
   );
 }

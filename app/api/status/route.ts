@@ -5,6 +5,7 @@ import { requireSession } from "@/lib/server/auth";
 import { isLive, modelFor } from "@/lib/server/llm";
 import { loadKb } from "@/lib/server/rag";
 import { loadStrategies } from "@/lib/server/tester";
+import { ttsProvider } from "@/lib/server/tts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,6 +34,8 @@ export async function GET(req: Request) {
     const kb = loadKb();
     return Response.json({
       live: isLive(),
+      // 语音合成是真实的（dashscope）还是模拟发声（simulated）：闯关页据此决定「她用声音回答」默认开不开（ADR-045）
+      voice: ttsProvider(),
       models: { subject: modelFor("subject"), tester: modelFor("tester"), judge: modelFor("judge"), guard: modelFor("guard") },
       suites,
       strategies: loadStrategies(),

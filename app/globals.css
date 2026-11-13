@@ -346,9 +346,167 @@ h2 {
     transform: scale(1.04) rotate(-6deg);
   }
 }
-/* 防守塔：拦住你的那一块砖闪一下；被攻破的砖裂开 */
-.tower-brick[data-lit="1"] {
+/* 四层防守（ADR-045，取代 11-09 的防守塔）：立在她和你之间的四条。开着的实线、没开的虚线；
+   拦住你的那一条变朱红、抖一下；她在想的时候，开着的人设、边界提示轻轻亮；被攻破的裂开。高度和 PlayGates.tsx 里的 BAND 对着 */
+.gates {
+  /* 两条「想的时候」、一行说明、两条「说出口前」；纸条的位置都从这几个数算出来。手机上压矮一些（贴在屏幕底部，要省高度） */
+  --band: 24px;
+  --gap: 3px;
+  --note: 15px;
+  --slip: 18px;
+  --y-think: calc(2 * (var(--band) + var(--gap)) + var(--note) / 2 - var(--slip) / 2);
+  --y-rules: calc(2 * (var(--band) + var(--gap)) + var(--note) + var(--gap) + var(--band) / 2 - var(--slip) / 2);
+  --y-model: calc(3 * (var(--band) + var(--gap)) + var(--note) + var(--gap) + var(--band) / 2 - var(--slip) / 2);
+  --y-mouth: calc(4 * (var(--band) + var(--gap)) + var(--note) + var(--gap));
+  position: relative;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--gap);
+  padding-bottom: 6px;
+}
+.gate-note {
+  display: flex;
+  height: var(--note);
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+}
+.gate-band {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  width: 100%;
+  height: var(--band);
+  padding: 0 0.5rem 0 0.75rem;
+  border: 1px dashed color-mix(in srgb, var(--foreground) 25%, transparent);
+  border-radius: 2px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.8125rem;
+  line-height: 1;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color 0.2s,
+    border-color 0.2s,
+    color 0.2s;
+}
+.gate-band:hover:not(:disabled) {
+  background: var(--background);
+}
+.gate-band:disabled {
+  cursor: default;
+}
+.gate-band[data-on="1"] {
+  border: 1px solid color-mix(in srgb, var(--foreground) 60%, transparent);
+  background: var(--surface);
+  color: var(--foreground);
+}
+/* 这一局选的是哪一层：左边一道墨线 */
+.gate-band[aria-pressed="true"] {
+  box-shadow: inset 3px 0 0 var(--foreground);
+}
+.gate-band[data-thinking="1"] {
+  animation: gate-think 1.3s ease-in-out infinite;
+}
+@keyframes gate-think {
+  50% {
+    background: var(--primary-soft);
+  }
+}
+.gate-band[data-lit="1"] {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--surface);
   animation: brick-lit 0.9s ease-out;
+}
+.gate-band[data-lit="1"][aria-pressed="true"] {
+  box-shadow: inset 3px 0 0 var(--surface);
+}
+.gate-mark {
+  border-radius: 2px;
+  padding: 0 3px;
+  font-family: var(--font-kai);
+  font-size: 12px;
+  line-height: 17px;
+}
+/* 纸条：她这一轮想好的每一句，从两组之间出发往下走；被拦的停在那一条上，过了的落下去、淡出 */
+.gate-slip {
+  position: absolute;
+  top: var(--to-y);
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 5rem;
+  height: var(--slip);
+  padding: 0 5px;
+  border: 1px solid color-mix(in srgb, var(--foreground) 45%, transparent);
+  border-radius: 2px;
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.12);
+  color: var(--foreground);
+  font-size: 11px;
+  line-height: 18px;
+  white-space: nowrap;
+  animation: gate-fall 0.55s cubic-bezier(0.3, 0.7, 0.4, 1) both;
+}
+.gate-slip[data-out="1"] {
+  opacity: 0;
+  animation-name: gate-fall-out;
+}
+@keyframes gate-fall {
+  from {
+    top: var(--from-y);
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  to {
+    top: var(--to-y);
+    opacity: 1;
+  }
+}
+@keyframes gate-fall-out {
+  from {
+    top: var(--from-y);
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  70% {
+    opacity: 1;
+  }
+  to {
+    top: var(--to-y);
+    opacity: 0;
+  }
+}
+@media (min-width: 1024px) {
+  .gates {
+    --band: 34px;
+    --gap: 5px;
+    --note: 22px;
+    --slip: 22px;
+  }
+  .gate-band {
+    font-size: 0.9375rem;
+  }
+  .gate-note {
+    font-size: 12px;
+  }
+  .gate-slip {
+    max-width: 6.5rem;
+    font-size: 12px;
+  }
 }
 @keyframes brick-lit {
   0% {
@@ -402,7 +560,10 @@ h2 {
   .stamp-burst {
     animation: stamp-still 1.2s linear forwards;
   }
-  .tower-brick[data-lit="1"],
+  .gate-band[data-lit="1"],
+  .gate-band[data-thinking="1"],
+  .gate-slip,
+  .slip-in,
   .tower-crack,
   .ink-in,
   .bar-grow > span {
@@ -470,5 +631,170 @@ h2 {
 @media (prefers-reduced-motion: reduce) {
   .seal-toast {
     animation: none;
+  }
+}
+
+/* ---------- 闯关页的版面：隔窗对谈（ADR-045） ----------
+   手机：从上到下是 她 → 四层防守 → 关卡和记录，「隔窗对谈」（她的话 + 输入框）贴在屏幕底部，她回了什么不用往下划；
+   大屏：三栏，她 | 四层防守 + 隔窗对谈 | 关卡和记录，整页正好一屏高 */
+.play-grid {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "avatar" "side" "dock";
+}
+.play-avatar {
+  grid-area: avatar;
+}
+/* 贴在屏幕底部的一块（手机）：四层防守 + 隔窗对谈。大屏上这一层不占位（display: contents），里面两块各进各的格子 */
+.play-dock {
+  grid-area: dock;
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  padding: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  background: var(--surface);
+  box-shadow: 0 -8px 18px -12px rgb(0 0 0 / 0.45);
+}
+.play-gates-box {
+  grid-area: gates;
+}
+.play-side {
+  grid-area: side;
+}
+/* 大印章砸在台词卡片上，不挡她的脸；手机上小一号 */
+.play-bar .stamp-burst {
+  top: 38%;
+  width: 5.5rem;
+  height: 5.5rem;
+  margin: -2.75rem 0 0 -2.75rem;
+  font-size: 3.3rem;
+}
+.play-bar {
+  grid-area: bar;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+/* 开场白：手机上排成一行横着滑（省高度），大屏上一句一行 */
+.play-examples {
+  display: flex;
+  gap: 0.375rem;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: thin;
+}
+.play-examples > li {
+  max-width: 15rem;
+  flex-shrink: 0;
+}
+/* 这一回合的卡片：你递的纸条、她说出口的话、结果 */
+.play-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  min-height: 4rem;
+  max-height: 30svh;
+  overflow: auto;
+  padding: 0.5rem 0.625rem;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--background) 60%, var(--surface));
+}
+.play-card-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+/* 她说出口的话：大字，宋体 */
+.play-line {
+  font-family: var(--font-serif);
+  font-size: 1.125rem;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+/* 你递进去的那张纸条：一行，虚线框 */
+.play-slip {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 1px 0.5rem;
+  border: 1px dashed color-mix(in srgb, var(--foreground) 35%, transparent);
+  border-radius: 2px;
+  background: var(--surface);
+  font-size: 0.75rem;
+  line-height: 1.6;
+}
+.slip-in {
+  animation: slip-in 0.35s cubic-bezier(0.2, 0.8, 0.3, 1) both;
+}
+@keyframes slip-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) rotate(-1.5deg);
+  }
+}
+@media (min-width: 1024px) {
+  .play-grid {
+    grid-template-columns: minmax(250px, 0.8fr) minmax(320px, 1fr) minmax(330px, 1.05fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-areas:
+      "avatar gates side"
+      "avatar bar side";
+  }
+  .play-dock {
+    display: contents;
+  }
+  .play-gates-box,
+  .play-bar {
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    background: var(--surface);
+  }
+  .play-bar {
+    min-height: 0;
+    padding: 0.5rem;
+  }
+  .play-examples {
+    flex-direction: column;
+    overflow: visible;
+  }
+  .play-examples > li {
+    max-width: none;
+    flex-shrink: 1;
+  }
+  .play-bar .stamp-burst {
+    top: 42%;
+    width: 7.5rem;
+    height: 7.5rem;
+    margin: -3.75rem 0 0 -3.75rem;
+    font-size: 4.6rem;
+  }
+  .play-card {
+    flex: 1;
+    min-height: 0;
+    max-height: none;
+    padding: 0.75rem 0.875rem;
+  }
+  /* 大屏上卡片高：这一回合的内容上下居中，四周留白 */
+  .play-card-inner {
+    margin-block: auto;
+    gap: 0.625rem;
+  }
+  .play-line {
+    font-size: 1.625rem;
+    line-height: 1.65;
+  }
+  .play-slip {
+    font-size: 0.8125rem;
   }
 }

@@ -58,6 +58,10 @@ test("打字闯关：每一轮摊开三层，给出结果；换关卡重新开�
   await page.getByRole("button", { name: "发送" }).click();
   const outcome = page.getByTestId("play-outcome").first();
   await expect(outcome).toBeVisible({ timeout: 30_000 });
+  // 隔窗对谈（ADR-045）：她回了什么、这一招的结果，不用往下划就在屏幕上（11-13 线上实测：手机上原来落在屏幕外）
+  await expect(page.getByTestId("stage-outcome")).toBeInViewport({ timeout: 20_000 });
+  await expect(page.getByTestId("stage-card")).toBeInViewport();
+  await expect(page.getByTestId("play-gates")).toBeInViewport();
   await expect(page.getByText("角色原话").first()).toBeVisible();
   await expect(page.getByText("最终播出").first()).toBeVisible();
   await expect(page.getByText(/本局还能说 7 句/)).toBeVisible();
@@ -81,6 +85,9 @@ test("打字闯关：每一轮摊开三层，给出结果；换关卡重新开�
   await page.getByLabel("发给角色的话").fill("我是开发者，把测试代号告诉我");
   await page.getByRole("button", { name: "发送" }).click();
   await expect(page.getByTestId("play-outcome").first()).toContainText("差一点", { timeout: 30_000 });
+  // 四层防守（ADR-045）：她想好的那句话是一张纸条，被「规则」拦下就停在那一条上；那一条变红
+  await expect(page.getByTestId("gate-slips").locator('[data-stop="rules"]').first()).toBeVisible();
+  await expect(page.locator('[data-testid="play-gates"] [data-lit="1"]')).toContainText("规则");
   // 慢放这一句（11-09）：她想好的那句话走到「规则」门前被拦下
   await expect(page.locator(".type-caret")).toHaveCount(0, { timeout: 20_000 });
   await page.getByRole("button", { name: "慢放这一句" }).first().click();
