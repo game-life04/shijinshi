@@ -7,8 +7,8 @@
 //   --seed：先用接口跑七次冒烟题（只有人设 / 加边界提示 / 再加护栏，再加几种放行方式），运行记录的表格才填得满、攻防地图才有东西可截。
 //           只在模拟模式下跑（工作台写着「模拟数据（非真实模型）」）；接了真实模型的服务直接退出，免得花钱。
 // 截图用两倍像素，再在浏览器里缩成 960 × 600、编码成 WebP（不另装图片库）。
-// 表格只截要讲的几列（用例库：编号、类别、审核、输入、期望；运行记录：A、B、时间、角色、配置），截前把不截的列从页面上拿掉、
-// 不让表格挤成一字一行；运行记录最多留七行；原理只截七步的小标题。都只改这一次截图里的页面，不改网站。
+// 表格只截要讲的几列（用例库：编号、类别、审核、输入、期望；运行记录：A、B、时间、角色、配置、体检单），截前把不截的列从页面上拿掉、
+// 不让表格挤成一字一行；运行记录最多留六行；原理只截七步的小标题。都只改这一次截图里的页面，不改网站。
 // 用例库只截开发集那一段（suites/dev.jsonl，本来就公开）；截图前先把保留集那一段从页面上拿掉，不进图、也不打印。
 
 import { mkdirSync, statSync, writeFileSync } from "node:fs";
@@ -290,15 +290,18 @@ const SHOTS: Shot[] = [
     },
   },
   {
-    // 运行记录：表格和「前后对比」按钮；A、B 各选一次，按钮亮着。右边几列（数据、通过、体检单）截掉，截到配置那几个字为止
+    // 运行记录：表格和「前后对比」按钮；A、B 各选一次，按钮亮着。中间几列（数据、通过数、不合格那几个数、没跑完）拿掉，
+    // 留下最后的「体检单 · 打开」：卡片上写着「每行的「打开」：看那次的体检单」，图里要看得到（ADR-049 深度测试：原来截到配置为止）。
+    // 整个表格的外框都在图里，四周留一圈页面底色
     name: "runs",
     take: async (browser) => {
       const page = await open(browser, "/runs", { width: 1280, height: 900 });
       await firstOf(page, [bodyOf(page, "运行记录")], "运行记录");
       const form = await firstOf(page, [page.locator('form[action="/compare"]')], "运行记录的表格");
-      // 最多留七行（运行多了按钮会被挤出图外）：多出来的这一次截图里先藏起来
+      // 最多留六行：多出来的这一次截图里先藏起来。运行多了按钮会被挤出图外；留七行时外框下面只剩一小条空，
+      // 卡片右下角的「模拟数据」角标在手机上正好压住外框的右下角（ADR-049 复查），六行就压不到了
       await form.locator("tbody tr").evaluateAll((rows) => {
-        for (const row of rows.slice(7)) (row as HTMLElement).style.setProperty("display", "none");
+        for (const row of rows.slice(6)) (row as HTMLElement).style.setProperty("display", "none");
       });
       const a = page.locator('input[type="radio"][name="a"]');
       const b = page.locator('input[type="radio"][name="b"]');
@@ -306,9 +309,22 @@ const SHOTS: Shot[] = [
         await a.nth(1).check();
         await b.nth(0).check();
       }
-      const r = await pageRect(form);
-      const right = await columnRight(form.locator("table").first(), "配置", true);
-      await save(page, frame({ ...r, width: right + 14 - r.x }), "runs");
+      const table = form.locator("table").first();
+      await dropColumns(table, ["数据", "本次通过", "不合格/不确定/不适用", "没跑完"]);
+      // 表格原来最少 48rem 宽、铺满整行：拿掉四列以后按剩下的字排紧，不然几列会被拉得很散
+      await table.evaluate((t) => {
+        (t as HTMLElement).style.setProperty("width", "auto");
+        (t as HTMLElement).style.setProperty("min-width", "0");
+        // 排紧以后列和列之间没有空（「琪叶桃」「人设 + ……」连成一串）：每格右边留一点
+        for (const c of t.querySelectorAll("th, td")) (c as HTMLElement).style.setProperty("padding-right", "0.875rem");
+      });
+      // 外框跟着表格收窄，整个框（带右边框）进图：卡片上这张图不再从右边淡出（components/guide-content.ts 的 fade），
+      // 原来淡出正好压在「体检单 · 打开」那一列上，手机上「打开」右半截只剩 4.5:1（ADR-049 复查）
+      await form.evaluate((f) => {
+        (f as HTMLElement).style.setProperty("width", "max-content");
+        (f as HTMLElement).style.setProperty("max-width", "100%");
+      });
+      await save(page, frame(await pageRect(form), 6), "runs");
       await page.context().close();
     },
   },

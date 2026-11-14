@@ -216,8 +216,9 @@ h2 {
     print-color-adjust: exact;
     -webkit-print-color-adjust: exact;
   }
-  /* 不在任何 @layer 里，优先级本来就高过 Tailwind 的工具类，不需要 !important */
-  .no-print {
+  /* 前面加 :root 抬高一级：不在 @layer 里的同级规则谁写在后面谁赢，后面的 .app-nav-row { display: flex } 原来把它盖掉了，
+     导出体检单 PDF 时整行导航都印出来（ADR-049 复查）。Tailwind 的工具类在 @layer 里，本来就压不过它 */
+  :root .no-print {
     display: none;
   }
   .print-keep {
@@ -679,6 +680,13 @@ h2 {
   flex-wrap: wrap;
   gap: 0.25rem;
 }
+/* 导航外面那层（components/NavAutoScroll.tsx）：大屏上不占位置，「‹」「›」只在窄屏上有 */
+.app-nav-scroller {
+  display: contents;
+}
+.app-nav-more {
+  display: none;
+}
 .app-nav-guide {
   position: relative;
   flex: none;
@@ -718,6 +726,12 @@ h2 {
     margin-inline: -0.75rem;
     padding-right: 0.75rem;
   }
+  .app-nav-scroller {
+    position: relative;
+    display: flex;
+    flex: 1 1 0;
+    min-width: 0;
+  }
   .app-nav {
     flex: 1 1 0;
     min-width: 0;
@@ -725,11 +739,41 @@ h2 {
     gap: 0.125rem;
     overflow-x: auto;
     overscroll-behavior-x: contain;
-    /* 右边多留一段淡出的宽度：滑到头时最后一项（原理）整个露在淡出外面 */
+    /* 右边多留一段宽度：滑到头时最后一项（原理）整个露出来，不贴着「用法」那道竖线 */
     padding-inline: 0.75rem 1.75rem;
     scrollbar-width: none;
-    /* 两头淡出：看得出这一行还能滑 */
-    mask-image: linear-gradient(to right, transparent 0, #000 0.75rem, #000 calc(100% - 1.75rem), transparent 100%);
+    /* 点「›」「‹」那一小块时手指落在底下的链接上：不让手机把那个链接闪一下高亮（看着像点进去了） */
+    -webkit-tap-highlight-color: transparent;
+  }
+  /* 哪一头还有被挡住的页面，那一头才淡出（data-more 由 NavAutoScroll.tsx 按滚动位置写）：箭头底下那 1.75rem 全透明
+     （不然箭头旁边透出半个图标，深色下像个「≡」），再往里 0.75rem 淡入 */
+  .app-nav[data-more="right"] {
+    mask-image: linear-gradient(to right, #000 calc(100% - 2.5rem), transparent calc(100% - 1.75rem));
+  }
+  .app-nav[data-more="left"] {
+    mask-image: linear-gradient(to right, transparent 1.75rem, #000 2.5rem);
+  }
+  .app-nav[data-more="both"] {
+    mask-image: linear-gradient(to right, transparent 1.75rem, #000 2.5rem, #000 calc(100% - 2.5rem), transparent calc(100% - 1.75rem));
+  }
+  /* 「‹」「›」：宽 1.75rem，画在淡出的那一头；加上里面那 0.75rem 淡入，一头一共 2.5rem（NavAutoScroll.tsx 的 FADE_REM、ARROW_REM）。
+     只是画上去的记号，不接触摸：手指从它上面开始横着划，划的还是底下的导航；点它那一小块由导航自己认出来、翻到下一批 */
+  .app-nav-more {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    display: flex;
+    width: 1.75rem;
+    align-items: center;
+    justify-content: center;
+    color: var(--foreground);
+    pointer-events: none;
+  }
+  .app-nav-more[data-side="left"] {
+    left: 0;
+  }
+  .app-nav-more[data-side="right"] {
+    right: 0;
   }
   .app-nav::-webkit-scrollbar {
     display: none;
@@ -742,6 +786,22 @@ h2 {
     min-width: 0;
     flex-wrap: nowrap;
     gap: 0.5rem;
+  }
+}
+/* 导航还没量过（脚本没跑起来）时先当右边放不下，这只对放不下的宽度成立。量出来（ADR-049 复查）：竖着的版面 625 宽起放得下；
+   横着拿的手机（高不到 520）印章、标识和导航挤在一行，要到 820 宽上下才放得下。放得下的宽度上先不画「›」、不淡出
+   （不然先画出来的「›」点了没用，还把最后一项淡掉），量过以后再按实际情况给 */
+/* 量过以前画出来的「›」接住点击（点了什么也不做）：脚本没跑起来时还认不出「点的是箭头」，
+   不接的话点它就点进了底下被淡出盖住的那一项（ADR-049 第三轮复查） */
+.app-nav-scroller:not([data-measured]) > .app-nav-more {
+  pointer-events: auto;
+}
+@media (min-width: 625px) and (min-height: 520px), (min-width: 820px) {
+  .app-nav-scroller:not([data-measured]) > .app-nav-more {
+    display: none;
+  }
+  .app-nav-scroller:not([data-measured]) > .app-nav {
+    mask-image: none;
   }
 }
 @media (max-width: 767.98px), (max-height: 519.98px) {

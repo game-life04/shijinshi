@@ -42,6 +42,68 @@ test.describe("顶栏和用法页（3100，没配账号）", () => {
     // 窄屏上导航左右滑，「用法」钉在这一行右头，不用滑就整个看得见
     const guide = nav.getByRole("link", { name: "用法" });
     await expect(guide).toBeInViewport({ ratio: 1 });
+    // 看得出还能滑（ADR-049 深度测试）：手机上哪一头还有被挡住的页面，哪一头画「‹」「›」；大屏上放得下，没有箭头
+    const more = (side: "left" | "right") => nav.locator(`.app-nav-more[data-side="${side}"]`);
+    if (info.project.name === "phone-390") {
+      const scroller = nav.locator(".app-nav");
+      const edge = async (side: "left" | "right") => {
+        const b = await scroller.boundingBox();
+        if (!b) throw new Error("导航不在页面上");
+        // 箭头那一小块宽 28（1.75rem）：点在里面离边 20 的地方（离边 12 正好压在第一项的左边线上）
+        return { x: side === "left" ? b.x + 20 : b.x + b.width - 20, y: b.y + b.height / 2 };
+      };
+      const tapEdge = async (side: "left" | "right") => {
+        const at = await edge(side);
+        await page.touchscreen.tap(at.x, at.y);
+      };
+      const scrollLeft = () => scroller.evaluate((el) => Math.round(el.scrollLeft));
+      // 先等脚本跑起来、量过导航（服务端先画出来的「›」在脚本跑起来以前点了不翻页）
+      const measured = nav.locator(".app-nav-scroller[data-measured]");
+      await expect(measured).toHaveCount(1);
+      await expect(more("right")).toBeVisible();
+      await expect(more("left")).toHaveCount(0);
+      // 箭头只是画上去的记号：手指从「›」上开始往左拖，划的还是底下的导航（原来箭头是盖在上面的按钮，从它上面拖不动）
+      const cdp = await page.context().newCDPSession(page);
+      const from = await edge("right");
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: from.x, y: from.y }] });
+      for (let i = 1; i <= 10; i++) {
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: from.x - i * 15, y: from.y }] });
+        await page.waitForTimeout(16);
+      }
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+      await expect.poll(scrollLeft).toBeGreaterThan(60);
+      await expect(page).toHaveURL(/\/workbench$/);
+      await scroller.evaluate((el) => {
+        el.scrollLeft = 0;
+      });
+      await expect(more("left")).toHaveCount(0);
+      // 点「›」那一小块：按项翻到头，左头出「‹」、「原理」整个露出来、「›」收掉
+      for (let i = 0; i < 6 && (await more("right").count()); i++) {
+        await tapEdge("right");
+        await page.waitForTimeout(450);
+      }
+      await expect(more("right")).toHaveCount(0);
+      await expect(more("left")).toBeVisible();
+      await expect(nav.getByRole("link", { name: "原理" })).toBeInViewport({ ratio: 1 });
+      // 在「原理」页连点「‹」：滑到头以后那一小块底下是「体检工作台」，接着点不会点进去；停一会儿再点才进
+      await page.goto("/settings");
+      await expect(measured).toHaveCount(1);
+      await expect(more("left")).toBeVisible();
+      for (let i = 0; i < 8; i++) {
+        await tapEdge("left");
+        await page.waitForTimeout(200);
+      }
+      await expect(page).toHaveURL(/\/settings$/);
+      await expect.poll(scrollLeft).toBe(0);
+      await expect(more("left")).toHaveCount(0);
+      // 挡点击的那一会儿（1.2 秒，挡着时点了会续上）过了以后，点第一项的图标照常进
+      await page.waitForTimeout(1800);
+      await tapEdge("left");
+      await expect(page).toHaveURL(/\/workbench$/);
+      await expect(nav.getByRole("link", { name: "体检工作台" })).toHaveAttribute("aria-current", "page");
+    } else {
+      await expect(nav.locator(".app-nav-more")).toHaveCount(0);
+    }
     await guide.click();
     await expect(page).toHaveURL(/\/guide$/);
     await expect(page.getByRole("heading", { level: 1, name: "用法" })).toBeVisible();

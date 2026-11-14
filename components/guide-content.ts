@@ -98,7 +98,8 @@ export const MORE: Module[] = [
       { role: "link", name: "打开" },
       { role: "button", name: "前后对比" },
     ],
-    fade: "right",
+    // 整个表格的外框都在图里（截图时拿掉了中间几列），哪一边都不是从页面中间截断的：不淡出
+    fade: "none",
   },
   {
     href: "/map",

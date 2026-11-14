@@ -7,7 +7,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { GUIDE, NAV } from "@/components/AppFrame";
 import { LAB, MAIN, MORE, SHOT } from "@/components/guide-content";
-import { NAV_FADE, nearestScroll } from "@/components/NavAutoScroll";
+import { edgeHit, NAV_FADE, navMore, nearestScroll, stepScroll } from "@/components/NavAutoScroll";
 import { LEVELS, TIERS } from "@/lib/domain/levels";
 import {
   afterLoginTarget,
@@ -125,9 +125,10 @@ describe("顶栏和用法页的内容", () => {
 });
 
 describe("窄屏导航：当前项只滑到刚好露出来，不滑到正中", () => {
-  // 导航 300 宽：左边淡出 12、右边淡出 28，整个露着的地方是 [12, 272]
+  // 导航 300 宽：两头各有 40 宽的「‹」「›」和淡出，整个露着的地方是 [40, 260]
   it("已经整个露着就不动（第一项、第二项都不滑，不会把第一项切成半截）", () => {
-    expect(nearestScroll(0, 300, 12, 100)).toBe(0);
+    // 滑在最左时只有右头有箭头：第一项贴着左边的内边距，整个露着
+    expect(nearestScroll(0, 300, 12, 100, "right")).toBe(0);
     expect(nearestScroll(0, 300, 114, 88)).toBe(0);
   });
 
@@ -138,6 +139,129 @@ describe("窄屏导航：当前项只滑到刚好露出来，不滑到正中", (
   it("挡在左边（先前滑过）：滑到它的左边刚好露出", () => {
     expect(nearestScroll(200, 300, 114, 88)).toBe(114 - NAV_FADE.left);
     expect(nearestScroll(30, 300, 12, 100)).toBe(0);
+  });
+
+  it("没有箭头的那一头不用让：横屏手机六项都露着（只多出 6px 内边距），进「原理」页不滑", () => {
+    // 导航 558 宽、内容 564：原理在 [473, 536]，两头都没有箭头
+    expect(nearestScroll(0, 558, 473, 63, "")).toBe(0);
+    // 两头都让的算法会白滑一下（原来的做法）
+    expect(nearestScroll(0, 558, 473, 63)).toBeGreaterThan(0);
+    // 只有右箭头时，左边贴着边的第一项不用滑
+    expect(nearestScroll(0, 300, 12, 100, "right")).toBe(0);
+  });
+});
+
+describe("窄屏导航：点「›」「‹」按项翻，每一项都会整个露出来一次（ADR-049 复查）", () => {
+  // 量出来的六项（内容 568 宽：左内边距 12、右 28）
+  const ITEMS = [
+    { left: 12, width: 105 },
+    { left: 119, width: 91 },
+    { left: 212, width: 77 },
+    { left: 291, width: 91 },
+    { left: 384, width: 91 },
+    { left: 477, width: 63 },
+  ];
+  const CONTENT = 568;
+  /** 从头点到尾（或从尾点到头），记下每一步停在哪 */
+  const walk = (dir: 1 | -1, view: number) => {
+    const max = CONTENT - view;
+    const stops = [dir > 0 ? 0 : max];
+    for (let i = 0; i < 12; i++) {
+      const at = stops[stops.length - 1];
+      const more = navMore(at, view, CONTENT, 12, 28);
+      if (dir > 0 ? more !== "right" && more !== "both" : more !== "left" && more !== "both") break;
+      stops.push(stepScroll(dir, at, view, CONTENT, ITEMS, more));
+    }
+    return stops;
+  };
+  /** 这一步停下来时整个露在两个箭头之间的项 */
+  const shown = (at: number, view: number) => {
+    const more = navMore(at, view, CONTENT, 12, 28);
+    const lo = at + (more === "left" || more === "both" ? NAV_FADE.left : 0);
+    const hi = at + view - (more === "right" || more === "both" ? NAV_FADE.right : 0);
+    return ITEMS.flatMap((it, i) => (it.left >= lo && it.left + it.width <= hi ? [i] : []));
+  };
+
+  it("390 宽（导航 303）：往右两下到头，往左两下回到头", () => {
+    expect(walk(1, 303)).toEqual([0, 172, 265]);
+    expect(walk(-1, 303)).toEqual([265, 119, 0]);
+  });
+
+  it("320 宽（导航 233，两个箭头之间只放得下一项）：一下一项，六项都整个露出来过，最后停在头上", () => {
+    for (const dir of [1, -1] as const) {
+      const stops = walk(dir, 233);
+      expect(stops[stops.length - 1]).toBe(dir > 0 ? CONTENT - 233 : 0);
+      expect(new Set(stops.flatMap((at) => shown(at, 233)))).toEqual(new Set([0, 1, 2, 3, 4, 5]));
+      // 每一步都在往前走
+      for (let i = 1; i < stops.length; i++) expect(dir * (stops[i] - stops[i - 1])).toBeGreaterThan(0);
+    }
+  });
+
+  it("360、414 宽也一样：每一项都整个露出来过", () => {
+    for (const view of [273, 327]) {
+      for (const dir of [1, -1] as const) {
+        expect(new Set(walk(dir, view).flatMap((at) => shown(at, view)))).toEqual(new Set([0, 1, 2, 3, 4, 5]));
+      }
+    }
+  });
+
+  it("哪一项比两个箭头之间还宽：按一屏翻，点了一定会动", () => {
+    const wide = [{ left: 12, width: 500 }];
+    expect(stepScroll(1, 0, 233, 540, wide, "right")).toBeGreaterThan(0);
+    expect(stepScroll(-1, 307, 233, 540, wide, "left")).toBeLessThan(307);
+  });
+
+  it("一项都没有、内容正好放得下：不出错，停在 0", () => {
+    expect(stepScroll(1, 0, 300, 300, [], "")).toBe(0);
+    expect(stepScroll(-1, 0, 300, 300, [], "")).toBe(0);
+  });
+
+  it("浏览器默认字号不是 16px（淡出按 rem 算，20px 时一头 50）：停下的位置跟着让开", () => {
+    // 390 宽、字号 20px 时一头淡出 50：往右翻，「用例库」紧挨着左箭头（212 - 50）
+    expect(stepScroll(1, 0, 303, CONTENT, ITEMS, "right", 50)).toBe(162);
+    // 键盘走到「运行记录」[291, 382]：右边让开 50，不是 40
+    expect(nearestScroll(0, 303, 291, 91, "right", 50)).toBe(291 + 91 - 303 + 50);
+  });
+});
+
+describe("窄屏导航：点在箭头那一小块上（箭头只是画上去的，不接触摸）", () => {
+  it("两头各 28 宽（1.75rem）：点在里面算点箭头，点在中间不算", () => {
+    expect(edgeHit(10, 303, 28)).toBe("left");
+    expect(edgeHit(27.9, 303, 28)).toBe("left");
+    expect(edgeHit(28, 303, 28)).toBe("");
+    expect(edgeHit(150, 303, 28)).toBe("");
+    expect(edgeHit(275, 303, 28)).toBe("");
+    expect(edgeHit(275.1, 303, 28)).toBe("right");
+    expect(edgeHit(300, 303, 28)).toBe("right");
+  });
+});
+
+describe("窄屏导航：哪一头还有被挡住的页面，哪一头放「‹」「›」（ADR-049 深度测试：手机上看不出这一行能划）", () => {
+  // 导航 300 宽、内容 620 宽：能滑 0～320
+  it("在最左边：只有右边还有", () => {
+    expect(navMore(0, 300, 620)).toBe("right");
+  });
+  it("滑到中间：两头都有", () => {
+    expect(navMore(150, 300, 620)).toBe("both");
+  });
+  it("滑到头：只有左边还有；差 2 像素以内算到头（小数像素不让箭头一闪一闪）", () => {
+    expect(navMore(320, 300, 620)).toBe("left");
+    expect(navMore(318.5, 300, 620)).toBe("left");
+    expect(navMore(1.5, 300, 620)).toBe("right");
+  });
+  it("放得下（大屏、宽的平板）：两头都没有", () => {
+    expect(navMore(0, 700, 620)).toBe("");
+    expect(navMore(0, 620, 621)).toBe("");
+  });
+  it("只滑进了两头的内边距（第一项、最后一项其实整个露着）不算被挡住：横屏手机只多出 6px 时不出箭头", () => {
+    // 内边距左 8、右 28（横屏手机）：内容 844、能看 838，只多出 6
+    expect(navMore(0, 838, 844, 8, 28)).toBe("");
+    expect(navMore(6, 838, 844, 8, 28)).toBe("");
+    // 竖屏手机（左 12、右 28）：滑了 10px 第一项还整个露着，左边不算
+    expect(navMore(10, 300, 620, 12, 28)).toBe("right");
+    expect(navMore(20, 300, 620, 12, 28)).toBe("both");
+    // 离最右头还差 25px：最后一项在内边距（28）以内，已经整个露着
+    expect(navMore(295, 300, 620, 12, 28)).toBe("left");
   });
 });
 

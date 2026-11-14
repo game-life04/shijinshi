@@ -10,6 +10,7 @@ import { useEffect, useRef } from "react";
 import type { AvatarStage } from "@/lib/client/avatar/stage";
 import { newFrame } from "@/lib/client/avatar/types";
 import { createVrmDriver } from "@/lib/client/avatar/vrm-driver";
+import { fetchModel, forgetModel, ModelHttpError } from "@/lib/client/model-fetch";
 import { seeThroughBangs } from "@/lib/client/vrm-see-through";
 
 export type Framing = "bust" | "stage";
@@ -74,13 +75,30 @@ export default function VrmAvatar({ url, stage, framing = "bust", onFail, onLoad
 
     (async () => {
       const probe = document.createElement("canvas");
-      if (!probe.getContext("webgl2") && !probe.getContext("webgl")) return failRef.current("浏览器不支持 WebGL");
-      const head = await fetch(url, { method: "HEAD" }).catch(() => null);
-      if (!head?.ok) return failRef.current("还没有放入 VRM 模型文件");
+      const gl = probe.getContext("webgl2") ?? probe.getContext("webgl");
+      if (!gl) return failRef.current("浏览器不支持 WebGL");
+      // 探完就放掉：不然每进一次页面多占一个 WebGL 上下文，要等垃圾回收才还（来回换页多了浏览器会报上下文太多）
+      gl.getExtension("WEBGL_lose_context")?.loseContext();
+      // 模型数据：Avatar 在页面能用以后已经开始下载（lib/client/model-fetch.ts），这里拿同一份；它没开始的话这里开始。
+      // 不再先发 HEAD 探文件在不在（ADR-049 深度测试：和预下载对不上，控制台报「预下载没用上」），文件不在看下载的状态码
+      const model = fetchModel(url);
+      model.catch(() => {});
 
       const THREE = await import("three");
       const { GLTFLoader } = await import("three/examples/jsm/loaders/GLTFLoader.js");
       const { VRMLoaderPlugin, VRMUtils } = await import("@pixiv/three-vrm");
+      if (disposed) return;
+      // 先等模型下载完，再建渲染器、解析：下载到一半就离开这一页的，到这里直接退出，不建渲染器、也不白白解析一遍
+      // （复查：慢线路上模型要下半分钟，这期间来回换页，原来每个离开的页面都留着一个渲染器、等下载完还各解析一遍）
+      let data: ArrayBuffer;
+      try {
+        data = await model;
+      } catch (e) {
+        if (disposed) return;
+        // 404：还没放模型文件（仓库里本来有，删掉了或者 NEXT_PUBLIC_VRM_URL 指错了）
+        if (e instanceof ModelHttpError && e.status === 404) return failRef.current("还没有放入 VRM 模型文件");
+        return failRef.current(`模型加载失败：${e instanceof Error ? e.message : String(e)}`);
+      }
       if (disposed) return;
 
       // 带模板缓冲：眼睛透过刘海要用（lib/client/vrm-see-through.ts）
@@ -98,13 +116,18 @@ export default function VrmAvatar({ url, stage, framing = "bust", onFail, onLoad
 
       const loader = new GLTFLoader();
       loader.register((parser) => new VRMLoaderPlugin(parser));
-      let gltf: Awaited<ReturnType<typeof loader.loadAsync>>;
+      let gltf: Awaited<ReturnType<typeof loader.parseAsync>>;
       try {
-        gltf = await loader.loadAsync(url);
+        gltf = await loader.parseAsync(data, "");
       } catch (e) {
         renderer.dispose();
         renderer.domElement.remove();
-        return failRef.current(`模型加载失败：${e instanceof Error ? e.message : String(e)}`);
+        // 下载下来了却解析不了：这份数据别记着，换页回来重新下载（请求失败的 model-fetch 自己已经不记了）
+        forgetModel(url, model);
+        if (disposed) return;
+        // 不把解析器的原话给人看：坏数据时那是一串乱码（第三轮复查），原话只留在控制台的调试信息里
+        console.debug("VRM 模型解析失败", e);
+        return failRef.current("模型加载失败：模型文件解析不了（可能下载坏了，换一页再回来会重新下载）");
       }
       if (disposed) {
         renderer.dispose();

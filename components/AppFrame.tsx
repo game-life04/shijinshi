@@ -7,7 +7,7 @@
 import { BookOpen, CircleHelp, Grid3x3, ListChecks, ScrollText, SquareTerminal, Swords } from "lucide-react";
 import Link from "next/link";
 import type { CSSProperties, ReactNode } from "react";
-import NavAutoScroll from "./NavAutoScroll";
+import NavScroller from "./NavAutoScroll";
 
 /** 顶栏导航（单元测试 tests/unit/guide.test.ts 认这里：没有三种结局，用法单独一格） */
 export const NAV = [
@@ -70,15 +70,15 @@ export default function AppFrame({ children, active, fill = false, account }: Ap
           </span>
         </Link>
         <nav aria-label="主导航" className="app-nav-row no-print">
-          <div className="app-nav">
+          {/* 窄屏上这一行左右滑，哪头还有被挡住的页面，哪头就有「‹」「›」（NavAutoScroll.tsx） */}
+          <NavScroller>
             {NAV.map(({ href, label, icon: Icon }) => (
               <Link key={href} href={href} aria-current={active === href ? "page" : undefined} className={navItem(active === href)}>
                 <Icon size={15} aria-hidden />
                 {label}
               </Link>
             ))}
-            <NavAutoScroll />
-          </div>
+          </NavScroller>
           <Link
             href={GUIDE.href}
             aria-current={active === GUIDE.href ? "page" : undefined}
