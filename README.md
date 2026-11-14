@@ -10,7 +10,7 @@
 
 - ✅ M0 工程与合同；M1 文字纵向闭环：模拟模式验证，10-19 接入阿里云百炼并完成 7 轮真实试跑（[试跑记录](docs/pilot-log.md)）
 - ✅ M2 语音输出：合成 → AudioWorklet 播放 → 护栏截断（按代际丢弃旧音频）→ VRM 口型，计量违规音频渲染时长、首声等待、停止响应。真实合成（百炼 Qwen-TTS）10-27 跑通，默认「边审边合成」（ADR-020）；11-10 用真实模型做了三种放行方式对照（E2，ADR-043）。闯关页可以对着麦克风说；体检里的语音输入题没做
-- ✅ M3 完整体检：「改了再测」、体检单三层、打字闯关（四层难度、看 AI 打 AI）、三种结局、攻防地图、导出 PDF、账号登录与次数上限；MCP 服务（`scripts/mcp-server.ts`，ADR-043）
+- ✅ M3 完整体检：「改了再测」、体检单三层、打字闯关（四层难度、看 AI 打 AI）、小实验「先审还是先播」、攻防地图、用法页（第一次登录先看）、导出 PDF、账号登录与次数上限；MCP 服务（`scripts/mcp-server.ts`，ADR-043）
 - 🔶 M4 证据与交付：开发集 21 条真实模型调试三次；**保留集 11-10 冻结**（标签 `freeze-heldout-1110`，护栏、裁判说明、边界提示从此不改）后导入并跑正式实验；真人试用、视频、上线部署进行中
 - 详细状态见 [docs/implementation-status.md](docs/implementation-status.md)
 
@@ -78,7 +78,7 @@ npm run dev                    # 打开 http://127.0.0.1:3000 ，首屏就是体
 | `npm run release:check` | 发布前扫描密钥、会话密钥、账号记录、内网地址和本地禁词表 |
 | `npx tsx scripts/account.ts add <账号名>` / `secret` / `check` | 上线演示的账号：生成一条账号记录（密码输两遍、不显示）、生成会话密钥、检查服务器上的登录配置（见 [docs/deploy.md](docs/deploy.md)） |
 | `npm run experiments -- --suite dev` | 对照实验一条命令跑完：B0 / B1 / B2 各跑一遍出误拦率、原话越界率、最终暴露率，再把 B2 的对话让裁判不查条文重判一遍；真实模型要加 `--yes` 才跑。`suites/dev.jsonl` 要先用下面的导入脚本从用例表生成；还没有时可以先跑 `npm run experiments -- --suite smoke --include-drafts`（草稿，预览）。`--repeat 3` 每种配置跑几次（报告多一张合计表）；`--only E3` 比测试 Agent 现想和按固定次序出招；`--from <目录> --reviewed` 用跑完的数据重算，机器初判和人工复核后两套数字并列 |
-| `npm run experiments:voice -- --runs 3 --delays 0,4000` | 三种放行方式对照：用浏览器反复播放「三种结局」页，记漏出和首声（先 `npm run build`；端口默认 3300，`--port` 可改）；真实模型要加 `--yes` |
+| `npm run experiments:voice -- --runs 3 --delays 0,4000` | 三种放行方式对照：用浏览器反复播放小实验「先审还是先播」页，记漏出和首声（先 `npm run build`；端口默认 3300，`--port` 可改）；真实模型要加 `--yes` |
 | `npx tsx --env-file=.env.local scripts/mcp-server.ts` | MCP 服务（标准输入输出）：让 Claude Code、Cursor 这类工具直接调用体检。三个工具：查条文、跑体检、取结论。在 Claude Code 里登记：`claude mcp add fencun -- npx tsx --env-file=.env.local scripts/mcp-server.ts`（在仓库根目录执行） |
 | `npx tsx --env-file=.env.local scripts/guard-calibrate.ts --yes --repeat 3` | 护栏校准：拿 `eval/calibration/guard.json` 里的句子（该拦的、该放行的）过一遍护栏，数误拦和漏拦；`--split blind` 只跑某一份，`--guard` 换一份护栏代码做前后对比。校准集是草稿，不进正式统计 |
 | `python -I scripts/import-cases.py 用例表.xlsx` | 把队员 B 填的用例表导成 `suites/dev.jsonl`；保留集要加 `--include-heldout` 才导入。先装依赖：`pip install -r scripts/requirements.txt` |
@@ -89,7 +89,7 @@ npm run dev                    # 打开 http://127.0.0.1:3000 ，首屏就是体
 
 ```
 浏览器（Next.js App Router + React 19 + TypeScript strict + Tailwind）
-  登录 / 体检工作台 / 打字闯关 / 三种结局 / 用例库 / 运行记录 / 体检单 / 前后对比 / 攻防地图 / 原理
+  登录 / 用法 / 体检工作台 / 打字闯关 / 用例库 / 运行记录 / 体检单 / 前后对比 / 攻防地图 / 原理（下面挂小实验「先审还是先播」，原「三种结局」）
         │  REST + 事件流（SSE）
 Next.js Route Handlers（只做 AI 接入层）
   └ lib/server/runs.ts   运行管理：create/start/pause/resume/cancel/get/report/review/compare
