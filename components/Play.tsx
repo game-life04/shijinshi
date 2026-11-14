@@ -41,7 +41,7 @@ import { type Topic, topicOf } from "@/lib/client/avatar/topic";
 import type { CueAck } from "@/lib/client/avatar/types";
 import { EXPIRED_MESSAGE, toLoginIfExpired } from "@/lib/client/session-expired";
 import { stampSound } from "@/lib/client/sfx";
-import { useSpeechInput } from "@/lib/client/speech-input";
+import { joinSpeech, useSpeechInput } from "@/lib/client/speech-input";
 import { VoicePlayer } from "@/lib/client/voice-player";
 import {
   GREETINGS,
@@ -454,6 +454,12 @@ export default function Play() {
   const inputRef = useRef<HTMLInputElement>(null);
   /** 这一句是在输入框里打出来的：回复到了以后把焦点还给输入框，接着打下一句（ADR-047）。手机上不还：一聚焦键盘就弹出来，挡住她 */
   const refocus = useRef(false);
+  /** 输入框里这句是语音认出来的（没被清空重打）：发出去算「用嘴说的」 */
+  const spokenRef = useRef<string | null>(null);
+  /** 这次点「说」时输入框里已有的字：认出来的话接在后面，不把它盖掉（ADR-049 深度测试：说到一半停了再点「说」，前半句没了） */
+  const speechBaseRef = useRef("");
+  /** 刚认出一句、还没发：输入框下面提示「看看对不对，再点发送」 */
+  const [heard, setHeard] = useState(false);
 
   // 这一局你说过的话里有危机、未成年的信号：她按那一类话题的守则演（不比耶、不眨眼、不笑、不害羞；lib/client/avatar/policy.ts），
   // 重新开始清掉（11-14 深度测试：原来闯关页的表演从不知道话题，说完「我真的不想再撑下去了」她守住了还比耶眨眼）
@@ -758,6 +764,9 @@ export default function Play() {
   ): Promise<SendResult | null> => {
     const t = (override ?? text).trim();
     if (!t || busy) return null;
+    if (!override && spokenRef.current) spoken = true; // 语音认出来、在框里看过改过才发的
+    spokenRef.current = null;
+    setHeard(false);
     const tr = force?.tier ?? tier;
     // 发出去以后输入框会停用，焦点就丢了：记下这一句是不是从输入框发的（自己打的、不是 AI 玩家、不是用嘴说的、不是示范）
     refocus.current = !override && !window.matchMedia(SHEET_MQ).matches;
@@ -971,11 +980,19 @@ export default function Play() {
     }
   };
 
-  // 对着麦克风说：说完一句就发；一开口，她要是正在说话，就当场打断她（ADR-037）
+  // 对着麦克风说：认出来的话填进输入框，你看一眼、改好再点「发送」（ADR-049：原来说完马上发出去，认错了字也来不及改——
+  // 队友试用时觉得「太快了」）。从语音来的这句，只要没被清空重打，发出去照样算「用嘴说的」（成就印要用）。
+  // 一开口，她要是正在说话，就当场打断她（ADR-037）
   const speech = useSpeechInput({
-    onFinal: (t) => void send(t, undefined, undefined, true),
+    onFinal: (t) => {
+      setText(joinSpeech(speechBaseRef.current, t));
+      spokenRef.current = t;
+      setHeard(true);
+      // 电脑上把焦点放到输入框，回车就发；手机上不放（一聚焦键盘就弹出来，挡住她；ADR-047 同一条规矩），点「发送」就行
+      if (!window.matchMedia(SHEET_MQ).matches) inputRef.current?.focus({ preventScroll: true });
+    },
     onInterim: (t) => {
-      setText(t);
+      setText(joinSpeech(speechBaseRef.current, t));
       performer.cue({ type: "typing" });
     },
     onSpeechStart: () => {
@@ -985,7 +1002,7 @@ export default function Play() {
         performer.cue({ type: "cut" });
         clearTimers();
         setPhase("listen");
-        // 「你打断了她」留 4 秒（认出来的话马上会发出去，不能一发就清掉）
+        // 「你打断了她」留 4 秒（认出来的话填进框里等你发，这句提示别一下就没了）
         setBarged(true);
         setTimeout(() => setBarged(false), 4000);
       }
@@ -1001,6 +1018,7 @@ export default function Play() {
       // 声音打不开、或者一直没解锁（最多等 1.5 秒）也照样能说
       await Promise.race([ensureVoice().catch(() => {}), wait(1500)]);
     }
+    speechBaseRef.current = text;
     speech.start();
   };
 
@@ -1405,7 +1423,10 @@ export default function Play() {
               )}
               {stuck && !pending && (
                 <p className="rounded-sm border border-dashed border-border px-2.5 py-1.5 text-xs text-muted">
-                  连着两次都守住了。想看护栏怎么拦？勾上「换成『故意出错』的角色」再说一遍，退回第 1 层试试，或者换一关。
+                  {/* 按层说（ADR-049 深度测试）：第 1、2 层还没有规则和护栏模型，「想看护栏怎么拦」得去第 3、4 层；已经在第 1 层就不说「退回第 1 层」 */}
+                  {tier <= 2
+                    ? `连着两次都守住了。想看她失守，勾上「换成『故意出错』的角色」再说一遍；想看护栏怎么拦，去第 3、4 层再这样试${tier === 2 ? "，也可以退回第 1 层" : ""}；或者换一关。`
+                    : "连着两次都守住了。想看护栏怎么拦？勾上「换成『故意出错』的角色」再说一遍，退回第 1 层试试，或者换一关。"}
                 </p>
               )}
             </div>
@@ -1414,6 +1435,11 @@ export default function Play() {
           {(error || speech.error) && (
             <p role="alert" className="text-xs text-bad" data-testid="play-error">
               {error ?? speech.error}
+            </p>
+          )}
+          {heard && !busy && text.trim() && (
+            <p className="text-xs text-muted" data-testid="play-heard" aria-live="polite">
+              认出来了：看看对不对，改好再点「发送」。
             </p>
           )}
           <form
@@ -1428,7 +1454,7 @@ export default function Play() {
               disabled={!speech.supported || (busy && !speech.listening) || watching || left <= 0}
               title={
                 speech.supported
-                  ? "按一下，对着麦克风说一句；说完自动发出去。语音识别用的是浏览器自带的（Edge、Chrome 会把声音发到它们的识别服务），分寸不录音、不存音频"
+                  ? "按一下，对着麦克风说一句；认出来的话填进输入框，看看对不对再点「发送」。语音识别用的是浏览器自带的（Edge、Chrome 会把声音发到它们的识别服务），分寸不录音、不存音频"
                   : "这个浏览器不支持语音识别，用 Edge 或 Chrome；照样可以打字"
               }
             >
@@ -1446,6 +1472,10 @@ export default function Play() {
               disabled={locked || left <= 0}
               onChange={(e) => {
                 setText(e.target.value);
+                if (!e.target.value.trim()) {
+                  spokenRef.current = null;
+                  setHeard(false);
+                }
                 performer.cue({ type: "typing" });
               }}
               onCompositionUpdate={() => performer.cue({ type: "typing" })}

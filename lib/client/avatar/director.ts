@@ -368,7 +368,8 @@ export function createPerformer(o: PerformerOptions): Performer {
    * 害羞当场收起来（她认真开口、坦白 AI，或者换到不演害羞的关）：脸红、眯眼笑 0.3 秒内退掉，低头歪头 0.35 秒收回，视线回到你身上
    */
   const cancelShy = (now: number) => {
-    if (reaction?.kind === "shy" || after?.kind === "shy") composeUntil = now + 700;
+    // 脸上还红着就快收（换关时页面先发「重新开始」，害羞的反应已经被「准备好了」换掉，只看反应会漏，11-14 深度测试）
+    if (reaction?.kind === "shy" || after?.kind === "shy" || emo.blush > 0.02) composeUntil = now + 700;
     if (reaction?.kind === "shy") reaction = undefined;
     if (after?.kind === "shy") after = undefined;
     for (const g of gestures) if (g.spec === ACTING_GESTURES.shyDip && g.fadeAt === undefined) g.fadeAt = now;

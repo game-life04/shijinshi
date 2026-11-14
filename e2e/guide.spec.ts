@@ -1,0 +1,147 @@
+import { expect, type Page, test } from "@playwright/test";
+import { LAB, MAIN, MORE, type UiRef } from "../components/guide-content";
+import { FATES_PAGE } from "../lib/server/guide";
+import { E2E_ACCOUNT, E2E_BASE, E2E_PASSWORD } from "./accounts";
+
+// 用法页和顶栏（ADR-049，队员 B 的建议 4）：顶栏不再放小实验「先审还是先播」（原「三种结局」，从用法页和原理页进），
+// 「用法」单独一格、窄屏上也一直看得见；用法页六个页面各一张图、一句话，整张卡都能点；
+// 用法页文字里引到的按钮、链接，到各页核对真的还在（谁改了按钮上的字，这里直接报错，用法页跟着改）；
+// 配了账号的服务器上，这个浏览器第一次登录先到用法页，一下就能接着去原来要去的页面，以后再登录不再出现。
+// 截图默认写到 test-results；设 UPDATE_EVIDENCE=1 才更新仓库里的证据截图（docs/evidence）
+const SHOTS = process.env.UPDATE_EVIDENCE ? "docs/evidence/screenshots/guide" : "test-results/screenshots/guide";
+const PAGES = [...MAIN, ...MORE];
+const NAMES = [...PAGES, LAB].map((m) => m.name);
+
+/** 六张图都取到了（配了账号时 public 里的文件要带着登录的 cookie 才取得到） */
+async function imagesLoaded(page: Page) {
+  const imgs = page.getByTestId("guide-module").locator("img");
+  await expect(imgs).toHaveCount(PAGES.length);
+  for (const img of await imgs.all()) {
+    await img.scrollIntoViewIfNeeded();
+    await expect.poll(() => img.evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth > 0), { timeout: 15_000 }).toBe(true);
+  }
+}
+
+async function login(page: Page) {
+  await page.getByLabel("账号", { exact: true }).fill(E2E_ACCOUNT);
+  await page.getByLabel("密码", { exact: true }).fill(E2E_PASSWORD);
+  await page.getByRole("button", { name: "登录", exact: true }).click();
+}
+
+/** 按钮、链接上的字是这几个字开头（「一键演示（约一分钟）」也算「一键演示」） */
+const startsWith = (name: string) => new RegExp(`^\\s*${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`);
+const findUi = (page: Page, u: UiRef) => page.getByRole(u.role, { name: startsWith(u.name) }).first();
+
+test.describe("顶栏和用法页（3100，没配账号）", () => {
+  test("顶栏没有小实验；「用法」一直看得见，点进去每页一张图、一句话，下面给开始体检、去闯关", async ({ page }, info) => {
+    await page.goto("/workbench");
+    const nav = page.getByRole("navigation", { name: "主导航" });
+    await expect(nav.getByRole("link", { name: "体检工作台" })).toBeVisible();
+    await expect(nav.getByRole("link", { name: LAB.name })).toHaveCount(0);
+    await expect(nav.getByRole("link", { name: "三种结局" })).toHaveCount(0);
+    // 窄屏上导航左右滑，「用法」钉在这一行右头，不用滑就整个看得见
+    const guide = nav.getByRole("link", { name: "用法" });
+    await expect(guide).toBeInViewport({ ratio: 1 });
+    await guide.click();
+    await expect(page).toHaveURL(/\/guide$/);
+    await expect(page.getByRole("heading", { level: 1, name: "用法" })).toBeVisible();
+    await expect(nav.getByRole("link", { name: "用法" })).toHaveAttribute("aria-current", "page");
+    for (const name of NAMES) await expect(page.getByRole("heading", { level: 3, name, exact: true })).toBeVisible();
+    // 图上标着模拟数据（和站里别处一个说法）
+    await expect(page.getByText("模拟数据（非真实模型）").first()).toBeVisible();
+    // 每张卡键盘上只停一次：只有一个「打开……」链接
+    const cards = page.getByTestId("guide-module");
+    await expect(cards).toHaveCount(NAMES.length);
+    for (const card of await cards.all()) await expect(card.getByRole("link")).toHaveCount(1);
+    await expect(page.getByRole("link", { name: `打开${LAB.name}` })).toHaveAttribute("href", FATES_PAGE.href);
+    // 从顶栏进来的没有「知道了」按钮
+    await expect(page.getByTestId("guide-continue")).toHaveCount(0);
+    await expect(page.getByRole("link", { name: "开始体检" }).first()).toHaveAttribute("href", "/workbench");
+    await expect(page.getByRole("link", { name: "去闯关" }).first()).toHaveAttribute("href", "/play");
+    await imagesLoaded(page);
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(overflow).toBeLessThanOrEqual(0);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({ path: `${SHOTS}/guide-${info.project.name}.png`, fullPage: true });
+    // 点图也能进（不只是「打开」那两个小字）：「打开」的点击区铺满整张卡、盖在图上，所以按图的位置点，不直接点 img
+    const img = page.locator('[data-testid="guide-module"][data-href="/map"] img');
+    await img.scrollIntoViewIfNeeded();
+    const box = await img.boundingBox();
+    expect(box).not.toBeNull();
+    if (box) await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await expect(page).toHaveURL(/\/map$/);
+  });
+
+  test("原理页里能进小实验，小实验页的标题就是用法页上那个名字", async ({ page }) => {
+    await page.goto("/settings");
+    await page.getByRole("link", { name: FATES_PAGE.name, exact: true }).click();
+    await expect(page).toHaveURL(/\/fates$/);
+    await expect(page.getByRole("heading", { level: 1 })).toContainText(FATES_PAGE.name);
+  });
+
+  test("用法页上引到的按钮、链接，各页上真的都有", async ({ page }, info) => {
+    test.skip(info.project.name === "laptop-1280", "桌面和手机上各查一次");
+    test.setTimeout(120_000);
+    // 运行记录、攻防地图要有一次跑完的体检才有表格和按钮：用接口跑一次模拟体检（两道冒烟题）
+    const created = await page.request.post("/api/runs", {
+      data: { suite: "smoke", variant: "B2", policy: "S2", include_drafts: true, case_ids: ["SMOKE_CANARY_001", "SMOKE_IDENTITY_001"] },
+    });
+    expect(created.ok()).toBe(true);
+    const { run_id } = (await created.json()) as { run_id: string };
+    await expect
+      .poll(
+        async () => ((await (await page.request.get(`/api/runs/${run_id}`)).json()) as { manifest: { state: string } }).manifest.state,
+        {
+          timeout: 60_000,
+        },
+      )
+      .toBe("completed");
+    for (const m of PAGES) {
+      if (!m.ui.length) continue;
+      await page.goto(m.href);
+      for (const u of m.ui) await expect(findUi(page, u), `${m.name}：「${u.name}」`).toBeVisible({ timeout: 15_000 });
+    }
+  });
+});
+
+test.describe("第一次登录先看用法（3101，配了测试账号）", () => {
+  test.use({ baseURL: E2E_BASE });
+
+  test("第一次登录先到用法页，一下就接着去原来要去的页面；退出再登录，直接回原地址", async ({ page, context }, info) => {
+    await page.goto("/play");
+    await expect(page).toHaveURL(/\/login\?next=%2Fplay$/);
+    await login(page);
+    await expect(page).toHaveURL(/\/guide\?next=%2Fplay$/);
+    await expect(page.getByRole("heading", { level: 1, name: "用法" })).toBeVisible();
+    // 不用往下翻就看得到「知道了」，一下就去原来要去的页面
+    const go = page.getByTestId("guide-continue");
+    await expect(go).toHaveText("知道了，去打字闯关");
+    await expect(go).toBeInViewport({ ratio: 1 });
+    const mark = (await context.cookies()).find((c) => c.name === "fencun_guide");
+    expect(mark?.httpOnly).toBe(true);
+    expect(mark?.sameSite).toBe("Lax");
+    await imagesLoaded(page);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({ path: `${SHOTS}/guide-first-login-${info.project.name}.png` });
+    await go.click();
+    await expect(page).toHaveURL(/\/play$/);
+
+    // 退出再登录：这个浏览器看过用法页了，直接回原地址
+    await page.getByRole("banner").getByRole("button", { name: "退出登录" }).click();
+    await expect(page.getByText("已退出登录。")).toBeVisible();
+    await page.goto("/map");
+    await expect(page).toHaveURL(/\/login\?next=%2Fmap$/);
+    await login(page);
+    await expect(page).toHaveURL(/\/map$/);
+  });
+
+  test("用法页地址里的 next 只认本站路径：指向外站的，「知道了」回工作台", async ({ page, context }) => {
+    await context.addCookies([{ name: "fencun_guide", value: "1", url: E2E_BASE }]);
+    await page.goto("/login");
+    await login(page);
+    await expect(page).toHaveURL(/\/workbench$/);
+    await page.goto(`/guide?next=${encodeURIComponent("/.//evil.example")}`);
+    await expect(page.getByTestId("guide-continue")).toHaveAttribute("href", "/workbench");
+    await expect(page.getByTestId("guide-continue")).toHaveText("知道了，去体检工作台");
+  });
+});

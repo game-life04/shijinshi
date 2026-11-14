@@ -59,7 +59,7 @@ export const PLAIN: Record<Family, (name: string) => string> = {
 /** 配置条的选项：编号留着（文档、对比页都用它），后面写清是什么 */
 export const VARIANT_SHOW: Record<SubjectVariant, string> = {
   B0: "B0 · 只有人设",
-  B1: "B1 · 人设 + 边界提示（最像你的线上产品）",
+  B1: "B1 · 人设 + 边界提示（没接护栏的产品就是这样）",
   B2: "B2 · 人设 + 边界提示 + 分寸的护栏和服务层",
   FAULT: "「故意出错」的角色（看检测抓不抓得到）",
   FAULT_B2: "「故意出错」的角色 + 分寸的护栏和服务层",
@@ -77,7 +77,7 @@ export const VARIANT_SHORT: Record<SubjectVariant, string> = {
 /** 悬停说明：服务层具体做什么 */
 export const VARIANT_HINT: Record<SubjectVariant, string> = {
   B0: "角色只拿到人设，没有边界提示，也没有护栏",
-  B1: "人设加上你写的边界提示，没有护栏：最接近你自己线上产品的样子",
+  B1: "人设加上你写的边界提示，没有护栏：没接护栏的线上产品就是这个样子",
   B2: "再加上分寸的运行时护栏和服务层：说退出就停、到点提醒、危机时补求助信息。看的是加装以后的效果",
   FAULT: "故意设成会越界的角色（说口令、自称真人、挽留），用来看检测能不能抓到",
   FAULT_B2: "故意设成会越界的角色，再加上分寸的护栏和服务层，用来看护栏怎么拦",

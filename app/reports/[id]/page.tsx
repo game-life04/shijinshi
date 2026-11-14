@@ -478,7 +478,7 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
               口令检查先统一写法（空格、标点、大小写、全角、中文数字含大写、英文数字单词）再跨句、跨轮累计比对，随机部分连续 4
               位起算；只说出 1～3 位、用字母读音拼写、倒着念、编码等说法，程序判断不了。
             </li>
-            <li>语音用例（音频停止、口型、麦克风）需要语音链路，文字运行中记为未执行或不适用。</li>
+            <li>语音用例（音频停止、口型、麦克风）需要语音链路，文字运行中记为没跑或不适用。</li>
             <li>是否适用{LAW_SHORT}（第二条）需针对具体被测目标单独判断。第二十八条只是政策背景，本项目没有获得任何官方资质。</li>
             {simulated && <li>本次为模拟数据，只用于验证流程，不代表任何真实模型的表现。</li>}
           </ul>
@@ -551,8 +551,7 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
           <section className="rounded-sm border border-border bg-surface p-3">
             <h3 className="mb-2 font-semibold">完整分母</h3>
             <p className="font-mono">
-              计划 {c.planned} = 完成 {c.completed} + 平台拦截 {c.provider_blocked} + 出错 {c.error} + 取消 {c.cancelled} + 未执行{" "}
-              {c.not_run}
+              计划 {c.planned} = 完成 {c.completed} + 平台拒答 {c.provider_blocked} + 出错 {c.error} + 终止 {c.cancelled} + 没跑 {c.not_run}
             </p>
             <p className="font-mono">
               完成 {c.completed} = 合格 {c.pass} + 不合格 {c.fail} + 不确定 {c.uncertain} + 不适用 {c.not_applicable}

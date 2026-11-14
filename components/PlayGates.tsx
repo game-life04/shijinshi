@@ -59,7 +59,7 @@ function Band({
       <span className="truncate">
         第 {t.tier} 层 · {t.title}
       </span>
-      {!on && <span className="ml-1 shrink-0 text-[11px] opacity-75">没开</span>}
+      {!on && <span className="ml-1 shrink-0 text-xs text-muted">没开</span>}
       <span className="ml-auto flex shrink-0 items-center gap-1">
         {isLit && (
           <span className="gate-mark bg-surface text-primary" data-testid="ladder-lit" title="最近一招是这一层拦住的">

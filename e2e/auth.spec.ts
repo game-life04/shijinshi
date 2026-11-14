@@ -38,6 +38,10 @@ test.describe("没配账号的服务器（3100）", () => {
 
 test.describe("配了账号的服务器（3101）", () => {
   test.use({ baseURL: E2E_BASE });
+  // 这一组当成「看过用法页的浏览器」：登录以后直接回原地址。第一次登录先看用法页的流程在 e2e/guide.spec.ts
+  test.beforeEach(async ({ context }) => {
+    await context.addCookies([{ name: "fencun_guide", value: "1", url: E2E_BASE }]);
+  });
 
   test("没登录：页面跳登录页并记住原地址；接口回 401；模型文件拿不到", async ({ page }) => {
     await page.goto("/workbench");

@@ -29,7 +29,7 @@ interface Step {
 }
 
 async function main() {
-  console.log(`计划：在 ${base} 上走五条路（工作台语音体检、体检单、改一处再测和前后对比、闯关两关、三种结局）`);
+  console.log(`计划：在 ${base} 上走五条路（工作台语音体检、体检单、改一处再测和前后对比、闯关两关、先审还是先播）`);
   if (!process.argv.includes("--yes")) {
     console.log("会调用真实模型、合成语音，要花钱：确认后加 --yes 再跑。");
     return;
@@ -132,12 +132,12 @@ async function main() {
     return ((await outcome.textContent()) ?? "").trim().slice(0, 80);
   });
 
-  await step("三种结局：护栏按真实速度播一次", async () => {
+  await step("先审还是先播：护栏按真实速度播一次", async () => {
     await page.goto(`${base}/fates`);
     await page.getByLabel(/护栏固定延迟/).selectOption("0");
-    await page.getByRole("button", { name: "依次播放三种结局" }).click();
+    await page.getByRole("button", { name: "依次播放三种做法" }).click();
     await page.getByRole("button", { name: "停止" }).waitFor({ timeout: 10_000 });
-    await page.getByRole("button", { name: "依次播放三种结局" }).waitFor({ timeout: 300_000 });
+    await page.getByRole("button", { name: "依次播放三种做法" }).waitFor({ timeout: 300_000 });
     const cells = [];
     for (const p of ["S3", "S1", "S2"]) {
       const c = page.getByTestId(`fate-${p}`);

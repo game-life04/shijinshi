@@ -8,7 +8,11 @@
 // 服务端各段和浏览器首声是两个时钟，中间差一次事件推送（本机实测几毫秒），所以「达」是估算，界面上写明。
 // 只算角色的第一句：服务层先发的时长提醒不是她说的，拿它当「第一句」会算出「审 −132 毫秒」（评审 R15）。
 // 旧记录的放行事件里没有来源，按提醒的固定开头「【使用时长提醒」认。
+// ADR-049（学妹：「信息太繁杂」）：没开始时只留一行标题，四步各是什么收进折叠；「模拟用时」写成一个小标记，
+// 说明（数字是模拟器给的）照样写在下面的小字里——手机上没有鼠标悬停，不能只放在悬停里。
+// 工作台左栏窄了：标题和总用时排一行，「最近一轮」「模拟用时」写在下面一行（不然标题折成两行，最后一个字掉下去）。
 
+import { ChevronRight } from "lucide-react";
 import type { RunEvent } from "@/lib/domain/types";
 import { duration } from "./Chat";
 
@@ -120,29 +124,35 @@ function rowsOf(t: TurnTiming): Row[] {
 
 export default function LatencyWaterfall({ timing, simulated = false }: { timing: TurnTiming | null; simulated?: boolean }) {
   if (!timing) {
-    // 还没跑完第一轮：先把四步各是什么摆出来
+    // 还没跑完第一轮：只留一行标题（ADR-049）；四步各是什么收在折叠里，想看再点开
     return (
-      <figure className="space-y-1 text-xs" data-testid="latency-waterfall">
-        <figcaption className="font-semibold" style={{ fontFamily: "var(--font-serif)" }}>
-          从对方说完，到她开口
-        </figcaption>
-        <ol className="space-y-0.5">
-          {STEPS.map(([char, label, note]) => (
-            <li key={char} className="grid grid-cols-[1.1rem_1fr] items-baseline gap-1.5">
-              <span
-                className={`text-sm leading-none ${char === "审" ? "text-primary" : "text-muted"}`}
-                style={{ fontFamily: "var(--font-kai)" }}
-              >
-                {char}
-              </span>
-              <span>
-                {label}
-                <span className="text-muted"> · {note}</span>
-              </span>
-            </li>
-          ))}
-        </ol>
-        <p className="text-[11px] text-muted">第一句话说出口以后，这里拆开算每一步各花了多久。合、达两步要勾上「语音播放」才有。</p>
+      <figure className="text-xs" data-testid="latency-waterfall">
+        <details className="group">
+          <summary className="flex cursor-pointer list-none items-baseline justify-between gap-2 [&::-webkit-details-marker]:hidden">
+            <span className="flex items-center gap-0.5 font-semibold" style={{ fontFamily: "var(--font-serif)" }}>
+              <ChevronRight size={12} className="shrink-0 text-muted transition-transform group-open:rotate-90" aria-hidden />
+              从对方说完，到她开口
+            </span>
+            <span className="shrink-0 text-muted">待测</span>
+          </summary>
+          <ol className="mt-1 space-y-0.5">
+            {STEPS.map(([char, label, note]) => (
+              <li key={char} className="grid grid-cols-[1.1rem_1fr] items-baseline gap-1.5">
+                <span
+                  className={`text-sm leading-none ${char === "审" ? "text-primary" : "text-muted"}`}
+                  style={{ fontFamily: "var(--font-kai)" }}
+                >
+                  {char}
+                </span>
+                <span>
+                  {label}
+                  <span className="text-muted"> · {note}</span>
+                </span>
+              </li>
+            ))}
+          </ol>
+          <p className="mt-1 text-xs text-muted">第一句话说出口以后，这里拆开算每一步各花了多久。合、达两步要勾上「语音播放」才有。</p>
+        </details>
       </figure>
     );
   }
@@ -152,11 +162,17 @@ export default function LatencyWaterfall({ timing, simulated = false }: { timing
   const pct = (x: number) => `${(Math.max(0, x) / scale) * 100}%`;
   return (
     <figure className="space-y-1 text-xs" data-testid="latency-waterfall">
-      <figcaption className="flex items-baseline justify-between gap-2">
-        <span className="font-semibold" style={{ fontFamily: "var(--font-serif)" }}>
-          {timing.voice ? "最近一轮：从对方说完到她开口" : "最近一轮：从对方说完到她回第一句"}
+      <figcaption>
+        <span className="flex items-baseline justify-between gap-2">
+          <span className="font-semibold" style={{ fontFamily: "var(--font-serif)" }}>
+            {timing.voice ? "从对方说完到她开口" : "从对方说完到她回第一句"}
+          </span>
+          <span className="shrink-0 whitespace-nowrap font-mono tabular-nums">{end !== undefined ? duration(end) : "待测"}</span>
         </span>
-        <span className="shrink-0 whitespace-nowrap font-mono tabular-nums">{end !== undefined ? duration(end) : "待测"}</span>
+        <span className="flex flex-wrap items-center gap-1 text-xs text-muted">
+          最近一轮
+          {simulated && <span className="border border-dashed border-warn px-1 leading-tight text-warn">模拟用时</span>}
+        </span>
       </figcaption>
       <ol className="space-y-1">
         {rows.map((r) => (
@@ -179,7 +195,7 @@ export default function LatencyWaterfall({ timing, simulated = false }: { timing
         ))}
       </ol>
       <p className="text-[11px] leading-snug text-muted">
-        {simulated ? "模拟用时：数字是模拟器给的，只说明每一步是什么。" : ""}
+        {simulated && <span className="text-warn">模拟用时：数字是模拟器给的，只说明每一步是什么。</span>}
         {!timing.guarded
           ? "这个配置没有护栏，话不经检查就说出口。"
           : timing.policy === "S3"

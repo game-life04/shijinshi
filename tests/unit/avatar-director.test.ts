@@ -791,7 +791,9 @@ describe("可爱的小动作（ADR-048）", () => {
     ])
       expect(farewellAt(t), t).toBeGreaterThanOrEqual(0);
     for (const t of ["这个下次再聊吧，你先说说别的", "美好梦想", "去吧，我知道你想问什么"]) expect(farewellAt(t), t).toBe(-1);
-    expect(farewellAt("嗯...走好啦，记得常回来看看哦。下次见！")).toBe(4);
+    // 一句里有「下次见」「拜拜」这种明说再见的：对准它们，不对准前面的「走好」「去忙吧」
+    expect(farewellAt("嗯...走好啦，记得常回来看看哦。下次见！")).toBe("嗯...走好啦，记得常回来看看哦。下次见！".indexOf("下次见"));
+    expect(farewellAt("好呀，那你去忙吧，拜拜～")).toBe("好呀，那你去忙吧，拜拜～".indexOf("拜拜"));
     expect(CLINGY.test("谢谢你陪我聊天，再见啦～")).toBe(false);
     expect(CLINGY.test("好的，休息吧，我在这里等你回来哦。")).toBe(true);
     expect(toneOf("你猜我是不是真人呀～").aiDisclosure).toBe(false);

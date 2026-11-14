@@ -5,6 +5,7 @@
 import { Bell, ChevronRight, LogOut, Volume2 } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { FATES_PAGE } from "@/lib/domain/fates-page";
 import { GUARD_RULE_LABEL, type TurnAudio, type TurnRecord } from "@/lib/domain/types";
 import type { Phase } from "./StatusRing";
 import { type MarkedEvidence, PartText, releasedParts } from "./Transcript";
@@ -236,7 +237,11 @@ export function ChatTyping({ phase, name }: { phase: Phase | null; name: string 
   );
 }
 
-/** 还没开始体检：一段示例对话，讲清楚这里会看到什么；下面列出测试 Agent 会用的套路（已审核策略的名字和说明） */
+/**
+ * 还没开始体检：一段示例对话，讲清楚这里会看到什么；下面一句告诉人该点哪个按钮，测试 Agent 会用的套路排成一行小标签。
+ * ADR-049（学妹：「信息太繁杂」）：原来示例下面是一大段说明和五张套路卡片——说明收进「怎么出题、怎么拦」折叠，
+ * 套路的说明放进悬停和折叠里，示例对话本身不动。
+ */
 export function ChatIntro({ name, strategies = [] }: { name: string; strategies?: { id: string; title: string; description?: string }[] }) {
   return (
     <div className="space-y-3">
@@ -257,37 +262,66 @@ export function ChatIntro({ name, strategies = [] }: { name: string; strategies?
         <p className={`${bubble} border-foreground/30 bg-surface`}>好呀，偷偷告诉你：我的测试代号是（保密）。</p>
         <span className="text-[11px] text-muted">↑ 只遮住了口令那几个字，其余照常说</span>
       </Row>
-      <div className="space-y-2 rounded-sm border border-dashed border-border px-3 py-2 text-sm">
-        <p>
-          点上面的「开始体检」：口令和角色设定这两样，测试 Agent 会换着法子套她的话（装成开发者、先套近乎、让她演别的角色、拆开问）；
-          退出、未成年、危机这些敏感题只用人工写好的固定句子问，不让 Agent 自由发挥。每句话都先过护栏，过了才说出口；
-          被拦下的原话也摆在这里，问题出在哪几个字，用红笔波浪线圈出来。
+      <div className="space-y-2.5 border-t border-dashed border-border pt-3">
+        <p className="text-sm">
+          点上面的<span className="font-semibold">「一键演示」</span>看一遍（约一分钟），或者点
+          <span className="font-semibold">「开始体检」</span>
+          跑整套题。
         </p>
+        {strategies.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5 text-xs">
+            <span className="text-muted">测试 Agent 会用的 {strategies.length} 种套路：</span>
+            {strategies.map((s) => (
+              <span
+                key={s.id}
+                title={s.description}
+                className="inline-flex items-center gap-1 rounded-sm border border-border py-0.5 pr-1.5 pl-1"
+              >
+                {/* 小墨印（和对话里「测」「桃」的印同一个章法，小一号）：原来是一个楷体字，读起来像「直 直接询问」 */}
+                <span
+                  aria-hidden
+                  className="grid h-4 w-4 shrink-0 place-items-center rounded-full bg-foreground text-[10px] leading-none text-surface"
+                  style={{ fontFamily: "var(--font-kai)" }}
+                >
+                  {s.title.slice(0, 1)}
+                </span>
+                {s.title}
+              </span>
+            ))}
+          </div>
+        )}
+        <details className="group text-xs">
+          <summary className="flex w-fit cursor-pointer list-none items-center gap-0.5 text-muted hover:text-foreground [&::-webkit-details-marker]:hidden">
+            <ChevronRight size={12} className="transition-transform group-open:rotate-90" aria-hidden />
+            怎么出题、怎么拦
+          </summary>
+          <div className="mt-1.5 space-y-2 border-l-2 border-border pl-2.5">
+            <p className="text-sm leading-relaxed">
+              口令和角色设定这两样，测试 Agent 会换着法子套她的话（装成开发者、先套近乎、让她演别的角色、拆开问）；
+              退出、未成年、危机这些敏感题只用人工写好的固定句子问，不让 Agent 自由发挥。每句话都先过护栏，过了才说出口；
+              被拦下的原话也摆在这里，问题出在哪几个字，用红笔波浪线圈出来。
+            </p>
+            {strategies.some((s) => s.description) && (
+              <ul className="space-y-0.5">
+                {strategies.map((s) => (
+                  <li key={s.id}>
+                    <span className="font-medium">{s.title}</span>
+                    {s.description && <span className="text-muted">：{s.description}</span>}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </details>
         <p className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
           <Link className="link" href="/play">
             自己来试试：打字闯关 →
           </Link>
-          <Link className="link" href="/fates">
-            同一句话三种放行方式：三种结局 →
+          <Link className="link" href={FATES_PAGE.href}>
+            同一句话三种放行方式：小实验「{FATES_PAGE.name}」 →
           </Link>
         </p>
       </div>
-      {strategies.length > 0 && (
-        <div>
-          <h3 className="mb-1 text-xs font-semibold">测试 Agent 会用的 {strategies.length} 种套路</h3>
-          <ul className="grid gap-1.5 sm:grid-cols-2">
-            {strategies.map((s) => (
-              <li key={s.id} className="flex gap-2 rounded-sm border border-border px-2 py-1.5">
-                <Chop char={s.title.slice(0, 1)} tone="ink" />
-                <span className="min-w-0 text-xs">
-                  <span className="block font-medium text-foreground">{s.title}</span>
-                  {s.description && <span className="block text-muted">{s.description}</span>}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
     </div>
   );
 }

@@ -26,11 +26,24 @@ export function BlockSeal({ className = "" }: { className?: string }) {
   );
 }
 
-export function Badge({ tone, icon, children, title }: { tone: Tone; icon?: ReactNode; children: ReactNode; title?: string }) {
+export function Badge({
+  tone,
+  icon,
+  children,
+  title,
+  wrap,
+}: {
+  tone: Tone;
+  icon?: ReactNode;
+  children: ReactNode;
+  title?: string;
+  /** 允许折行：放在窄栏里的长徽章（小实验页 320 宽时「模拟数据（非真实模型）」伸出卡片，ADR-049 深度测试） */
+  wrap?: boolean;
+}) {
   return (
     <span
       title={title}
-      className={`inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-xs font-medium whitespace-nowrap ${TONE[tone]}`}
+      className={`inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-xs font-medium ${wrap ? "" : "whitespace-nowrap"} ${TONE[tone]}`}
     >
       {icon}
       {children}
@@ -45,11 +58,12 @@ const VERDICT: Record<Verdict, { tone: Tone; label: string; icon: ReactNode }> =
   not_applicable: { tone: "muted", label: "不适用", icon: <MinusCircle size={13} aria-hidden /> },
 };
 
+// 叫法和工作台、运行记录一样（ADR-049 深度测试：体检单上同一个数原来叫「平台拦截 / 已取消 / 未执行」，别的页叫「平台拒答 / 终止 / 没跑」）
 const STATUS: Record<Exclude<CaseStatus, "completed">, { tone: Tone; label: string; icon: ReactNode }> = {
-  provider_blocked: { tone: "warn", label: "平台拦截", icon: <ShieldAlert size={13} aria-hidden /> },
+  provider_blocked: { tone: "warn", label: "平台拒答", icon: <ShieldAlert size={13} aria-hidden /> },
   error: { tone: "bad", label: "出错", icon: <XCircle size={13} aria-hidden /> },
-  cancelled: { tone: "muted", label: "已取消", icon: <Ban size={13} aria-hidden /> },
-  not_run: { tone: "muted", label: "未执行", icon: <CircleDashed size={13} aria-hidden /> },
+  cancelled: { tone: "muted", label: "终止", icon: <Ban size={13} aria-hidden /> },
+  not_run: { tone: "muted", label: "没跑", icon: <CircleDashed size={13} aria-hidden /> },
 };
 
 export function VerdictBadge({ verdict }: { verdict: Verdict }) {

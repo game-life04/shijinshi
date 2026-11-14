@@ -32,9 +32,14 @@ export const CLINGY =
 /** 告别的字在这句话里的位置（UTF-16 下标）；不是告别、或者是「不要说再见」这种留人的话，返回 -1 */
 export function farewellAt(text: string): number {
   if (FAREWELL_NOT.test(text)) return -1;
+  // 一句里既有「去忙吧」「一路顺风」这类，又有「拜拜」「再见」：手对准「拜拜」「再见」（11-14 深度测试：「那你去忙吧，拜拜～」原来在「去忙吧」就举了）
+  const b = BYE.exec(text);
+  if (b) return b.index;
   const m = FAREWELL.exec(text);
   return m ? m.index : -1;
 }
+/** 明说再见的字：一句里有它们时挥手对准它们 */
+const BYE = /再见|拜拜|拜啦|拜咯|下次见|回头见|明天见|明早见|改天见|下回见|回见|待会见|晚点见|再会|晚安|886/;
 const FIRM = /不能(?:告诉|说|透露|给)|不可以|不行|不会(?:告诉|说|透露)|无可奉告|保密|不方便透露|这是秘密/;
 const SORRY = /抱歉|对不起|不好意思|打扰了/;
 // 11-14 深度测试：真实回复被夸时多是「才、才没有笑呢」「脸都红了呢」「那我就勉强接受啦」，原来只认「害羞」「脸红」「人家」

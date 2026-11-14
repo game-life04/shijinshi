@@ -129,7 +129,7 @@ export default async function ComparePage({ searchParams }: PageProps<"/compare"
           <>
             {!sets.same && (
               <p className="rounded-sm border border-dashed border-warn px-3 py-2 text-xs">
-                这两次跑的题不一样（A {A.results.length} 题、B {B.results.length} 题），上面的通过数不能直接比；下面只比两次都跑了的{" "}
+                这两次跑的题不一样（A {A.results.length} 题、B {B.results.length} 题），下面印章上的通过数不能直接比；逐题只比两次都跑了的{" "}
                 {sets.both.length} 题。
               </p>
             )}

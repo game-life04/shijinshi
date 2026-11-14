@@ -9,6 +9,7 @@ import Link from "next/link";
 import AppShell from "@/components/AppShell";
 import RunPicker, { type RunRow } from "@/components/RunPicker";
 import { POLICY_SHORT, VARIANT_SHORT } from "@/components/wording";
+import { FATES_PAGE } from "@/lib/domain/fates-page";
 import { DEFAULT_PERSONA } from "@/lib/domain/persona";
 import type { RunManifest } from "@/lib/domain/types";
 import { authConfig } from "@/lib/server/auth";
@@ -99,7 +100,7 @@ export default async function RunsPage({ searchParams }: PageProps<"/runs">) {
         {demos.length > 0 && (
           <details className="rounded-sm border border-border bg-surface p-3" open={!full.length}>
             <summary className="cursor-pointer text-sm">
-              三种结局、一键演示这类只跑几道指定题的运行（{demos.length} 次）
+              小实验「{FATES_PAGE.name}」、一键演示这类只跑几道指定题的运行（{demos.length} 次）
               <span className="ml-1 text-xs text-muted">和完整体检分开放：题数不一样，通过数不能直接比</span>
             </summary>
             <div className="mt-2">

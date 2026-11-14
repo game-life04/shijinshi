@@ -3,9 +3,11 @@
 //   账号不存在、密码不对、账号名不合格式、密码超长，回的跳转地址一字不差，也都不发 cookie；账号不存在也照样算一次哈希，耗时一样。
 //   限次数两道：同一来源每 10 分钟的尝试次数；同一账号名每 15 分钟输错的次数（不管从哪来、账号存不存在都照样计）。锁着的时候不算哈希。
 //   不写登录日志；密码、cookie、账号记录、密钥一律不进日志。
+// 这个浏览器第一次登录成功时先跳「用法」页（lib/server/guide.ts），原来要去的地址带在 next 里；看过的照旧直接回原地址。
 
 import { loginLock, noteLoginFailure, rateLimit, safeNext } from "@/lib/server/access";
 import { authConfig, isHttps, issueSession, normalizeAccount, openButNotLocal, sessionCookie } from "@/lib/server/auth";
+import { afterLoginTarget, guideCookie, guideSeen } from "@/lib/server/guide";
 import { crossSite } from "@/lib/server/http";
 import { BusyError, normalizePassword, verifyPassword } from "@/lib/server/password";
 
@@ -17,9 +19,9 @@ const MAX_BODY = 4096;
 const MINUTE = 60_000;
 
 /** 303：浏览器改用 GET 打开目标地址；相对地址由浏览器按当前网址补全 */
-function seeOther(location: string, cookie?: string): Response {
+function seeOther(location: string, ...cookies: string[]): Response {
   const headers = new Headers({ Location: location, "Cache-Control": "no-store" });
-  if (cookie) headers.append("Set-Cookie", cookie);
+  for (const cookie of cookies) headers.append("Set-Cookie", cookie);
   return new Response(null, { status: 303, headers });
 }
 
@@ -96,5 +98,9 @@ export async function POST(req: Request) {
     return back("auth");
   }
   const { value, maxAgeSeconds } = issueSession(account);
-  return seeOther(next, sessionCookie(value, maxAgeSeconds, isHttps(req)));
+  const https = isHttps(req);
+  const session = sessionCookie(value, maxAgeSeconds, https);
+  // 第一次在这个浏览器登录：先去用法页，顺手记下「看过了」，以后再登录直接回原地址
+  if (guideSeen(req.headers.get("cookie"))) return seeOther(next, session);
+  return seeOther(afterLoginTarget(next, false), session, guideCookie(https));
 }

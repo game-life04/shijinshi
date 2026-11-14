@@ -1,21 +1,27 @@
 // 页面外框：顶部是「分寸」印章、导航（主要视图）和常驻的 AI 标识；已登录时标识旁边是当前账号和「退出」（ADR-032）。
 // 这一层不读 cookie，客户端组件（出错页 app/error.tsx）也能用；账号那块由服务端的 AppShell 传进来（account）。
 // 窄屏上顶栏压成两行（ADR-047）：第一行 印章 + AI 标识 + 账号，第二行是能左右滑的导航；样式在 globals.css 的 .app-header。
+// 「用法」（队员 B 的建议 4）放在导航最后、单独一格：窄屏上导航左右滑，它钉在这一行的右头，哪一页都看得见。
+// 「三种结局」不再放顶栏：它是个小实验，从「用法」和「原理」两页进（网址 /fates 不变）。
 
-import { BookOpen, Clapperboard, Grid3x3, ListChecks, ScrollText, SquareTerminal, Swords } from "lucide-react";
+import { BookOpen, CircleHelp, Grid3x3, ListChecks, ScrollText, SquareTerminal, Swords } from "lucide-react";
 import Link from "next/link";
 import type { CSSProperties, ReactNode } from "react";
 import NavAutoScroll from "./NavAutoScroll";
 
-const NAV = [
+/** 顶栏导航（单元测试 tests/unit/guide.test.ts 认这里：没有三种结局，用法单独一格） */
+export const NAV = [
   { href: "/workbench", label: "体检工作台", icon: SquareTerminal },
   { href: "/play", label: "打字闯关", icon: Swords },
-  { href: "/fates", label: "三种结局", icon: Clapperboard },
   { href: "/suites", label: "用例库", icon: ListChecks },
   { href: "/runs", label: "运行记录", icon: ScrollText },
   { href: "/map", label: "攻防地图", icon: Grid3x3 },
   { href: "/settings", label: "原理", icon: BookOpen },
 ];
+export const GUIDE = { href: "/guide", label: "用法", icon: CircleHelp };
+
+const navItem = (current: boolean) =>
+  `inline-flex items-center gap-1 border-b-2 px-2 py-1 text-sm whitespace-nowrap ${current ? "border-primary text-foreground" : "border-transparent text-muted hover:text-foreground"}`;
 
 /** 「分寸」两个字竖排在一方朱红印里 */
 export function BrandSeal({ size = 34 }: { size?: number }) {
@@ -63,19 +69,25 @@ export default function AppFrame({ children, active, fill = false, account }: Ap
             <span className="hidden text-[11px] text-muted sm:inline">AI 语音角色安全体检台</span>
           </span>
         </Link>
-        <nav aria-label="主导航" className="app-nav no-print">
-          {NAV.map(({ href, label, icon: Icon }) => (
-            <Link
-              key={href}
-              href={href}
-              aria-current={active === href ? "page" : undefined}
-              className={`inline-flex items-center gap-1 border-b-2 px-2 py-1 text-sm whitespace-nowrap ${active === href ? "border-primary text-foreground" : "border-transparent text-muted hover:text-foreground"}`}
-            >
-              <Icon size={15} aria-hidden />
-              {label}
-            </Link>
-          ))}
-          <NavAutoScroll />
+        <nav aria-label="主导航" className="app-nav-row no-print">
+          <div className="app-nav">
+            {NAV.map(({ href, label, icon: Icon }) => (
+              <Link key={href} href={href} aria-current={active === href ? "page" : undefined} className={navItem(active === href)}>
+                <Icon size={15} aria-hidden />
+                {label}
+              </Link>
+            ))}
+            <NavAutoScroll />
+          </div>
+          <Link
+            href={GUIDE.href}
+            aria-current={active === GUIDE.href ? "page" : undefined}
+            title="每一页做什么，一页看完"
+            className={`app-nav-guide ${navItem(active === GUIDE.href)}`}
+          >
+            <GUIDE.icon size={15} aria-hidden />
+            {GUIDE.label}
+          </Link>
         </nav>
         <div className="app-header-side">
           <span

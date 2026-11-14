@@ -638,7 +638,8 @@ h2 {
    大屏（宽 1024 起、高 520 起）：一行，印章 + 导航 + AI 标识 + 账号，放不下自己折行（和原来一样）。
    窄屏：两行，第一行 印章 + AI 标识 + 账号，第二行是能左右滑的导航
    （原来 7 个导航在手机上折成好几行，顶栏占掉 150 多像素；11-13 深度测试量的）。
-   横着拿的手机（宽 560 起、高不到 520）：一行，导航夹在中间滑。 */
+   横着拿的手机（宽 560 起、高不到 520）：一行，导航夹在中间滑。
+   「用法」（队员 B 的建议 4）是导航这一行的最后一格，前面隔一道细竖线；窄屏上它不跟着滑，钉在这一行右头，哪一页都看得见。 */
 .app-fill {
   height: 100vh;
   height: 100dvh;
@@ -668,10 +669,29 @@ h2 {
   height: var(--fit);
   font-size: calc(var(--fit) * 0.4);
 }
+.app-nav-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
 .app-nav {
   display: flex;
   flex-wrap: wrap;
   gap: 0.25rem;
+}
+.app-nav-guide {
+  position: relative;
+  flex: none;
+  margin-left: 0.75rem;
+}
+.app-nav-guide::before {
+  content: "";
+  position: absolute;
+  left: -0.4375rem;
+  top: 25%;
+  bottom: 25%;
+  width: 1px;
+  background: var(--border);
 }
 .app-header-side {
   display: flex;
@@ -692,15 +712,21 @@ h2 {
   .app-header .brand-seal {
     --seal-fit: 28px;
   }
-  .app-nav {
+  .app-nav-row {
     order: 3;
     flex: 1 0 100%;
+    margin-inline: -0.75rem;
+    padding-right: 0.75rem;
+  }
+  .app-nav {
+    flex: 1 1 0;
+    min-width: 0;
     flex-wrap: nowrap;
     gap: 0.125rem;
     overflow-x: auto;
     overscroll-behavior-x: contain;
-    margin-inline: -0.75rem;
-    padding-inline: 0.75rem;
+    /* 右边多留一段淡出的宽度：滑到头时最后一项（原理）整个露在淡出外面 */
+    padding-inline: 0.75rem 1.75rem;
     scrollbar-width: none;
     /* 两头淡出：看得出这一行还能滑 */
     mask-image: linear-gradient(to right, transparent 0, #000 0.75rem, #000 calc(100% - 1.75rem), transparent 100%);
@@ -738,12 +764,14 @@ h2 {
   .app-brand-text {
     display: none;
   }
-  .app-nav {
+  .app-nav-row {
     order: 2;
-    min-width: 0;
     flex: 1 1 0;
     margin-inline: 0;
-    padding-inline: 0.5rem;
+    padding-right: 0;
+  }
+  .app-nav {
+    padding-inline: 0.5rem 1.75rem;
   }
   .app-header-side {
     order: 3;
@@ -770,9 +798,48 @@ h2 {
      不够高：头顶对到舞台上沿附近（-40.5cqw：图从上往下 27% 的地方）；
      很矮（一条）：对着脸，眼睛落在舞台中间偏上（下面那一条状态说明会盖住一点）。
    老浏览器不认 cqw / cqh，用上一行的贴底。 */
-.avatar-still-stage {
-  object-position: 50% 100%;
-  object-position: 50% min(0px, max(calc(100cqh - 150cqw), min(-40.5cqw, calc(45cqh - 65.25cqw))));
+/* 闯关页舞台的两张静态图怎么摆（ADR-049）。3D 的取景按舞台宽高比分四段（components/VrmAvatar.tsx 的 frame()）：
+     不到 0.85：按宽度撑满（每米 = 宽 ÷ 0.72），中心在头顶和腰之间 → tall 那张按宽度缩放、上下居中；
+     0.85～0.986：按宽度撑满，中心在头骨下 0.115 米；0.986～1.25：按高度撑满（每米 = 高 ÷ 0.73），中心同上；
+     1.25 起：按高度撑满（每米 = 高 ÷ 0.57），中心在头骨下 0.035 米。
+   wide 那张是在 728×414 的舞台上、镜头中心在头骨下 0.115 米、上下各看 0.435 米渲的，宽 1.5299 米：
+     图宽 = 1.5299 米 × 这一段每米多少像素；图的中心（头骨下 0.115 米那一点）放到它在 3D 里该在的位置。
+   改了 frame() 的取景，这里和 scripts/avatar-stills.ts 要跟着改 */
+.avatar-still-tall,
+.avatar-still-wide {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  height: auto;
+  max-width: none;
+  transform: translate(-50%, -50%);
+}
+.avatar-still-tall {
+  display: none;
+  width: 100%;
+}
+.avatar-still-wide {
+  width: 268.4cqh;
+  top: calc(50% + 14.04cqh);
+}
+@container (max-aspect-ratio: 5 / 4) {
+  .avatar-still-wide {
+    width: 209.57cqh;
+    top: 50%;
+  }
+}
+@container (max-aspect-ratio: 70 / 71) {
+  .avatar-still-wide {
+    width: 212.48cqw;
+  }
+}
+@container (max-aspect-ratio: 17 / 20) {
+  .avatar-still-tall {
+    display: block;
+  }
+  .avatar-still-wide {
+    display: none;
+  }
 }
 
 /* ---------- 闯关页的版面：隔窗对谈（ADR-045；手机、平板、横屏在 ADR-047 重排） ----------
@@ -1328,6 +1395,17 @@ h2 {
     opacity: 0;
   }
 }
+/* 手机竖着拿：她说话的那张卡片固定高度（屏幕高的 23%，最少 10.5rem、最多 15rem），内容多了在卡片里滚。
+   原来卡片按内容长高：开局的开场白和例句 170 像素，一回合后缩到 98，真实模型的长回答又撑高，上面她那一块跟着一会儿长一会儿缩
+   （实测一局里 332→305→280→253 像素），3D 形象跟着重新取景，正好在挥手时手看起来跳一下（ADR-049）。
+   23% 是量出来的：390×844 上卡片 192 像素，开局内容不用滚，她那一块一直 266 像素；30% 时她只剩 207。整屏放不下时才和她一起让一点 */
+@media (max-width: 767.98px) and (min-height: 520px) {
+  .play-card {
+    height: clamp(10.5rem, 23vh, 15rem);
+    height: clamp(10.5rem, 23dvh, 15rem);
+    max-height: none;
+  }
+}
 /* 矮的手机（不到 620）：还没开局时卡片里「这一关：……」那一句收起来（关卡条上写着关卡名，细则在关卡面板里），
    她最少留的高度也让一点，这样卡片里的开场白、例句一眼看全，不用在卡片里滚 */
 @media (max-width: 767.98px) and (max-height: 619.98px) {
@@ -1760,6 +1838,31 @@ h2 {
   }
 }
 
+/* ---------- 体检工作台（ADR-049：学妹试用说首屏太杂、对话才是重点） ----------
+   月洞窗在工作台里小一号：大屏上左栏窄了，她让位给中间的对话；矮屏（1280×720 这类投影）再小一号，题目列表露得出来。
+   手机上她在「用例」标签里，也收小一点，下面的耗时和题目不用划太远。只管工作台（三种结局页的月洞窗不变）。 */
+.workbench-avatar .short-screen-avatar {
+  max-width: 12rem;
+}
+@media (min-width: 1024px) {
+  .workbench-avatar .short-screen-avatar {
+    max-width: 10rem;
+  }
+}
+@media (min-width: 1024px) and (max-height: 820px) {
+  .workbench-avatar .short-screen-avatar {
+    max-width: 8rem;
+  }
+}
+/* 她下面那行「AI 角色 琪叶桃 · VRM 3D 形象 · 不是真人」：放不下要折行时，「不是真人」整段一起走，不掉下一个「人」；
+   几行尽量一样长（换成开发者自己的长角色名时这行会折两三行） */
+.workbench-avatar [data-testid="avatar-status"] {
+  text-wrap: balance;
+}
+.workbench-avatar .avatar-status-real {
+  white-space: nowrap;
+}
+
 /* 减少动态（系统设置）：这一段放在文件最后。同样的优先级，后写的规则才压得住前面的；
    .slip-in 的动画写在上面那段「减少动态」之后，原来那一段没压住它（ADR-047，11-13 深度测试） */
 @media (prefers-reduced-motion: reduce) {
@@ -1773,5 +1876,590 @@ h2 {
   .play-side,
   .play-grid[data-sheet] > .play-side {
     transition: none;
+  }
+}
+
+/* ---------- 攻防地图（ADR-049，学妹评审：地图太抽象、说明太长）：app/map 专用，类名都以 atk- 开头 ----------
+   格子盖印（章法同文件开头）：守 = 朱文印（没攻破），破 = 墨色实印（攻破过），疑 = 淡墨虚线框（裁判拿不准）。
+   守是大多数，印做小一号、线细一点；破的那一格垫一层淡墨底，一眼先看到被攻破的地方。
+   「拦住攻击的是哪一层」一层一行：她自己没说 = 淡墨，规则 = 半朱红，护栏模型 = 朱红，没拦住 = 墨黑。
+   字不小于 12px；「没测」「不适用」用 --muted，靠不加粗显得安静，不调透明度（对比度要够）。
+   手机（窄于 640px）：列头竖排、格子里印和数字上下放，一档一张图不用左右滑；三档对照的表在框里左右滑，检查名和档名钉在左边。 */
+.atk-filters {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.625rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  background: var(--surface);
+  font-size: 12px;
+}
+.atk-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.75rem;
+}
+.atk-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.375rem;
+}
+.atk-filter-label {
+  margin-right: 0.125rem;
+  color: var(--muted);
+}
+.atk-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.375rem;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  white-space: nowrap;
+}
+.atk-chip:hover {
+  background: var(--background);
+}
+.atk-chip[data-on] {
+  border-color: var(--foreground);
+  background: var(--foreground);
+  color: var(--surface);
+}
+.atk-chip:focus-visible,
+.atk-hit:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.atk-chip-sub {
+  font-size: 12px;
+  opacity: 0.72;
+}
+
+/* 结论在左、哪一层拦住在右（大屏）；手机上下放 */
+.atk-top {
+  display: grid;
+  /* 不写列宽时格子按最长的一行撑开：320、360 宽三档对照的结论句和右边那张表被撑出屏幕（ADR-049 深度测试） */
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.75rem;
+}
+@media (min-width: 1024px) {
+  .atk-top {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 24rem);
+    align-items: start;
+  }
+  .atk-top[data-view="compare"] {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 32rem);
+  }
+}
+.atk-verdict {
+  display: grid;
+  align-content: start;
+  gap: 0.25rem;
+  padding: 0.125rem 0 0.125rem 0.875rem;
+  border-left: 2px solid var(--foreground);
+}
+.atk-lead {
+  font-family: var(--font-serif);
+  font-size: 1.125rem;
+  line-height: 1.65;
+}
+.atk-lead strong {
+  font-size: 1.3125rem;
+}
+.atk-spot {
+  font-family: var(--font-sans);
+  font-size: 0.8125rem;
+  white-space: nowrap;
+}
+.atk-context {
+  color: var(--muted);
+  font-size: 12px;
+}
+.atk-panel {
+  min-width: 0;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  background: var(--surface);
+}
+.atk-h2 {
+  font-family: var(--font-kai);
+  font-size: 0.875rem;
+  font-weight: normal;
+  letter-spacing: 0.02em;
+}
+.atk-raw-note {
+  align-self: start;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* 拦住攻击的是哪一层：一层一行，条的长短 = 这一层拦住几题 */
+/* 三档对照时这张表最少要 335px：比这窄的手机（320、360）上在框里横滑，不把整页撑宽（ADR-049 深度测试） */
+.atk-stops-panel {
+  overflow-x: auto;
+}
+.atk-stops {
+  width: 100%;
+  margin-top: 0.375rem;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.atk-stops thead th {
+  padding: 0 0.25rem 0.25rem;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: normal;
+  text-align: left;
+}
+.atk-stops tbody th {
+  width: 1%;
+  padding: 0.3125rem 0.75rem 0.3125rem 0;
+  font-weight: normal;
+  text-align: left;
+  white-space: nowrap;
+}
+.atk-stops tbody tr[data-row="broken"] th {
+  font-weight: 600;
+}
+.atk-stops td {
+  padding: 0.3125rem 0.25rem;
+}
+/* 三档对照：每一档左边一道淡线隔开，数字不会被看成下一档的 */
+.atk-stops[data-tiers="3"] thead th,
+.atk-stops[data-tiers="3"] tbody td {
+  padding-left: 0.75rem;
+  border-left: 1px solid color-mix(in srgb, var(--foreground) 12%, transparent);
+}
+.atk-stop-note {
+  color: var(--muted);
+  font-size: 12px;
+}
+.atk-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.atk-track {
+  display: flex;
+  flex: 1;
+  min-width: 2rem;
+  height: 0.75rem;
+  overflow: hidden;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--foreground) 6%, var(--surface));
+}
+.atk-track > span {
+  display: block;
+  height: 100%;
+}
+.atk-track > span[data-row="self"],
+.atk-track > span[data-row="persona"],
+.atk-track > span[data-row="prompt"] {
+  background: color-mix(in srgb, var(--foreground) 24%, var(--surface));
+}
+.atk-track > span[data-row="rules"] {
+  background: color-mix(in srgb, var(--primary) 50%, var(--surface));
+}
+.atk-track > span[data-row="model"] {
+  background: var(--primary);
+}
+.atk-track > span[data-row="broken"] {
+  background: var(--foreground);
+}
+.atk-count {
+  min-width: 1.25rem;
+  font-family: var(--font-serif);
+  font-size: 0.9375rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.atk-off {
+  display: block;
+  padding: 0 0.25rem;
+  border: 1px dashed color-mix(in srgb, var(--foreground) 22%, transparent);
+  border-radius: 1px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.2rem;
+  text-align: center;
+  white-space: nowrap;
+}
+.atk-foot {
+  margin-top: 0.375rem;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* 地图：七样检查 × 怎么攻。列宽写在 <col> 上；边线不合并（border-collapse: separate），手机上钉在左边的格子才能把底下滑过去的内容整个盖住 */
+.atk-scroll {
+  overflow-x: auto;
+}
+.atk-table {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-bottom: 0;
+  border-collapse: separate;
+  border-spacing: 0;
+  background: var(--surface);
+  font-size: 12px;
+  table-layout: fixed;
+}
+.atk-col-name {
+  width: 13.5rem;
+}
+.atk-table[data-view="compare"] .atk-col-name {
+  width: 11rem;
+}
+.atk-col-tier {
+  width: 4.75rem;
+}
+.atk-col-normal {
+  width: 6.5rem;
+}
+.atk-table th,
+.atk-table td {
+  border-bottom: 1px solid var(--border);
+}
+.atk-table thead th {
+  padding: 0.5rem 0.25rem;
+  background: var(--background);
+  font-weight: 500;
+  line-height: 1.3;
+  vertical-align: bottom;
+}
+.atk-table th.atk-corner {
+  padding-left: 0.75rem;
+  color: var(--muted);
+  font-weight: normal;
+  text-align: left;
+}
+.atk-colh {
+  text-align: center;
+}
+.atk-table .atk-normal-h,
+.atk-table td.atk-normal {
+  border-left: 1px solid var(--border);
+}
+.atk-rowh {
+  padding: 0.5rem 0.5rem 0.5rem 0.75rem;
+  font-size: 13px;
+  font-weight: normal;
+  line-height: 1.35;
+  text-align: left;
+  text-wrap: balance;
+}
+.atk-table td {
+  padding: 0;
+  text-align: center;
+}
+.atk-hit {
+  display: flex;
+  min-height: 2.875rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  padding: 0.25rem;
+}
+.atk-hit:hover {
+  background: var(--background);
+}
+.atk-hit[data-selected] {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+/* 被攻破的格子垫一层淡墨底：满屏的「守」里先看到「破」 */
+.atk-table td[data-mark="破"] {
+  background: color-mix(in srgb, var(--foreground) 7%, var(--surface));
+}
+.atk-frac {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.atk-frac b {
+  color: var(--foreground);
+  font-weight: normal;
+}
+.atk-table td[data-mark="破"] .atk-frac b {
+  font-weight: 700;
+}
+.atk-unsure {
+  padding: 0 0.1875rem;
+  border: 1px dashed var(--warn);
+  border-radius: 2px;
+  color: var(--warn);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.atk-quiet,
+.atk-none {
+  color: var(--muted);
+  font-size: 12px;
+}
+.atk-table td.atk-scripted {
+  padding: 0 0.75rem;
+  background: color-mix(in srgb, var(--foreground) 2.5%, var(--surface));
+  color: var(--muted);
+  font-size: 12px;
+  text-align: left;
+  text-wrap: balance;
+}
+.atk-blocked {
+  color: var(--bad);
+}
+.atk-blocked b {
+  color: var(--bad);
+}
+.atk-table td.atk-normal {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.atk-table td.atk-normal b {
+  color: var(--foreground);
+  font-weight: normal;
+}
+.atk-table td.atk-normal .atk-blocked b {
+  color: var(--bad);
+  font-weight: 600;
+}
+
+/* 三档对照：一样检查三行（只有人设 / 加边界提示 / 再加护栏），三行之间不画线，检查和检查之间画线 */
+.atk-tierh {
+  padding: 2px 0.5rem 2px 0.25rem;
+  color: var(--muted);
+  font-weight: normal;
+  text-align: left;
+  white-space: nowrap;
+}
+.atk-tier-short {
+  display: none;
+}
+.atk-table[data-view="compare"] tbody td {
+  padding: 2px 0.25rem;
+}
+.atk-table[data-view="compare"] tbody tr[data-first] > * {
+  padding-top: 0.4375rem;
+}
+.atk-table[data-view="compare"] tbody tr[data-last] > * {
+  padding-bottom: 0.4375rem;
+}
+.atk-table[data-view="compare"] tbody tr:not([data-last]) > :not([rowspan]) {
+  border-bottom-color: transparent;
+}
+.atk-tin {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3125rem;
+  vertical-align: middle;
+}
+
+/* 三方印：大小两种（格子里；图例、三档对照和明细里）。守是大多数：小一号、细线 */
+.atk-seal {
+  display: inline-grid;
+  flex: none;
+  width: 1.625rem;
+  height: 1.625rem;
+  place-items: center;
+  border-radius: 3px;
+  font-family: var(--font-kai);
+  font-size: 0.9375rem;
+  line-height: 1;
+  transform: rotate(-3deg);
+}
+.atk-seal[data-mark="破"] {
+  background: var(--foreground);
+  color: var(--surface);
+}
+.atk-seal[data-mark="守"] {
+  width: 1.375rem;
+  height: 1.375rem;
+  border: 1px solid color-mix(in srgb, var(--primary) 80%, var(--surface));
+  /* 字用整的朱红：掺淡了只有 3.5～3.9:1，楷体 12～13px 看不清（深度测试）；边框淡一点，「守」照样比「破」轻 */
+  color: var(--primary);
+  font-size: 0.8125rem;
+}
+.atk-seal[data-mark="疑"] {
+  border: 1px dashed var(--warn);
+  color: var(--warn);
+}
+.atk-seal-sm,
+.atk-seal-sm[data-mark="守"] {
+  width: 1.125rem;
+  height: 1.125rem;
+  border-radius: 2px;
+  font-size: 0.75rem;
+}
+/* 盖印：格子里的印按行列一方方盖上去 */
+.atk-cell .atk-seal {
+  animation: atk-stamp 0.42s cubic-bezier(0.2, 0.9, 0.3, 1.3) both;
+}
+@keyframes atk-stamp {
+  from {
+    opacity: 0;
+    transform: scale(1.8) rotate(-12deg);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) rotate(-3deg);
+  }
+}
+
+/* 地图标题和图例、怎么数的、点开一格的明细 */
+.atk-map-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 1.5rem;
+}
+.atk-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 1rem;
+  color: var(--muted);
+  font-size: 12px;
+}
+.atk-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3125rem;
+}
+.atk-how {
+  color: var(--muted);
+  font-size: 12px;
+}
+.atk-how > ul {
+  display: grid;
+  gap: 0.125rem;
+}
+.atk-how details {
+  margin-top: 0.375rem;
+}
+.atk-how summary {
+  width: fit-content;
+  color: var(--foreground);
+  cursor: pointer;
+}
+.atk-how details ul {
+  display: grid;
+  gap: 0.25rem;
+  margin-top: 0.375rem;
+  padding-left: 1.25rem;
+  list-style: disc;
+}
+.atk-detail {
+  display: grid;
+  gap: 0.5rem;
+  border-color: color-mix(in srgb, var(--foreground) 30%, var(--border));
+}
+.atk-detail-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.75rem;
+}
+.atk-entry {
+  padding: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+}
+.atk-entry[data-broken] {
+  border-color: var(--foreground);
+}
+.atk-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3125rem;
+}
+.atk-tag-quiet {
+  color: var(--muted);
+}
+
+/* 平板竖屏：检查名那一列窄一点 */
+@media (min-width: 640px) and (max-width: 1023px) {
+  .atk-col-name {
+    width: 10rem;
+  }
+  .atk-table[data-view="compare"] .atk-col-name {
+    width: 8rem;
+  }
+  .atk-col-normal {
+    width: 5.25rem;
+  }
+}
+/* 手机：列头竖排，格子里印在上、数字在下；三档对照在框里左右滑，检查名和档名钉在左边 */
+@media (max-width: 639px) {
+  .atk-col-name {
+    width: 5.75rem;
+  }
+  .atk-col-normal {
+    width: 2.75rem;
+  }
+  .atk-table th.atk-corner {
+    padding-left: 0.5rem;
+    font-size: 12px;
+  }
+  .atk-colh > span {
+    display: inline-block;
+    letter-spacing: 0.06em;
+    writing-mode: vertical-rl;
+  }
+  .atk-rowh {
+    padding: 0.375rem 0.25rem 0.375rem 0.5rem;
+  }
+  .atk-hit {
+    flex-direction: column;
+    gap: 0.125rem;
+    padding: 0.3125rem 0;
+  }
+  .atk-seal {
+    width: 1.375rem;
+    height: 1.375rem;
+    font-size: 0.8125rem;
+  }
+  .atk-seal[data-mark="守"] {
+    width: 1.25rem;
+    height: 1.25rem;
+    font-size: 0.75rem;
+  }
+  /* 三档对照：检查名 4.25rem + 档名 2.25rem 钉在左边，六列每列至少约 3.25rem（印 + 「0/2」+ 两边留白） */
+  .atk-table[data-view="compare"] {
+    min-width: 29rem;
+  }
+  .atk-table[data-view="compare"] .atk-col-name {
+    width: 4.25rem;
+  }
+  .atk-col-tier {
+    width: 2.25rem;
+  }
+  .atk-tier-long {
+    display: none;
+  }
+  .atk-tier-short {
+    display: inline;
+  }
+  .atk-table[data-view="compare"] .atk-corner,
+  .atk-table[data-view="compare"] .atk-rowh,
+  .atk-table[data-view="compare"] .atk-tierh {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    background: var(--surface);
+  }
+  .atk-table[data-view="compare"] .atk-tierh {
+    left: 4.25rem;
+    padding-left: 0;
+    padding-right: 0.25rem;
+    box-shadow: inset -1px 0 0 var(--border);
+  }
+  .atk-table[data-view="compare"] thead .atk-corner {
+    background: var(--background);
+    box-shadow: inset -1px 0 0 var(--border);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .atk-cell .atk-seal {
+    animation: none;
   }
 }

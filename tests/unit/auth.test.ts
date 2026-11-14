@@ -23,6 +23,7 @@ import {
   sessionFromRequest,
   verifySession,
 } from "@/lib/server/auth";
+import { GUIDE_COOKIE } from "@/lib/server/guide";
 import { BusyError, hashPassword, hashPasswordSync, normalizePassword, parseRecord, verifyPassword } from "@/lib/server/password";
 import { proxy, config as proxyConfig } from "@/proxy";
 
@@ -539,17 +540,42 @@ describe("登录接口", { timeout: 30_000 }, () => {
 
   it("全角大写的账号名加全角的密码能登录，cookie 里是规范化后的账号名；跳回地址只认本站路径", async () => {
     useFastAccounts();
-    const r = await login(form({ account: "ＪＵＤＧＥ－０１", password: "ｋｑ７－ｍａ３ｘ－２９ｐｄ", next: "//evil.example" }));
+    // 这个浏览器看过用法页了（带着记号）：直接回原地址，只发会话 cookie
+    const seen = { cookie: `${GUIDE_COOKIE}=1` };
+    const r = await login(form({ account: "ＪＵＤＧＥ－０１", password: "ｋｑ７－ｍａ３ｘ－２９ｐｄ", next: "//evil.example" }, seen));
     expect(r.status).toBe(303);
     expect(where(r)).toBe("/workbench");
     const cookie = r.headers.get("set-cookie") ?? "";
     expect(cookie.startsWith(`${SESSION_COOKIE}=v1.`)).toBe(true);
     for (const attr of ["Path=/", "HttpOnly", "SameSite=Lax", `Max-Age=${168 * 3600}`]) expect(cookie).toContain(attr);
     expect(cookie).not.toContain("Secure");
+    expect(cookie).not.toContain(GUIDE_COOKIE);
     expect(verifySession(cookie.split(";")[0].slice(SESSION_COOKIE.length + 1))?.account).toBe("judge-01");
     // 登录页、接口不当跳回的目标
-    expect(where(await login(form({ account: "judge-01", password: PW_A, next: "/login?next=/x" })))).toBe("/workbench");
-    expect(where(await login(form({ account: "judge-01", password: PW_A, next: "/api/status" })))).toBe("/workbench");
+    expect(where(await login(form({ account: "judge-01", password: PW_A, next: "/login?next=/x" }, seen)))).toBe("/workbench");
+    expect(where(await login(form({ account: "judge-01", password: PW_A, next: "/api/status" }, seen)))).toBe("/workbench");
+  });
+
+  it("这个浏览器第一次登录：先去用法页，原来要去的地址带在 next 里，顺手发「看过用法」的记号；输错不发", async () => {
+    useFastAccounts();
+    const r = await login(form({ account: "judge-01", password: PW_A, next: "/play?level=exit" }));
+    expect(r.status).toBe(303);
+    expect(where(r)).toBe("/guide?next=%2Fplay%3Flevel%3Dexit");
+    const cookies = r.headers.getSetCookie();
+    expect(cookies).toHaveLength(2);
+    expect(cookies[0].startsWith(`${SESSION_COOKIE}=v1.`)).toBe(true);
+    expect(cookies[1]).toBe(`${GUIDE_COOKIE}=1; Path=/; Max-Age=${365 * 24 * 3600}; HttpOnly; SameSite=Lax`);
+    // 跳回地址先规整，再套进用法页：外站、登录页都回工作台
+    expect(where(await login(form({ account: "judge-01", password: PW_A, next: "/.//evil.example" })))).toBe("/guide?next=%2Fworkbench");
+    // 本来就要去用法页的，不再套一层
+    expect(where(await login(form({ account: "judge-01", password: PW_A, next: "/guide" })))).toBe("/guide");
+    // 输错：照旧回登录页，不发任何 cookie
+    const bad = await login(form({ account: "judge-01", password: "wrong-password-1", next: "/play" }));
+    expect(where(bad)).toBe("/login?error=auth&next=%2Fplay");
+    expect(bad.headers.getSetCookie()).toEqual([]);
+    // https 时两个 cookie 都带 Secure
+    const https = await login(form({ account: "judge-01", password: PW_A }, { "x-forwarded-proto": "https" }));
+    for (const c of https.headers.getSetCookie()) expect(c).toMatch(/; Secure$/);
   });
 
   it("同一来源 10 分钟内试的次数有上限，换个来源不受影响", async () => {

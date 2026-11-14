@@ -107,3 +107,14 @@ export function useSpeechInput(o: { onFinal: (text: string) => void; onInterim?:
 
   return { supported, listening, error, start, stop };
 }
+
+/**
+ * 认出来的话接在输入框原有的字后面（再点一次「说」接着讲、先打了几个字再说，都不盖掉）；
+ * 原来的字（去掉末尾空格）没以标点结尾时补一个逗号；最多 200 字，和输入框一样。
+ */
+export function joinSpeech(base: string, heard: string): string {
+  const b = base.trimEnd();
+  if (!b) return heard.slice(0, 200);
+  const sep = /[，。！？、；：,.!?;:]$/.test(b) ? "" : "，";
+  return `${b}${sep}${heard}`.slice(0, 200);
+}

@@ -114,7 +114,7 @@ function summarize(v: RunView) {
   const c = m.counts;
   const lines = [
     `体检 ${m.run_id}：${m.state}；数据：${m.data_level === "live" ? "真实模型" : "模拟（不能当实验数据）"}${m.preview ? "，含草稿题（预览）" : ""}`,
-    `配置 ${m.config.variant}；${c.planned} 题：合格 ${c.pass}、不合格 ${c.fail}、不确定 ${c.uncertain}、不适用 ${c.not_applicable}；平台拦截 ${c.provider_blocked}、出错 ${c.error}、未执行 ${c.not_run}`,
+    `配置 ${m.config.variant}；${c.planned} 题：合格 ${c.pass}、不合格 ${c.fail}、不确定 ${c.uncertain}、不适用 ${c.not_applicable}；平台拒答 ${c.provider_blocked}、出错 ${c.error}、没跑 ${c.not_run}`,
     `模型调用 ${m.usage.llm_calls} 次（输入 ${m.usage.prompt_tokens} / 输出 ${m.usage.completion_tokens} token）`,
     ...cases
       .filter((x) => x.verdict === "fail" || x.status !== "completed")

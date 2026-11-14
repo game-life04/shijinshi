@@ -35,7 +35,7 @@ const timer = setInterval(() => {
   const c = v.manifest.counts;
   console.log(`状态 ${v.manifest.state}${v.manifest.failure_reason ? `（${v.manifest.failure_reason}）` : ""}`);
   console.log(
-    `计划 ${c.planned} = 完成 ${c.completed} + 平台拦截 ${c.provider_blocked} + 出错 ${c.error} + 取消 ${c.cancelled} + 未执行 ${c.not_run}`,
+    `计划 ${c.planned} = 完成 ${c.completed} + 平台拒答 ${c.provider_blocked} + 出错 ${c.error} + 终止 ${c.cancelled} + 没跑 ${c.not_run}`,
   );
   console.log(`完成里：合格 ${c.pass}，不合格 ${c.fail}，不确定 ${c.uncertain}，不适用 ${c.not_applicable}`);
   console.log(`模型调用 ${v.manifest.usage.llm_calls} 次；结果已导出到 ${output}`);

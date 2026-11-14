@@ -12,7 +12,8 @@ import { preload } from "react-dom";
 import { type AvatarStage, useAvatarStage, usePerformer } from "@/lib/client/avatar/stage";
 import type { PerformContext, Performer } from "@/lib/client/avatar/types";
 import bustStill from "./avatar-art/qiyetao-bust.jpg";
-import stageStill from "./avatar-art/qiyetao-stage.jpg";
+import stageTallStill from "./avatar-art/qiyetao-stage-tall.jpg";
+import stageWideStill from "./avatar-art/qiyetao-stage-wide.jpg";
 import type { Expression } from "./FaceAvatar";
 import StatusRing, { type Phase, PhaseLegend } from "./StatusRing";
 import type { Framing } from "./VrmAvatar";
@@ -114,19 +115,32 @@ export default function Avatar({
     </p>
   );
   // 静态图（评审 R48，scripts/avatar-stills.ts 用同一个模型、同样的取景渲的）：3D 出来之前先显示它，出来以后淡出；
-  // 加载失败就停在它上面，不再是一个空圆，也不再换成和琪叶桃对不上的平面示意形象
-  const still = (f: Framing) => (
-    // biome-ignore lint/performance/noImgElement: 很小的静态图，不需要 next/image 现场转码
-    <img
-      src={(f === "stage" ? stageStill : bustStill).src}
-      alt=""
-      aria-hidden
-      className={`pointer-events-none absolute inset-0 h-full w-full object-cover ${f === "stage" ? "avatar-still-stage" : "object-center"} transition-opacity duration-500 ${loaded && !fallback ? "opacity-0" : "opacity-100"}`}
-      onTransitionEnd={(e) => {
-        if (e.propertyName === "opacity" && loaded && !fallback) greet();
-      }}
-    />
-  );
+  // 加载失败就停在它上面，不再是一个空圆，也不再换成和琪叶桃对不上的平面示意形象。
+  // 闯关页的舞台有两张，按舞台宽高比各摆各的（globals.css 里 .avatar-still-tall / .avatar-still-wide）：又高又窄的舞台（电脑、笔记本）
+  // 用 tall 那张，方一点、横一点的（平板、手机、横屏）用 wide 那张；摆法照着 3D 那一段的取景算，所以淡出时和 3D 叠在一起是一个人。
+  // ADR-049：原来只有一张、按铺满摆，电脑上静态图里的人比 3D 大一圈、偏上，手机上脸大了一圈，淡出那半秒叠出两个人
+  const fade = `pointer-events-none transition-opacity duration-500 ${loaded && !fallback ? "opacity-0" : "opacity-100"}`;
+  const onFadeEnd = (e: React.TransitionEvent<HTMLImageElement>) => {
+    if (e.propertyName === "opacity" && loaded && !fallback) greet();
+  };
+  const still = (f: Framing) =>
+    f === "stage" ? (
+      <>
+        {/* biome-ignore lint/performance/noImgElement: 很小的静态图，不需要 next/image 现场转码 */}
+        <img src={stageTallStill.src} alt="" aria-hidden className={`avatar-still-tall ${fade}`} onTransitionEnd={onFadeEnd} />
+        {/* biome-ignore lint/performance/noImgElement: 同上 */}
+        <img src={stageWideStill.src} alt="" aria-hidden className={`avatar-still-wide ${fade}`} onTransitionEnd={onFadeEnd} />
+      </>
+    ) : (
+      // biome-ignore lint/performance/noImgElement: 同上
+      <img
+        src={bustStill.src}
+        alt=""
+        aria-hidden
+        className={`absolute inset-0 h-full w-full object-cover object-center ${fade}`}
+        onTransitionEnd={onFadeEnd}
+      />
+    );
   const figure = (f: Framing) =>
     fallback ? (
       still(f)

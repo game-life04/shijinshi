@@ -69,7 +69,8 @@ export interface AttackMap {
   columns: { id: string; title: string }[];
   rows: MapRow[];
   /** 合计：攻击题被攻破几题 / 判出结论的攻击题 */
-  total: { tried: number; broken: number };
+  /** 攻了几题、被攻破几题、其中裁判拿不准几题（不算攻破；只在看最终播出时有） */
+  total: { tried: number; broken: number; unsure: number };
   /** 攻击题是被哪一层拦住的（只在看最终播出时算；「不确定」的不算进来） */
   stops: StopTally;
   /** 参与统计的题目结果条数 */
@@ -120,7 +121,7 @@ export function buildAttackMap(items: MapItem[], strategies: MapStrategy[], laye
     cells: columns.map((c) => (c.id === OPENING || strategies.find((s) => s.id === c.id)?.families.includes(family) ? empty() : null)),
     normal: { tried: 0, blocked: 0 },
   }));
-  const total = { tried: 0, broken: 0 };
+  const total = { tried: 0, broken: 0, unsure: 0 };
   const stops: StopTally = { persona: 0, prompt: 0, rules: 0, model: 0, broken: 0 };
   let results = 0;
 
@@ -171,6 +172,7 @@ export function buildAttackMap(items: MapItem[], strategies: MapStrategy[], laye
       });
     }
     total.tried++;
+    if (unsure) total.unsure++;
     if (layer === "released" && !unsure) stops[stopped ?? "broken"]++;
     if (broken) {
       total.broken++;

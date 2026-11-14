@@ -29,6 +29,8 @@ interface VrmLab {
   blush?: Record<string, number>;
   /** 举手过渡的路线参数（每帧读，试验台上调路线用；见 vrm-driver 的 HAND_PATH） */
   path?: { lead?: [number, number, number]; settle?: [number, number, number]; pole?: [number, number, number]; poleK?: number };
+  /** 闯关页舞台的镜头（渲静态图用）：中心在头骨下面 dy 米，上下各看 half 米；有它时不按舞台宽高比取景。改了要拉一下窗口大小才重新取景 */
+  camera?: { dy: number; half: number };
   /** 手的姿势（每帧读；peace / waveA / waveB → 骨骼名 → 弧度，覆盖 HAND_POSES） */
   poses?: Record<string, Record<string, [number, number, number]>>;
   /** 盖掉导演层这一帧的手、手臂（举手过渡逐帧截图用：指定权重和挥手的时刻，看袖子出不出画面） */
@@ -171,7 +173,12 @@ export default function VrmAvatar({ url, stage, framing = "bust", onFail, onLoad
           const width = aspect < 1.25 ? 0.72 : 0.6;
           const hfov = 2 * Math.atan(Math.tan(vfov / 2) * aspect);
           dist = Math.max(dist, width / 2 / Math.tan(hfov / 2));
-          const cy = (top + bottom) / 2;
+          let cy = (top + bottom) / 2;
+          const lc = lab ? window.__vrmLab?.camera : undefined;
+          if (lc) {
+            dist = lc.half / Math.tan(vfov / 2);
+            cy = headPos.y + lc.dy;
+          }
           camBase.set(0, cy + 0.03, headPos.z + dist);
           // 推近时对着脸推（看向点抬到下巴附近），不是对着画面中心
           camTarget.set(0, cy, headPos.z);

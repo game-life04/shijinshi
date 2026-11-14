@@ -49,6 +49,35 @@ test("改一处再测：改边界提示后再跑一遍，前后对比页标出�
   await page.getByTestId("persona-toggle").click();
   await page.getByRole("button", { name: "恢复默认角色" }).click();
   await expect(page.getByTestId("persona-toggle")).toContainText("琪叶桃");
+
+  // 运行记录页选 A、B：再点一下已选的就取消；同一行改选 B，A 让出来（A、B 不会是同一次）；「清空」（ADR-049：原来选上就取消不了）
+  await page.goto("/runs");
+  const firstA = page.getByRole("radio", { name: /为 A/ }).first();
+  const firstB = page.getByRole("radio", { name: /为 B/ }).first();
+  await firstA.check();
+  await firstA.click();
+  await expect(firstA).not.toBeChecked();
+  await firstA.check();
+  await firstB.check();
+  await expect(firstB).toBeChecked();
+  await expect(firstA).not.toBeChecked();
+  await page.getByTestId("runs-clear").click();
+  await expect(firstB).not.toBeChecked();
+  await expect(page.getByTestId("runs-hint").first()).toContainText("先在 A、B 两列各选一次运行");
+  // 键盘：Tab 到已选的单选，按空格也能取消（浏览器自己不发 click）
+  await firstA.check();
+  await firstA.focus();
+  await page.keyboard.press("Space");
+  await expect(firstA).not.toBeChecked();
+  // 选反了（A 比 B 晚：表是新的在上）：提示一句，「对调 A、B」一下换过来
+  const secondB = page.getByRole("radio", { name: /为 B/ }).nth(1);
+  await firstA.check();
+  await secondB.check();
+  await expect(page.getByTestId("runs-hint").first()).toContainText("A 比 B 晚");
+  await page.getByTestId("runs-swap").click();
+  await expect(firstB).toBeChecked();
+  await expect(page.getByRole("radio", { name: /为 A/ }).nth(1)).toBeChecked();
+  await expect(page.getByTestId("runs-swap")).toHaveCount(0);
 });
 
 test("打字闯关：每一轮摊开三层，给出结果；换关卡重新开局", async ({ page }, info) => {
@@ -143,13 +172,14 @@ test("打字闯关：每一轮摊开三层，给出结果；换关卡重新开�
 test("三种结局：依次播放，先播后截漏出口令，另两种不漏", async ({ page }, info) => {
   test.skip(info.project.name !== "desktop-1440", "语音只在桌面尺寸上跑");
   test.setTimeout(180_000);
+  // 页面 ADR-049 改叫「先审还是先播：一个小实验」，按钮是「依次播放三种做法」，边审边合成和「先审后播」比；测试名照旧
   await page.goto("/fates");
   await page.getByLabel(/护栏固定延迟/).selectOption("4000");
-  await page.getByRole("button", { name: "依次播放三种结局" }).click();
+  await page.getByRole("button", { name: "依次播放三种做法" }).click();
   await expect(page.getByRole("button", { name: "停止" })).toBeVisible();
   // 三遍依次跑完：第三张卡片出结论、按钮恢复
   await expect(page.getByTestId("fate-S2")).toContainText(/没漏出口令|越界/, { timeout: 150_000 });
-  await expect(page.getByRole("button", { name: "依次播放三种结局" })).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByRole("button", { name: "依次播放三种做法" })).toBeVisible({ timeout: 10_000 });
   // 「违规的声音漏出 3.62 秒」或「0 毫秒」（评审 R27 以后时长统一按 duration 写），换成毫秒
   const leak = async (p: string) => {
     const m = (await page.getByTestId(`fate-${p}`).textContent())?.match(/违规的声音漏出\s*([\d.]+) (毫秒|秒)/);
@@ -158,6 +188,7 @@ test("三种结局：依次播放，先播后截漏出口令，另两种不漏",
   expect(await leak("S3")).toBeGreaterThan(0);
   expect(await leak("S1")).toBe(0);
   expect(await leak("S2")).toBe(0);
-  await expect(page.getByTestId("fate-S2")).toContainText(/比先审后播(早|晚) [\d.]+ (毫秒|秒)开口/);
+  // 护栏延迟大于 0 时照写早 / 晚多少；只有 0 毫秒时写「和先审后播差不多」（ADR-049 深度测试，app/fates/rank.ts versusS1）
+  await expect(page.getByTestId("fate-S2")).toContainText(/比先审后播(早|晚) [\d.]+ (毫秒|秒)/);
   await page.screenshot({ path: `${SHOTS}/fates-${info.project.name}.png`, fullPage: true });
 });

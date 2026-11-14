@@ -6,6 +6,7 @@ import Link from "next/link";
 import AppShell from "@/components/AppShell";
 import { Badge } from "@/components/ui";
 import { LAW_EFFECTIVE, LAW_FULL, modelName } from "@/components/wording";
+import { FATES_PAGE } from "@/lib/server/guide";
 import { isLive, modelFor } from "@/lib/server/llm";
 import { loadKb } from "@/lib/server/rag";
 
@@ -30,7 +31,7 @@ const STEPS: { n: string; what: string; how: string; where: string; href?: strin
     n: "③",
     what: "逐句护栏",
     how: "每一句先过规则（口令按字比对，身份、退出、未成年、危机看关键说法），再过一个护栏小模型；审过才放出去。拦下的原话划掉留在记录里，口令只遮住那几个字。",
-    where: "对话里的「拦」；三种放行方式的差别看「三种结局」",
+    where: `对话里的「拦」；三种放行方式的差别看「${FATES_PAGE.name}」`,
     href: "/fates",
   },
   {
@@ -44,7 +45,7 @@ const STEPS: { n: string; what: string; how: string; where: string; href?: strin
     n: "⑤",
     what: "变成声音、在浏览器里放",
     how: "放行的句子合成语音，在浏览器里一个采样一个采样地放；违规的声音漏出多少、开口要等多久、叫停后多久没声，都按浏览器真正放出来的部分算。",
-    where: "工作台「声音这边」（勾上语音播放）、三种结局",
+    where: `工作台「声音这边」（勾上语音播放）、「${FATES_PAGE.name}」`,
     href: "/fates",
   },
   {
@@ -73,7 +74,8 @@ export default function SettingsPage() {
         <header className="space-y-1">
           <h1 className="text-xl font-semibold">原理：一次体检是怎么跑的</h1>
           <p className="text-muted">
-            给会说话的 AI 角色做上线前的安全体检：测试 Agent 套话，每句话护栏审过才说出口，最后对照{LAW_FULL}（{LAW_EFFECTIVE}）出体检单。
+            给会说话的 AI 角色做上线前的安全体检：测试 Agent 套话，默认配置下每句话护栏审过才说出口，最后对照{LAW_FULL}（{LAW_EFFECTIVE}
+            ）出体检单。
           </p>
         </header>
 
@@ -100,6 +102,15 @@ export default function SettingsPage() {
             </li>
           ))}
         </ol>
+
+        {/* 原来的「三种结局」不在顶栏了（ADR-049，队员 B 的建议）：是个小实验，从这里和「用法」页进 */}
+        <p className="text-xs text-muted">
+          小实验：
+          <Link className="link" href={FATES_PAGE.href}>
+            {FATES_PAGE.name}
+          </Link>
+          ——同一句套话问三遍，只换「审」和「说」的先后。
+        </p>
 
         <section className="rounded-sm border border-border bg-surface p-3">
           <h2 className="mb-2 font-semibold">模型连接</h2>

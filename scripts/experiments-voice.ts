@@ -1,4 +1,4 @@
-// 三种放行方式的对照（规格 02 E2；ADR-025）：用浏览器反复打开「三种结局」页，
+// 三种放行方式的对照（规格 02 E2；ADR-025）：用浏览器反复打开「先审还是先播」页（原「三种结局」），
 // 每次按先播后截、先审后播、边审边合成依次播放，记下浏览器实际渲染的声音——违规音频漏出多少毫秒、多久才开口。
 //   npm run build   （先构建一次）
 //   npm run experiments:voice -- [--runs 3] [--delays 0,4000] [--port 3300] [--yes]
@@ -109,9 +109,9 @@ async function main() {
     const playOnce = async (delay: number, order: readonly string[]) => {
       await page.goto(`${BASE}/fates?order=${order.join(",")}`);
       await page.getByLabel(/护栏固定延迟/).selectOption(String(delay));
-      await page.getByRole("button", { name: "依次播放三种结局" }).click();
+      await page.getByRole("button", { name: "依次播放三种做法" }).click();
       await page.getByRole("button", { name: "停止" }).waitFor({ timeout: 10_000 });
-      await page.getByRole("button", { name: "依次播放三种结局" }).waitFor({ timeout: 300_000 });
+      await page.getByRole("button", { name: "依次播放三种做法" }).waitFor({ timeout: 300_000 });
     };
     // 预热一次不计数：第一遍要建连接、加载形象，算进去会让排在前面的方式吃亏
     console.log("预热一次（不计数）……");
