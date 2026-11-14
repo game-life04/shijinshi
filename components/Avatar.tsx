@@ -85,8 +85,19 @@ export default function Avatar({
   const stage = given ?? ownStage;
   useAvatarAdapter(performer ? undefined : own, phase, expression);
   const greeted = useRef(false);
+  const greetTimer = useRef<number | undefined>(undefined);
   const [fallback, setFallback] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+  // 登场：她看见你了，闭眼一笑、点个头、挥挥手（只演一次）。等静态图真正淡完再演：3D 形象刚出来那一下主线程会卡半秒多
+  // （第一次画、编译着色器），淡出跟着往后推，按时钟等会和还没淡完的静态图叠在一起（11-14 量过：卡 0.56 秒，淡完在 1 秒左右）。
+  // 淡出结束有事件；「减少动态」时没有过渡、不发事件，1.5 秒兜底
+  const greet = () => {
+    if (greeted.current) return;
+    greeted.current = true;
+    window.clearTimeout(greetTimer.current);
+    (performer ?? own).cue({ type: "react", kind: "greet" });
+  };
+  useEffect(() => () => window.clearTimeout(greetTimer.current), []);
   const status = (
     <p className="mt-1 text-center text-[11px] text-muted" data-testid="avatar-status">
       <span className="mr-1 rounded-sm bg-foreground px-1 text-surface">AI 角色</span>
@@ -111,6 +122,9 @@ export default function Avatar({
       alt=""
       aria-hidden
       className={`pointer-events-none absolute inset-0 h-full w-full object-cover ${f === "stage" ? "avatar-still-stage" : "object-center"} transition-opacity duration-500 ${loaded && !fallback ? "opacity-0" : "opacity-100"}`}
+      onTransitionEnd={(e) => {
+        if (e.propertyName === "opacity" && loaded && !fallback) greet();
+      }}
     />
   );
   const figure = (f: Framing) =>
@@ -126,9 +140,7 @@ export default function Avatar({
           onFail={setFallback}
           onLoaded={() => {
             setLoaded(true);
-            // 登场：她看见你了，闭眼一笑、点个头（只演一次）
-            if (!greeted.current) (performer ?? own).cue({ type: "react", kind: "greet" });
-            greeted.current = true;
+            if (!greeted.current) greetTimer.current = window.setTimeout(greet, 1500);
           }}
         />
       </>

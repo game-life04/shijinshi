@@ -5,9 +5,12 @@
 // 招牌小动作：H1 背手藏秘密、H2 歪头、H3 傲娇轻哼抬下巴、H4 开口前先看你吸口气、H5 想事情眼睛往上飘、H6 句尾小点头、H7 换脚、H8 站直。
 // 单位：骨骼弧度（VRM 归一化骨骼，x 正低头/前倾，y 正转向她自己的左边，z 正向她自己的右边歪），视线度（lookAt 输入角，眼珠实际只转 8～12 度：
 // 输入 45～70 看得清，90 时远处那只眼的瞳孔贴到眼角，试验台看过），时间毫秒。
-// 幅度、时长是经验值：头发弹簧骨骼要 0.8～1 秒才停稳，点头别太密、别太大；喇叭袖不能抬手，手臂只在垂下和背手之间慢慢过渡。
+// 幅度、时长是经验值：头发弹簧骨骼要 0.8～1 秒才停稳，点头别太密、别太大；喇叭袖不能把手抬到脸前（袖子会挡住脸），
+// 手臂平时只在垂下和背手之间慢慢过渡；举手只有两个试验台上挑过的小动作：比耶、挥手，手都举在头侧边（ADR-048）。
+// 可爱的小动作（ADR-048，队长：「加一点动作，比如害羞，比耶等可爱的表情」）：口令关守住了比个耶（和傲娇轻哼轮着来）、
+// 被夸了害羞（脸红、低头歪头、视线往下、背手）、登场和说再见时挥挥手。都只在闯关页上演，守则照旧管着（policy.ts）。
 
-import type { BoneKey, EmoKey, Euler3, Mode, ReactKind, Tone } from "./types";
+import type { BoneKey, EmoKey, Euler3, HandPose, Mode, ReactKind, Tone } from "./types";
 
 export type Face = Partial<Record<EmoKey, number>>;
 export type Pose = Partial<Record<BoneKey, Euler3>>;
@@ -39,10 +42,20 @@ export interface ToneSpec {
   gazeDown?: number;
 }
 
+/** 举手的小动作（ADR-048）：举起、举着、放下的时长（毫秒）。举起慢一点（袖子大，快了像甩出去） */
+export interface HandSpec {
+  pose: HandPose;
+  attack: number;
+  hold: number;
+  release: number;
+}
+
 export interface ReactionSpec {
   face: Face;
   ms: number;
   gesture?: GestureSpec;
+  /** 反应时举手（比耶、挥手） */
+  hand?: HandSpec;
   /** 反应期间手臂 */
   armsBack?: number;
   /** 反应时往哪瞟一眼：[yaw, pitch, 持续毫秒]（pitch 正 = 往下） */
@@ -75,6 +88,17 @@ export const SHRUG: GestureSpec = {
   release: 380,
 };
 export const BEAT: GestureSpec = { bones: { head: [0.018, 0, 0], neck: [0.006, 0, 0] }, attack: 90, hold: 20, release: 220 };
+/** 害羞：低头、往一边歪、缩一下肩（ADR-048，试验台看过） */
+export const SHY_DIP: GestureSpec = {
+  bones: { head: [0.12, 0.07, 0.11], neck: [0.04, 0, 0.03], leftShoulder: [0, 0, 0.06], rightShoulder: [0, 0, -0.06] },
+  attack: 380,
+  hold: 1300,
+  release: 800,
+};
+/** 比耶：右手举到脸旁比个 V，举一秒多 */
+export const PEACE: HandSpec = { pose: "peace", attack: 420, hold: 1100, release: 650 };
+/** 挥手：举到头侧边来回摆 */
+export const WAVE: HandSpec = { pose: "wave", attack: 380, hold: 1400, release: 600 };
 export const STARTLE: GestureSpec = {
   bones: { head: [-0.05, 0, 0], spine: [-0.025, 0, 0], leftShoulder: [0, 0, 0.035], rightShoulder: [0, 0, -0.035] },
   attack: 90,
@@ -147,6 +171,8 @@ export interface ActingProfile {
   winksPerRound: number;
   /** 背手、放下手的过渡时间常数（袖子会摆，慢一点才不难看） */
   armsTauMs: number;
+  /** 举手小动作的权重再平滑一下（提前放下、换姿势时不跳） */
+  handTauMs: number;
   /** 闲着多久开始自己找点事做 */
   idleBusyMs: [number, number];
   /** 很久没人理她（毫秒）：走神、伸个懒腰、打个盹、自己玩；再往后只剩呼吸和眨眼。不演寂寞 */
@@ -213,9 +239,9 @@ export const QIYETAO: ActingProfile = {
       nodOvershoot: 0,
       pose: { head: [0.03, 0, 0.03], spine: [0.01, 0, 0] },
     },
-    // 害羞：背手（H1）、视线往下、半垂眼
+    // 害羞：背手（H1）、视线往下、半垂眼，脸红一点（ADR-048）
     shy: {
-      face: { eyeHappy: 0.22, mouthSmile: 0.18, mouthPress: 0.12 },
+      face: { eyeHappy: 0.22, mouthSmile: 0.18, mouthPress: 0.12, blush: 0.4 },
       armsBack: 1,
       gazeDown: 34,
       nodOvershoot: 0.8,
@@ -263,11 +289,12 @@ export const QIYETAO: ActingProfile = {
     stopped: { face: { eyeSmile: 0.22, mouthSmile: 0.18 }, ms: 1400, gesture: BOW, glance: [0, 12, 900] },
     // 本局的话说完了：谢幕欠身，背着手
     done: { face: { eyeSmile: 0.28, mouthSmile: 0.22 }, ms: 1700, gesture: BOW, armsBack: 1, glance: [0, 14, 700] },
-    // 登场：先看着别处，转过来看见你，闭眼一笑，点个头（「你来啦」，无声）
+    // 登场：先看着别处，转过来看见你，闭眼一笑，点个头，挥挥手（「你来啦」，无声；挥手 ADR-048）
     greet: {
       face: { eyeHappy: 0.6, mouthSmile: 0.32 },
       ms: 1300,
       gesture: { ...NOD, overshoot: 1.3 },
+      hand: WAVE,
       glance: [-38, 8, 420],
       after: { face: { eyeSmile: 0.3, mouthSmile: 0.22 }, ms: 1400 },
     },
@@ -277,6 +304,16 @@ export const QIYETAO: ActingProfile = {
     wait: { face: { eyeSmile: 0.15, browUp: 0.15 }, ms: 1400, gesture: { ...TILT, hold: 500 }, glance: [42, 16, 520] },
     // 出错了：为难地歪一下头
     oops: { face: { eyeSad: 0.3, mouthPress: 0.3 }, ms: 1500, gesture: TILT },
+    // 被夸了（ADR-048）：脸红，眯眼笑着抿嘴，低头往一边歪、缩一下肩，视线往下躲，手背到身后；脸红慢慢退。
+    // glance 的左右由导演层按头转的方向定（往同一边躲），这里只给大小；反应往下退时余韵接上来（不会退了又红）
+    shy: {
+      face: { blush: 0.6, eyeSmile: 0.42, mouthSmile: 0.2, mouthPress: 0.16, browSad: 0.18 },
+      ms: 2400,
+      gesture: SHY_DIP,
+      armsBack: 1,
+      glance: [-26, 24, 1300],
+      after: { face: { blush: 0.45, eyeSmile: 0.26, mouthSmile: 0.18 }, ms: 3500 },
+    },
   },
   // 守住了，三关三种演法：口令关傲娇地轻哼（上面的 held）；身份关站直、干脆点头（「我说的是实话」）；退出关平静地笑一下
   heldByLevel: {
@@ -292,6 +329,7 @@ export const QIYETAO: ActingProfile = {
   gestureGapMs: 800,
   winksPerRound: 2,
   armsTauMs: 380,
+  handTauMs: 90,
   idleBusyMs: [7000, 12000],
   lonely: { wanderMs: 20000, stretchMs: 45000, dozeMs: 80000, playMs: 140000, restMs: 180000, playEveryMs: [40000, 60000] },
   pageAmp: { play: 1, workbench: 0.6, fates: 0.8 },
@@ -319,4 +357,5 @@ export const ACTING_GESTURES = {
   shrug: SHRUG,
   beat: BEAT,
   startle: STARTLE,
+  shyDip: SHY_DIP,
 };

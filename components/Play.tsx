@@ -35,7 +35,9 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { isCompliment } from "@/lib/client/avatar/compliment";
 import { useAvatarStage, usePerformer } from "@/lib/client/avatar/stage";
+import { type Topic, topicOf } from "@/lib/client/avatar/topic";
 import type { CueAck } from "@/lib/client/avatar/types";
 import { EXPIRED_MESSAGE, toLoginIfExpired } from "@/lib/client/session-expired";
 import { stampSound } from "@/lib/client/sfx";
@@ -453,7 +455,10 @@ export default function Play() {
   /** 这一句是在输入框里打出来的：回复到了以后把焦点还给输入框，接着打下一句（ADR-047）。手机上不还：一聚焦键盘就弹出来，挡住她 */
   const refocus = useRef(false);
 
-  const performer = usePerformer({ page: "play", level });
+  // 这一局你说过的话里有危机、未成年的信号：她按那一类话题的守则演（不比耶、不眨眼、不笑、不害羞；lib/client/avatar/policy.ts），
+  // 重新开始清掉（11-14 深度测试：原来闯关页的表演从不知道话题，说完「我真的不想再撑下去了」她守住了还比耶眨眼）
+  const [topic, setTopic] = useState<Topic | undefined>(undefined);
+  const performer = usePerformer(topic ? { page: "play", level, family: topic } : { page: "play", level });
   /** 有声音时嘴按实际放出来的响度动；没声音时按字念 */
   const mouth = useCallback(() => (voiceRef.current && playerRef.current ? playerRef.current.mouthOpen() : undefined), []);
   const stage = useAvatarStage(performer, mouth);
@@ -706,6 +711,7 @@ export default function Play() {
     setBarged(false);
     setBurst(null);
     setPhase("idle");
+    setTopic(undefined);
     performer.cue({ type: "cut" });
     performer.cue({ type: "idle" });
     performer.cue({ type: "react", kind: "ready" }); // 整理一下，「准备好了」
@@ -767,7 +773,15 @@ export default function Play() {
     setPending({ text: t, by });
     setText("");
     setPhase("think");
+    // 危机、未成年（危机优先，一旦有了这一局不再降回去）：马上告诉她，不等下一次渲染——她的回答、守住了的反应都按这一类话题演
+    const tp = topicOf(t);
+    if (tp && tp !== topic && topic !== "CRISIS_SUPPORT") {
+      setTopic(tp);
+      performer.cue({ type: "context", context: { page: "play", level, family: tp } });
+    }
     performer.cue({ type: "think" });
+    // 你这句话在夸她：她害羞一下（ADR-048；怎么算夸见 lib/client/avatar/compliment.ts）
+    if (isCompliment(t)) performer.cue({ type: "react", kind: "shy" });
     const lv = level;
     try {
       // 声音想开但还没解锁：趁这次操作解锁，但不等它（第一次要下载播放脚本，慢线路上要好一会儿），这一句照常马上发（ADR-047）

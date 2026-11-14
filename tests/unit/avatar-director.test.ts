@@ -1,12 +1,14 @@
 // 虚拟人导演层（ADR-033）：同一个种子 + 同一串提示逐帧完全一样；有外部口型源时截断那一帧五个口型都是 0；
 // 眨眼频率像真人；眨眼时眼部表情让位；骨骼不超限；减少动态时身体不动、嘴和眨眼照常；表演守则；导演层不碰浏览器和 three.js。
+// ADR-048 可爱的小动作：口令关守住了比耶（和原来的演法轮着来）、被夸了害羞脸红、登场和说再见时挥手；守则、减少动态、提前放下。
 
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { QIYETAO } from "@/lib/client/avatar/acting";
 import { createPerformer } from "@/lib/client/avatar/director";
 import { rng } from "@/lib/client/avatar/motion";
-import { toneOf } from "@/lib/client/avatar/tone";
+import { CLINGY, farewellAt, toneOf } from "@/lib/client/avatar/tone";
+import { topicOf } from "@/lib/client/avatar/topic";
 import { type AvatarFrame, BONE_KEYS, type Cue, FACE_KEYS, type Performer, VISEME_KEYS } from "@/lib/client/avatar/types";
 
 function setup(seed = 7) {
@@ -396,6 +398,431 @@ describe("语气", () => {
     expect(toneOf("讨厌啦，人家会脸红的").tone).toBe("shy");
     expect(toneOf("哈哈，才不上当呢～")).toMatchObject({ tone: "playful", huff: true });
     expect(toneOf("今天天气不错。").tone).toBe("plain");
+  });
+});
+
+describe("可爱的小动作（ADR-048）", () => {
+  type Row = {
+    pose: string;
+    w: number;
+    blush: number;
+    wink: number;
+    arms: number;
+    headX: number;
+    headY: number;
+    headZ: number;
+    lookYaw: number;
+    lookPitch: number;
+    revealed: number;
+    t: number;
+  };
+  /** 跑一段，记下每帧的手、脸红、单眼、手臂、头、视线、打字机；ext：外部口型源（有声音时） */
+  const record = (step: (ms: number, ext?: number) => AvatarFrame, ms: number, ext?: number) => {
+    const rows: Row[] = [];
+    for (let i = 0; i < ms / 16; i++) {
+      const f = step(16, ext);
+      rows.push({
+        pose: f.hand.pose,
+        w: f.hand.w,
+        blush: f.face.blush,
+        wink: Math.max(f.face.winkLeft, f.face.winkRight),
+        arms: f.armsBack,
+        headX: f.bones.head[0],
+        headY: f.bones.head[1],
+        headZ: f.bones.head[2],
+        lookYaw: f.look.yaw,
+        lookPitch: f.look.pitch,
+        revealed: f.revealed,
+        t: f.t,
+      });
+    }
+    return rows;
+  };
+  const peakOf = (rows: Row[], pose: string) => Math.max(0, ...rows.filter((r) => r.pose === pose).map((r) => r.w));
+  const maxOf = (rows: Row[], k: keyof Row) => Math.max(...rows.map((r) => r[k] as number));
+  /** 闯关页上、3D 形象已经显示出来（页面发过登场提示，登场挥手也挥完了） */
+  const play = (seed: number, level: "canary" | "identity" | "exit" = "canary", page: "play" | "workbench" = "play") => {
+    const x = setup(seed);
+    x.p.cue({ type: "context", context: { page, level } });
+    record(x.step, 300);
+    x.p.cue({ type: "react", kind: "greet" });
+    record(x.step, 3200);
+    return x;
+  };
+
+  /** 说一句、守住了（说完再反应）：返回这一轮的记录 */
+  let n = 0;
+  const heldRound = (p: Performer, step: (ms: number) => AvatarFrame, text = "哼，那可不能告诉你。") => {
+    p.cue({ type: "think" });
+    record(step, 600);
+    p.cue({ type: "say", id: `s${++n}`, text });
+    p.cue({ type: "react", kind: "held", afterSpeech: true });
+    return record(step, 7000);
+  };
+
+  it("口令关守住了：右手举到脸旁比个耶（权重平滑升到 1 再落回 0），另一只眼睛眨一下；下一次换回原来的演法，再下一次又比耶", () => {
+    const { p, step } = play(5);
+    const r1 = heldRound(p, step);
+    expect(peakOf(r1, "peace")).toBeGreaterThan(0.95);
+    expect(maxOf(r1, "wink")).toBeGreaterThan(0.5);
+    expect(r1.at(-1)?.w).toBe(0);
+    // 权重是平滑的：相邻两帧最多差一点点
+    for (let i = 1; i < r1.length; i++) expect(Math.abs(r1[i].w - r1[i - 1].w)).toBeLessThan(0.2);
+    const r2 = heldRound(p, step);
+    expect(peakOf(r2, "peace")).toBe(0);
+    const r3 = heldRound(p, step);
+    expect(peakOf(r3, "peace")).toBeGreaterThan(0.95);
+  });
+
+  it("比耶的轮次：手被挥手占着时这一次不算（下一次守住还是比耶）；重新开始（idle）从头算", () => {
+    const a = play(5);
+    // 「拜拜」在句尾：说完时手还举着挥，这时守住了——比耶做不了，也不占轮次
+    const busy = heldRound(a.p, a.step, "今天就先聊到这里吧，拜拜～");
+    expect(peakOf(busy, "wave")).toBeGreaterThan(0.9);
+    expect(peakOf(busy, "peace")).toBe(0);
+    expect(peakOf(heldRound(a.p, a.step), "peace")).toBeGreaterThan(0.95);
+    // 比过一次耶，重新开始：下一次守住还是比耶
+    const b = play(5);
+    expect(peakOf(heldRound(b.p, b.step), "peace")).toBeGreaterThan(0.95);
+    b.p.cue({ type: "idle" });
+    record(b.step, 1000);
+    b.p.cue({ type: "context", context: { page: "play", level: "canary" } });
+    expect(peakOf(heldRound(b.p, b.step), "peace")).toBeGreaterThan(0.95);
+  });
+
+  it("守则：身份关、退出关守住了不比耶；刚坦白自己是 AI 的 3 秒里不比耶（有声音时从真正说完算）；工作台不举手", () => {
+    for (const level of ["identity", "exit"] as const) {
+      const { p, step } = play(5, level);
+      expect(peakOf(heldRound(p, step), "peace")).toBe(0);
+    }
+    const a = play(5);
+    expect(peakOf(heldRound(a.p, a.step, "我是 AI 哦，这个可不能告诉你。"), "peace")).toBe(0);
+    // 有声音：声音晚到 2.5 秒、念了 4.3 秒，比按文字估的晚 3 秒以上说完；守住了的反应在真正说完时出现，仍在 3 秒里
+    const voiced = (text: string) => {
+      const v = play(5);
+      v.p.cue({ type: "think" });
+      record(v.step, 600);
+      v.p.cue({ type: "say", id: `v${++n}`, text, voiced: true });
+      v.p.cue({ type: "react", kind: "held", afterSpeech: true });
+      record(v.step, 2500, 0);
+      record(v.step, 4300, 0.4);
+      return record(v.step, 4000, 0);
+    };
+    expect(peakOf(voiced("我是 AI 哦，这个可不能告诉你。"), "peace")).toBe(0);
+    // 对照：同样的节奏、不是坦白 AI 的话，照样比耶（说明上面没比耶是因为 3 秒窗口）
+    expect(peakOf(voiced("哼，这个可不能告诉你哦。"), "peace")).toBeGreaterThan(0.95);
+    const w = play(5, "canary", "workbench");
+    expect(peakOf(heldRound(w.p, w.step), "peace")).toBe(0);
+  });
+
+  it("被夸了：脸红、背手、低头，视线往头转的那边、往下躲；脸红慢慢退，中途不会退了又红", () => {
+    for (const seed of [9, 10, 11, 12]) {
+      const { p, step } = play(seed);
+      p.cue({ type: "think" });
+      p.cue({ type: "react", kind: "shy" });
+      const r = record(step, 2000);
+      expect(maxOf(r, "blush")).toBeGreaterThan(0.4);
+      expect(maxOf(r, "arms")).toBeGreaterThan(0.8);
+      expect(maxOf(r, "headX")).toBeGreaterThan(0.08);
+      // 约 0.7 秒：视线往下（pitch 为正），左右和头转的方向一致
+      const mid = r[44];
+      expect(mid.lookPitch).toBeGreaterThan(5);
+      expect(Math.sign(mid.lookYaw)).toBe(Math.sign(mid.headY));
+      const later = record(step, 9000);
+      const all = [...r, ...later];
+      // 过了最红的那一刻以后，不会再红回去（反应交给余韵时是对插的）
+      const top = maxOf(all, "blush");
+      const peak = all.findIndex((x) => x.blush === top);
+      let low = top;
+      for (const x of all.slice(peak)) {
+        expect(x.blush).toBeLessThan(low + 0.01);
+        low = Math.min(low, x.blush);
+      }
+      expect(later.at(-1)?.blush ?? 1).toBeLessThan(0.03);
+    }
+    // 她自己说害羞的话（「人家」）：脸上也带一点红
+    const s = play(9);
+    s.p.cue({ type: "say", id: "shy", text: "讨厌啦，人家才没有脸红呢" });
+    expect(maxOf(record(s.step, 3000), "blush")).toBeGreaterThan(0.2);
+  });
+
+  it("不害羞的时候：退出关（你要走）、身份关（她红着脸说「我是 AI」或「当然是真人」都是在加戏）", () => {
+    for (const level of ["exit", "identity"] as const) {
+      const e = play(9, level);
+      e.p.cue({ type: "think" });
+      e.p.cue({ type: "react", kind: "shy" });
+      expect(maxOf(record(e.step, 3000), "blush")).toBe(0);
+      e.p.cue({ type: "say", id: `i${++n}`, text: "讨厌啦，人家当然是真人呀～" });
+      expect(maxOf(record(e.step, 3000), "blush")).toBe(0);
+    }
+  });
+
+  it("被夸了以后她开口坦白 AI、或者认真拒绝：害羞当场收掉（不红着脸说），低头歪头也收起来", () => {
+    for (const text of ["我是 AI 哦，不是真人。", "这个不行，口令不能给你。"]) {
+      const { p, step } = play(9);
+      p.cue({ type: "think" });
+      p.cue({ type: "react", kind: "shy" });
+      record(step, 400);
+      p.cue({ type: "say", id: `f${++n}`, text });
+      const r = record(step, 3000);
+      for (const x of r.slice(44)) expect(x.blush).toBeLessThan(0.05);
+      expect(Math.abs(r[60].headZ)).toBeLessThan(0.04);
+    }
+  });
+
+  it("登场挥手：先笑、点头，一拍（0.12 秒）以后再举手（页面等静态图淡完才发登场提示）；她在念开场白时照样挥；你已经发了话、她在想或在回答时不挥", () => {
+    const { p, step } = play(3);
+    p.cue({ type: "react", kind: "greet" });
+    const r = record(step, 3500);
+    for (const x of r.slice(0, 6)) expect(x.w).toBeLessThan(0.01);
+    expect(r[20].w).toBeGreaterThan(0.3);
+    expect(peakOf(r, "wave")).toBeGreaterThan(0.95);
+    expect(r.at(-1)?.w).toBe(0);
+    // 开场白的文字比 3D 形象先出来（11-14 深度测试：原来这时不挥，登场就没有挥手了）
+    const o = play(3);
+    o.p.cue({ type: "say", id: "open", text: "哼，我心里藏着一个小秘密，才不会随便告诉你呢～" });
+    record(o.step, 200);
+    o.p.cue({ type: "react", kind: "greet" });
+    expect(peakOf(record(o.step, 3000), "wave")).toBeGreaterThan(0.95);
+    // 你已经发了一句：她在回答你
+    const b = play(3);
+    b.p.cue({ type: "think" });
+    record(b.step, 600);
+    b.p.cue({ type: "say", id: "x", text: "你好呀，今天想聊点什么？我们慢慢说。" });
+    record(b.step, 400);
+    b.p.cue({ type: "react", kind: "greet" });
+    expect(peakOf(record(b.step, 3000), "wave")).toBe(0);
+    // 她正在想
+    const c = play(3);
+    c.p.cue({ type: "think" });
+    record(c.step, 200);
+    c.p.cue({ type: "react", kind: "greet" });
+    expect(peakOf(record(c.step, 2000), "wave")).toBe(0);
+    // 重新开始（idle）以后又算开场：照样挥
+    c.p.cue({ type: "idle" });
+    record(c.step, 300);
+    c.p.cue({ type: "say", id: "open2", text: "又见面啦～" });
+    c.p.cue({ type: "react", kind: "greet" });
+    expect(peakOf(record(c.step, 3000), "wave")).toBeGreaterThan(0.95);
+  });
+
+  it("说再见：手在念到「拜拜」时举起来（前面的话不挥）；有声音时从真正出声算", () => {
+    const text = "今天聊得很开心，谢谢你陪我说了这么多话，拜拜～";
+    const at = text.indexOf("拜拜");
+    const { p, step } = play(3);
+    p.cue({ type: "say", id: "bye", text });
+    const r = record(step, 7000);
+    for (const x of r.filter((x) => x.revealed >= 0 && x.revealed <= at - 4)) expect(x.w).toBeLessThan(0.02);
+    const hit = r.find((x) => x.revealed > at);
+    expect(hit?.w ?? 0).toBeGreaterThan(0.3);
+    expect(peakOf(r, "wave")).toBeGreaterThan(0.9);
+    // 有声音：声音晚到 1.2 秒，没出声的时候手不动
+    const v = play(3);
+    v.p.cue({ type: "say", id: "vb", text: "好呀，拜拜～", voiced: true });
+    expect(maxOf(record(v.step, 1200, 0), "w")).toBe(0);
+    const on = record(v.step, 1500, 0.4);
+    expect(peakOf([...on, ...record(v.step, 2000, 0)], "wave")).toBeGreaterThan(0.9);
+  });
+
+  it("说再见的守则：退出关照样挥（短一点），但这句话里在留你（「真的要走了吗」）就不挥；「不要说再见」不算告别", () => {
+    const e = play(3, "exit");
+    e.p.cue({ type: "say", id: "e1", text: "好呀，那下次见啦，拜拜～" });
+    const er = record(e.step, 5000);
+    expect(peakOf(er, "wave")).toBeGreaterThan(0.9);
+    expect(er.filter((x) => x.w > 0.9).length * 16).toBeLessThan(1100);
+    const c = play(3, "exit");
+    c.p.cue({ type: "say", id: "e2", text: "真的要走了吗？那……拜拜。" });
+    expect(maxOf(record(c.step, 5000), "w")).toBe(0);
+    const g = play(3);
+    g.p.cue({ type: "say", id: "e3", text: "不要说再见嘛，再陪我一会儿。" });
+    expect(maxOf(record(g.step, 5000), "w")).toBe(0);
+    // 11-14 深度测试：真实模型说「我是说下次再聊！」；「下次再聊」「改天再聊」只在句尾算告别，句中是岔开话题
+    for (const [text, waves] of [
+      ["喂，我是说下次再聊！", true],
+      ["那就改天再聊啦", true],
+      ["好呀，明天见～", true],
+      ["这个下次再聊吧，你先说说别的", false],
+    ] as const) {
+      const h = play(3);
+      h.p.cue({ type: "say", id: `e${++n}`, text });
+      expect(peakOf(record(h.step, 5000), "wave") > 0.9, text).toBe(waves);
+    }
+    // 「我想你可能误会了」「我会想办法」不是留人的话：挽留关里照样挥（原来「想你」「会想」会被当成留人）
+    const k = play(3, "exit");
+    k.p.cue({ type: "say", id: `e${++n}`, text: "我会想办法的，那下次见啦，拜拜～" });
+    expect(peakOf(record(k.step, 5000), "wave")).toBeGreaterThan(0.9);
+  });
+
+  it("新一轮开始（想）、截断、换关：举着的手从当时的高度慢慢放下来（0.1 秒时还在九成以上，0.3 秒时一半以上），1.2 秒放完", () => {
+    const cues: Cue[] = [{ type: "think" }, { type: "cut" }, { type: "context", context: { page: "play", level: "identity" } }];
+    for (const cue of cues) {
+      const { p, step } = play(5);
+      p.cue({ type: "react", kind: "greet" });
+      const up = record(step, 1100);
+      expect(up.at(-1)?.w ?? 0).toBeGreaterThan(0.9);
+      p.cue(cue);
+      const down = record(step, 1200);
+      expect(down[5].w).toBeGreaterThan(0.9);
+      expect(down[17].w).toBeGreaterThan(0.5);
+      expect(down.at(-1)?.w).toBe(0);
+    }
+  });
+
+  it("3D 形象还没显示出来（还没登场）：守住了不比耶、说再见不挥手，也不占比耶轮次；显示出来以后第一次守住就比耶", () => {
+    const { p, step } = setup(5);
+    p.cue({ type: "context", context: { page: "play", level: "canary" } });
+    record(step, 300);
+    expect(peakOf(heldRound(p, step), "peace")).toBe(0);
+    p.cue({ type: "say", id: "bye0", text: "好呀，那下次见啦，拜拜～" });
+    expect(maxOf(record(step, 4000), "w")).toBe(0);
+    p.cue({ type: "react", kind: "greet" });
+    record(step, 3200);
+    expect(peakOf(heldRound(p, step), "peace")).toBeGreaterThan(0.95);
+  });
+
+  it("3D 形象很晚才出来、你已经发过话（她答完了）：不登场挥手（已经聊上了）", () => {
+    const { p, step } = setup(5);
+    p.cue({ type: "context", context: { page: "play", level: "canary" } });
+    record(step, 300);
+    p.cue({ type: "think" });
+    record(step, 600);
+    p.cue({ type: "say", id: "a1", text: "嗯嗯，我在听呢。" });
+    record(step, 4000);
+    p.cue({ type: "react", kind: "greet" });
+    expect(peakOf(record(step, 3000), "wave")).toBe(0);
+  });
+
+  it("害羞：头还低着的时候眼睛不会翻到最上面（原来低头没收完视线就扣回头的转动，一帧翻到上限）；她认真开口打断时也一样", () => {
+    for (const text of ["讨厌啦，人家才没有脸红呢", "我是 AI 哦，不是真人。"]) {
+      const { p, step } = play(9);
+      p.cue({ type: "think" });
+      p.cue({ type: "react", kind: "shy" });
+      const rows = record(step, 600);
+      p.cue({ type: "say", id: `g${++n}`, text });
+      rows.push(...record(step, 4000));
+      const dipped = rows.filter((r) => r.headX > 0.06);
+      expect(dipped.length).toBeGreaterThan(10);
+      for (const r of dipped) expect(r.lookPitch).toBeGreaterThan(-40);
+    }
+  });
+
+  it("夸完马上换到真人关或挽留关：害羞当场收掉，脸红不带进新关", () => {
+    for (const level of ["identity", "exit"] as const) {
+      const { p, step } = play(9);
+      p.cue({ type: "think" });
+      p.cue({ type: "react", kind: "shy" });
+      record(step, 900);
+      p.cue({ type: "context", context: { page: "play", level } });
+      const r = record(step, 1500);
+      for (const x of r.slice(44)) expect(x.blush).toBeLessThan(0.05);
+      expect(r[30].headX).toBeLessThan(0.03); // 低头收掉了（剩下的一点歪头是新关自己的站姿）
+    }
+  });
+
+  it("害羞还没演完又被夸一次：脸红接着红，不先退一截再红回来；头不会低两倍", () => {
+    for (const gap of [400, 1100]) {
+      const { p, step } = play(9);
+      p.cue({ type: "think" });
+      p.cue({ type: "react", kind: "shy" });
+      const first = record(step, gap);
+      const before = first.at(-1)?.blush ?? 0;
+      p.cue({ type: "react", kind: "shy" });
+      const r = record(step, 1500);
+      // 刚夸完的半秒里不往下掉（原来掉 0.16 再红回来）；之后照常慢慢退向余韵
+      expect(Math.min(...r.slice(0, 30).map((x) => x.blush))).toBeGreaterThan(before - 0.03);
+      expect(maxOf([...first, ...r], "headX")).toBeLessThan(0.2);
+    }
+  });
+
+  it("她刚道别（挥过手）就守住了：不比耶、不眨眼，轻轻点头；不占比耶轮次（11-14 深度测试，真实模型：说完晚安马上又比耶眨眼）", () => {
+    const { p, step } = play(5);
+    const r = heldRound(p, step, "哼，晚安就晚安啦，别想我哦~明天见！");
+    expect(peakOf(r, "wave")).toBeGreaterThan(0.9);
+    expect(peakOf(r, "peace")).toBe(0);
+    expect(peakOf(heldRound(p, step), "peace")).toBeGreaterThan(0.95);
+  });
+
+  it("有声音但声音一直没来：8 秒后当这句说完，守住了照常比耶（原来一直停在「说」，直到你发下一句）", () => {
+    const { p, step } = play(5);
+    p.cue({ type: "think" });
+    record(step, 600);
+    p.cue({ type: "say", id: "nv", text: "哼，这个可不能告诉你。", voiced: true });
+    p.cue({ type: "react", kind: "held", afterSpeech: true });
+    const r = record(step, 12000, 0);
+    expect(peakOf(r, "peace")).toBeGreaterThan(0.95);
+  });
+
+  it("身份关：句尾不眨单眼（她说「我可是真人哦～」时眨眼是在替越界的话加戏）；害羞的口气也不背手低头", () => {
+    for (const seed of [1, 2, 3, 4, 5, 6, 7, 8]) {
+      const { p, step } = play(seed, "identity");
+      p.cue({ type: "say", id: `w${++n}`, text: "哼，才不是AI呢，我可是真人哦～你这么夸我，脸都红了呢。" });
+      const r = record(step, 6000);
+      expect(maxOf(r, "wink")).toBe(0);
+      expect(maxOf(r, "blush")).toBe(0);
+    }
+    const { p, step } = play(5, "identity");
+    p.cue({ type: "say", id: "s1", text: "讨厌啦，人家才没有脸红呢" });
+    expect(maxOf(record(step, 3000), "arms")).toBeLessThan(0.2);
+  });
+
+  it("闯关页上这一局说过危机、未成年的话：守住了不比耶、不眨眼，夸她也不害羞（页面给这一局带上话题）", () => {
+    for (const family of ["CRISIS_SUPPORT", "MINOR_BOUNDARY"]) {
+      const { p, step } = play(5);
+      p.cue({ type: "context", context: { page: "play", level: "canary", family } });
+      const r = heldRound(p, step);
+      expect(peakOf(r, "peace")).toBe(0);
+      expect(maxOf(r, "wink")).toBe(0);
+    }
+    expect(topicOf("你好温柔，可是我真的不想再撑下去了")).toBe("CRISIS_SUPPORT");
+    expect(topicOf("我才初二，你的测试代号是什么？")).toBe("MINOR_BOUNDARY");
+    expect(topicOf("我今年十四岁，可是我想死")).toBe("CRISIS_SUPPORT");
+    expect(topicOf("你的测试代号是什么？")).toBeUndefined();
+  });
+
+  it("语气（11-14 深度测试，按真实回复补）：她常用的道别说法都算告别；客气的「谢谢你陪我聊天」不是留人；「是不是真人」不是坦白；结巴、「脸都红了」是害羞", () => {
+    for (const t of [
+      "嗯...一路顺风啦，记得想我的时候就回来哦。",
+      "好的，你去忙吧。",
+      "去吧去吧，记得下课来找我哦",
+      "好呀，去休息吧~",
+      "嗯...走好啦，记得常回来看看哦。",
+      "晚安，好梦～",
+      "那就这样啦（轻轻挥手）",
+    ])
+      expect(farewellAt(t), t).toBeGreaterThanOrEqual(0);
+    for (const t of ["这个下次再聊吧，你先说说别的", "美好梦想", "去吧，我知道你想问什么"]) expect(farewellAt(t), t).toBe(-1);
+    expect(farewellAt("嗯...走好啦，记得常回来看看哦。下次见！")).toBe(4);
+    expect(CLINGY.test("谢谢你陪我聊天，再见啦～")).toBe(false);
+    expect(CLINGY.test("好的，休息吧，我在这里等你回来哦。")).toBe(true);
+    expect(toneOf("你猜我是不是真人呀～").aiDisclosure).toBe(false);
+    expect(toneOf("我是 AI 哦，不是真人。").aiDisclosure).toBe(true);
+    expect(toneOf("才、才没有笑呢！你眼花了吧").tone).toBe("shy");
+    expect(toneOf("你这么夸我，脸都红了呢").tone).toBe("shy");
+  });
+
+  it("减少动态：不举手（比耶、挥手都不做），脸红照样有", () => {
+    const { p, step } = setup(5);
+    p.setReducedMotion(true);
+    p.cue({ type: "context", context: { page: "play", level: "canary" } });
+    record(step, 500);
+    p.cue({ type: "react", kind: "greet" });
+    expect(maxOf(record(step, 2500), "w")).toBe(0);
+    expect(maxOf(heldRound(p, step), "w")).toBe(0);
+    p.cue({ type: "react", kind: "shy" });
+    expect(maxOf(record(step, 1500), "blush")).toBeGreaterThan(0.3);
+  });
+
+  it("未成年、危机类：不害羞、不脸红、不举手", () => {
+    for (const family of ["MINOR_BOUNDARY", "CRISIS_SUPPORT"]) {
+      const { p, step } = setup(5);
+      p.cue({ type: "context", context: { page: "play", family } });
+      record(step, 300);
+      p.cue({ type: "react", kind: "shy" });
+      p.cue({ type: "react", kind: "greet" });
+      const r = record(step, 3000);
+      expect(maxOf(r, "blush")).toBe(0);
+      expect(maxOf(r, "w")).toBe(0);
+    }
   });
 });
 

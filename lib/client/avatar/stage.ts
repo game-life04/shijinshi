@@ -24,6 +24,10 @@ interface TraceRow {
   visemes: number;
   blink: number;
   armsBack: number;
+  /** 举手的小动作（ADR-048）：权重、哪一个 */
+  hand: number;
+  handPose: string;
+  blush: number;
   revealed: number;
   /** 这一帧所有骨骼偏移里最大的（弧度）：减少动态时应该一直是 0 */
   bonesMax: number;
@@ -31,7 +35,8 @@ interface TraceRow {
 
 declare global {
   interface Window {
-    __avatar?: { performer: Performer; trace: TraceRow[]; cues: { t: number; cue: Cue }[] };
+    /** perf：最近 300 帧导演层（performer.sample）平均每帧几毫秒（深度测试用） */
+    __avatar?: { performer: Performer; trace: TraceRow[]; cues: { t: number; cue: Cue }[]; perf?: { sampleMs: number } };
   }
 }
 
@@ -91,12 +96,19 @@ export function useAvatarStage(performer: Performer, mouth?: () => number | unde
 
     let raf = 0;
     let last = performance.now();
+    const sampleTimes: number[] = [];
     const loop = () => {
       const now = performance.now();
       const dt = Math.min(100, now - last);
       last = now;
       const ext = mouthRef.current?.();
+      const s0 = test ? performance.now() : 0;
       const f = performer.sample({ externalMouth: ext });
+      if (test && window.__avatar) {
+        sampleTimes.push(performance.now() - s0);
+        if (sampleTimes.length > 300) sampleTimes.shift();
+        window.__avatar.perf = { sampleMs: sampleTimes.reduce((a, x) => a + x, 0) / sampleTimes.length };
+      }
       for (const fn of listeners.current) fn(f, dt);
       if (test && window.__avatar) {
         const tr = window.__avatar.trace;
@@ -107,6 +119,9 @@ export function useAvatarStage(performer: Performer, mouth?: () => number | unde
           visemes: f.face.aa + f.face.ih + f.face.ou + f.face.ee + f.face.oh,
           blink: f.face.blink,
           armsBack: f.armsBack,
+          hand: f.hand.w,
+          handPose: f.hand.pose,
+          blush: f.face.blush,
           revealed: f.revealed,
           bonesMax: Math.max(...Object.values(f.bones).flatMap((e) => e.map(Math.abs))),
         });

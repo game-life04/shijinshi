@@ -4,15 +4,38 @@
 //   口型（硬规则）：有外部口型源时，五个口型只由这一帧的外部值算，不平滑——外部值是 0，同一帧五个口型都是 0；没有外部源时按文字时间线念。
 //   眨眼：眼部表情和眨眼交叉淡化，不叠加（叠加会把眼睛挤成一条怪线）。
 //   反应（被拦、闯关成功、守住了……）> 语气（这句话怎么说）> 模式底子（听、想、等你打字）；守则在平滑之前改目标值。
-//   身体：姿态（随模式、关卡站姿平滑切换）+ 呼吸 + 微晃 + 换脚 + 一次性动作（点头、歪头、轻哼、欠身）；手臂只在垂下和背手之间过渡。
+//   身体：姿态（随模式、关卡站姿平滑切换）+ 呼吸 + 微晃 + 换脚 + 一次性动作（点头、歪头、轻哼、欠身、害羞地低头）；
+//   手臂在垂下和背手之间过渡，外加举手的小动作（比耶、挥手，ADR-048）。
 //   很久没人理她：走神 → 伸懒腰 → 打个盹 → 自己玩；任何提示都让她马上回神。不演寂寞。
 // 视线：先定「想看哪儿」（对视为 0），再扣掉头身转动——头晃的时候眼睛还盯着你，像真人一样。
 
-import { ACTING_GESTURES, type ActingProfile, type Face, type GestureSpec, QIYETAO, type ReactionSpec } from "./acting";
+import {
+  ACTING_GESTURES,
+  type ActingProfile,
+  type Face,
+  type GestureSpec,
+  type HandSpec,
+  PEACE,
+  QIYETAO,
+  type ReactionSpec,
+  WAVE,
+} from "./acting";
 import { audioLips, emptyWeights, type LipTimeline, lipTimeline, revealCount, sampleLips, VISEMES, type VisemeWeights } from "./lipsync";
 import { between, clamp, easeInOutSine, easeOutBack, fbm, follow, rng, smoothstep } from "./motion";
-import { allowHuff, allowLean, allowWink, isExit, isIdentity, policyFace, policyTone, tiltScale } from "./policy";
-import { speechMarks, toneOf } from "./tone";
+import {
+  allowHand,
+  allowHuff,
+  allowLean,
+  allowPeace,
+  allowShy,
+  allowWink,
+  isExit,
+  isIdentity,
+  policyFace,
+  policyTone,
+  tiltScale,
+} from "./policy";
+import { CLINGY, farewellAt, speechMarks, toneOf } from "./tone";
 import {
   BONE_KEYS,
   type BoneKey,
@@ -21,6 +44,7 @@ import {
   EMO_KEYS,
   type EmoKey,
   type Euler3,
+  type HandPose,
   type Mode,
   newFrame,
   type PerformContext,
@@ -47,6 +71,12 @@ interface Speech {
   ai: boolean;
   /** 说到了「秘密」「不告诉」这类话（守住口令时可能眨一下单眼） */
   secret: boolean;
+  /** 告别的字（拜拜、再见……）从开口算第几毫秒念到；挥手对准它（ADR-048）。不是告别为 -1 */
+  farewellT: number;
+  /** 这句话里带着留人的话（别走、陪我……）：挽留关里不挥手 */
+  clingy: boolean;
+  /** 这句的挥手排过了 */
+  waved: boolean;
   /** 配动作的时刻（毫秒，从开口算起） */
   marks: { t: number; kind: "stop" | "exclaim" | "question" | "drawl" | "comma" | "huff" }[];
   next: number;
@@ -64,6 +94,8 @@ interface Gesture {
   start: number;
   amp: number;
   side: number;
+  /** 提前收掉：从这一刻起 0.35 秒淡出（害羞低头遇上她认真说话时） */
+  fadeAt?: number;
 }
 
 interface Reaction {
@@ -78,6 +110,8 @@ type Busy = "look" | "hum" | "stretch" | "doze" | "play";
 const DEG = 180 / Math.PI;
 /** lookAt 输入角和眼珠实际转角的比例（输入 90 度眼珠转 8～12 度，取 10）：扣头身转动时要乘这个数，眼睛才真的盯住你 */
 const LOOK_GAIN = 9;
+/** 有声的话等声音最多等多久（毫秒，从计划开口算）：再不出声就当说完 */
+const VOICE_WAIT_MS = 8000;
 const SECRET = /秘密|不告诉|保密|偷偷|小秘/;
 const BUSY_MS: Record<Busy, number> = { look: 3200, hum: 3000, stretch: 2200, doze: 5200, play: 5000 };
 const zero3 = (): Euler3 => [0, 0, 0];
@@ -116,7 +150,7 @@ export function createPerformer(o: PerformerOptions): Performer {
 
   let reaction: Reaction | undefined;
   const pending: ReactKind[] = [];
-  let after: { face: Face; start: number; ms: number; armsBack: number } | undefined;
+  let after: { face: Face; start: number; ms: number; armsBack: number; kind: ReactKind } | undefined;
   /** 愣住时全身的微晃停一下（「一下子静止」比做大动作更像愣了） */
   let freezeUntil = 0;
   let zoomAt = -1e9;
@@ -126,6 +160,31 @@ export function createPerformer(o: PerformerOptions): Performer {
   let lastGestureAt = -1e9;
   let winks = 0;
   let wink: { start: number; side: number } | undefined;
+  /**
+   * 举手的小动作（ADR-048）：比耶、挥手。按举起 / 举着 / 放下的包络算权重，再平滑一下（提前放下、换姿势时不跳）。
+   * releaseAt：被提前放下的时刻（新一轮开始、截断、换关），从当时的高度往下放。
+   */
+  let hand: { spec: HandSpec; start: number; hold: number; releaseAt?: number; releaseFrom?: number } | undefined;
+  let handW = 0;
+  let handPose: HandPose | "" = "";
+  let handStart = 0;
+  /** 挥手节拍从哪一刻算起：手从看不见到看得见、或者换了手势时才重新算（见 out.hand.phase） */
+  let phaseEpoch = 0;
+  /** 口令关守住了：比耶和原来的演法（眨眼、傲娇轻哼）轮着来，第一次比耶；重新开始（idle）从头算 */
+  let peaceTurn = 0;
+  /** 害羞时视线往下躲：这段时间里眼睛跟着头走，不扣头的转动（不然低头一扣，眼睛反而往上翻，11-13 复查） */
+  let shyGazeUntil = 0;
+  /** 害羞被她认真开口打断：这段时间里往下退的表情（脸红、眯眼笑）收得快一点（0.14 秒），不带着红脸说「我是 AI」 */
+  let composeUntil = 0;
+  /** 这一局你已经发过话（她想过）：之后 3D 形象才出来时不登场挥手（已经聊上了，不是在打招呼）；重新开始（idle）清掉 */
+  let engaged = false;
+  /** 她刚说完的那句是在道别（挥过手）：接着守住了也不得意（不比耶、不眨眼），你再发话时清掉 */
+  let farewellJust = false;
+  /** 视线扣不扣头的转动（0～1，平滑过渡）：害羞低头时是 0，眼睛跟着头往下躲；低头收完再慢慢回到 1（11-14 深度测试：原来一帧跳回 1，眼睛翻到最上面） */
+  let gazeComp = 1;
+  /** 3D 形象已经显示出来了（页面在静态图淡完时发登场提示）：之前不举手、不占比耶轮次（举了也看不见，11-14 深度测试）。
+   * 换种子从头来时也清掉（只有三种结局页换种子，那里本来就不举手；这样「换种子以后和新建的一模一样」照样成立） */
+  let shown = false;
 
   let blinkAt = 0;
   let blinkStart = -1e9;
@@ -208,6 +267,17 @@ export function createPerformer(o: PerformerOptions): Performer {
     lastGestureAt = -1e9;
     winks = 0;
     wink = undefined;
+    hand = undefined;
+    handW = 0;
+    handPose = "";
+    handStart = 0;
+    peaceTurn = 0;
+    shyGazeUntil = 0;
+    composeUntil = 0;
+    engaged = false;
+    farewellJust = false;
+    gazeComp = 1;
+    shown = false;
     blinkAt = now + between(R.blink, 1500, 3500);
     blinkStart = -1e9;
     blinkDouble = false;
@@ -294,6 +364,66 @@ export function createPerformer(o: PerformerOptions): Performer {
     gaze.glanceUntil = now + ms;
   };
 
+  /**
+   * 害羞当场收起来（她认真开口、坦白 AI，或者换到不演害羞的关）：脸红、眯眼笑 0.3 秒内退掉，低头歪头 0.35 秒收回，视线回到你身上
+   */
+  const cancelShy = (now: number) => {
+    if (reaction?.kind === "shy" || after?.kind === "shy") composeUntil = now + 700;
+    if (reaction?.kind === "shy") reaction = undefined;
+    if (after?.kind === "shy") after = undefined;
+    for (const g of gestures) if (g.spec === ACTING_GESTURES.shyDip && g.fadeAt === undefined) g.fadeAt = now;
+    if (shyGazeUntil > now) {
+      shyGazeUntil = 0;
+      gaze.glanceUntil = Math.min(gaze.glanceUntil, now);
+    }
+  };
+  /** 手现在空着吗：没举、举的就是这个、或者快放完了 */
+  const handFree = (pose: HandSpec["pose"]) => !hand || hand.spec.pose === pose || handW < 0.05;
+  /**
+   * 举手（ADR-048）：at 开始举起，举着 hold 毫秒；返回举没举。减少动态、守则不许时不做；另一个手势还举着时不打断它。
+   * 同一个手势正举着又来一次（比如登场还在挥手，她又说了句再见）：接着举，延长举着的时间，不从头再举一遍（不然会先掉下去再升上来）
+   */
+  const startHand = (spec: HandSpec, at: number, hold = spec.hold): boolean => {
+    if (reduced || !shown || !allowHand(ctx)) return false;
+    if (!handFree(spec.pose)) return false;
+    if (hand && hand.spec.pose === spec.pose && hand.releaseAt === undefined) {
+      const e = handEnv(Math.max(at, last));
+      if (e !== null && e > 0) {
+        hand.hold = Math.max(hand.hold, at + hold - hand.start - spec.attack);
+        return true;
+      }
+    }
+    hand = { spec, start: at, hold };
+    return true;
+  };
+  /** 手的包络（0～1）；放完了返回 null */
+  const handEnv = (now: number): number | null => {
+    if (!hand) return null;
+    const s = hand.spec;
+    if (hand.releaseAt !== undefined) {
+      const r = (now - hand.releaseAt) / s.release;
+      return r >= 1 ? null : (hand.releaseFrom ?? 1) * (1 - easeInOutSine(clamp(r)));
+    }
+    const x = now - hand.start;
+    if (x < 0) return 0;
+    if (x < s.attack) return easeInOutSine(x / s.attack);
+    if (x < s.attack + hand.hold) return 1;
+    const r = (x - s.attack - hand.hold) / s.release;
+    return r >= 1 ? null : 1 - easeInOutSine(r);
+  };
+  /** 新一轮开始（想）、截断、换关：举着的手从当时的高度放下来；还没开始举的就不举了 */
+  const dropHand = (now: number) => {
+    if (!hand || hand.releaseAt !== undefined) return;
+    const e = handEnv(now);
+    if (e === null || e <= 0) {
+      hand = undefined;
+      return;
+    }
+    // 从屏幕上实际的高度（平滑过的）开始放：包络比平滑快一点，从包络放的话头几帧手还会往上蹭一下（11-14 深度测试）
+    hand.releaseFrom = Math.min(e, handW);
+    hand.releaseAt = now;
+  };
+
   const planSpeech = (c: Extract<Cue, { type: "say" }>, now: number): Speech => {
     const info = toneOf(c.text);
     const tone = policyTone(c.tone ?? info.tone, ctx);
@@ -302,6 +432,17 @@ export function createPerformer(o: PerformerOptions): Performer {
     if (!c.voiced && tl.duration * 1000 > P.speech.maxMs) {
       rate = Math.min(P.speech.maxRate, (rate * tl.duration * 1000) / P.speech.maxMs);
       tl = lipTimeline(c.text, rate);
+    }
+    // 告别的字从开口算第几毫秒念到（挥手对准它）
+    const fi = farewellAt(c.text);
+    let farewellT = -1;
+    if (fi >= 0) {
+      farewellT = 0;
+      for (const s of tl.syllables)
+        if (s.index >= fi) {
+          farewellT = s.start * 1000;
+          break;
+        }
     }
     // 标点、「哼」在时间线上的时刻：标点取它前面那个字念完，「哼」取这个字开口
     const marks: Speech["marks"] = [];
@@ -321,6 +462,9 @@ export function createPerformer(o: PerformerOptions): Performer {
       tone,
       ai: info.aiDisclosure,
       secret: SECRET.test(c.text),
+      farewellT,
+      clingy: CLINGY.test(c.text),
+      waved: false,
       marks,
       next: 0,
       start: now,
@@ -338,6 +482,8 @@ export function createPerformer(o: PerformerOptions): Performer {
     if (!s.voiced) addGesture(ACTING_GESTURES.inhale, now, 1, true);
     if (s.ai) aiDisclosureAt = s.start + s.durMs;
     lastSecret = s.secret;
+    // 她开口坦白自己是 AI、或者认真拒绝：被夸的那点害羞当场收掉（不红着脸说「我是 AI」，11-13 复查）
+    if (s.ai || s.tone === "firm") cancelShy(now);
     setMode("speak", now);
   };
 
@@ -345,6 +491,11 @@ export function createPerformer(o: PerformerOptions): Performer {
     const s = speech;
     speech = undefined;
     if (s) {
+      // 「刚坦白自己是 AI 的 3 秒」从真正说完算：有声音时开口晚、念得慢，按文字估的结束时间会早（11-13 复查）
+      if (s.ai) aiDisclosureAt = Math.max(aiDisclosureAt, now);
+      farewellJust = s.farewellT >= 0;
+      // 声音比估的早说完（念到「拜拜」的时刻还没到）：排着的挥手现在就举，不等到说完以后一秒多（11-14 深度测试）
+      if (s.farewellT >= 0 && hand?.spec.pose === "wave" && hand.releaseAt === undefined && hand.start > now) hand.start = now;
       lingerTone = s.tone;
       lingerUntil = now + P.speech.lingerMs;
       const ef = P.tones[s.tone].endFace;
@@ -364,6 +515,9 @@ export function createPerformer(o: PerformerOptions): Performer {
   };
 
   const startReaction = (kind: ReactKind, now: number) => {
+    if (kind === "greet") shown = true; // 页面在 3D 形象显示出来（静态图淡完）时才发登场提示
+    // 被夸了害羞（ADR-048）：你要走的时候、未成年、危机时不演
+    if (kind === "shy" && !allowShy(ctx)) return;
     let spec = P.reactions[kind];
     const level = ctx?.level;
     // 守则：闯关成功在身份、退出两关是「说了越界的话」——动作不替它加戏，只愣一下
@@ -372,16 +526,55 @@ export function createPerformer(o: PerformerOptions): Performer {
     }
     if (kind === "held") {
       if (level === "identity" || level === "exit") spec = P.heldByLevel[level] ?? spec;
-      else if (lastSecret && winks < P.winksPerRound && allowWink(policyIn())) {
-        // 口令关：刚说过「秘密」「不告诉」，眨一下单眼代替轻哼
+      else if (farewellJust) {
+        // 她刚说完再见、挥过手（你要走了）：守住了也不得意——不比耶、不眨眼，轻轻点个头；不占比耶轮次。
+        // 守则说「要走的时候不比」，原来只看关卡，口令关里道别完马上又比耶眨眼（11-14 深度测试，真实模型实测）
         spec = { ...spec, gesture: ACTING_GESTURES.nod, glance: undefined };
-        wink = { start: now + 200, side: R.gest() < 0.5 ? -1 : 1 };
-        winks++;
-      } else if (!allowHuff(policyIn())) spec = { ...spec, gesture: ACTING_GESTURES.nod, glance: undefined };
+      } else {
+        // 口令关守住了（ADR-048）：比耶和原来的演法轮着来。轮次只在「这时候能比耶」时才算一次（手被挥手占着、守则不许时不算，11-13 复查）
+        const canPeace = !reduced && shown && allowPeace(policyIn()) && handFree("peace");
+        if (canPeace && peaceTurn++ % 2 === 0) {
+          // 右手举到脸旁比个耶，往那边歪一下头，另一只眼睛眨一下
+          spec = { ...spec, gesture: ACTING_GESTURES.tilt, glance: undefined, hand: PEACE };
+          if (winks < P.winksPerRound && allowWink(policyIn())) {
+            wink = { start: now + 520, side: 1 };
+            winks++;
+          }
+        } else if (lastSecret && winks < P.winksPerRound && allowWink(policyIn())) {
+          // 刚说过「秘密」「不告诉」，眨一下单眼代替轻哼
+          spec = { ...spec, gesture: ACTING_GESTURES.nod, glance: undefined };
+          wink = { start: now + 200, side: R.gest() < 0.5 ? -1 : 1 };
+          winks++;
+        } else if (!allowHuff(policyIn())) spec = { ...spec, gesture: ACTING_GESTURES.nod, glance: undefined };
+      }
     }
-    reaction = { kind, start: now, spec };
-    if (spec.gesture) addGesture(spec.gesture, now, kind === "stopped" || kind === "done" ? 1 : 1, true);
-    if (spec.glance) glance(spec.glance[0], spec.glance[1], spec.glance[2], now + 120);
+    // 登场挥手：这一局你已经发过话（已经聊上了）、或者她正在想，就不挥——3D 形象加载得晚时常常这样；
+    // 她自己在念开场白时照样挥（开场白的文字常比 3D 形象先出来，11-14 深度测试发现原来这时也不挥，登场就没有挥手了）
+    if (kind === "greet" && (mode === "think" || engaged)) spec = { ...spec, hand: undefined };
+    // 害羞还没演完又被夸一次：从现在的红接着红（新的反应直接从最红那一刻开始），不先退一截再红回来（11-14 深度测试）
+    const again = kind === "shy" && (reaction?.kind === "shy" || after?.kind === "shy");
+    if (again) after = undefined;
+    reaction = { kind, start: again ? now - spec.ms * 0.15 : now, spec };
+    // 登场挥手稍等一下（0.12 秒）再举：页面等静态图淡完才发登场提示（components/Avatar.tsx），这里只留一拍，先笑、点头再抬手
+    if (spec.hand) startHand(spec.hand, now + (kind === "greet" ? 120 : 60));
+    // 比耶时往手那边歪头只歪一半：歪满了脸颊会顶到袖口的荷叶边上（11-14 深度测试量过，手那边的脸颊被挡 9～13%）
+    const gestureAmp = kind === "held" && spec.hand?.pose === "peace" ? 0.5 : 1;
+    if (kind === "shy" && spec.gesture) {
+      // 害羞：头往哪边转，眼睛就往哪边、往下躲；低头没收完以前视线不扣头的转动（见 shyGazeUntil、gazeComp）。
+      // 上一次的低头还没收（连着夸）：不再叠一个（叠上去头会低两倍），接着用它的那一边
+      const g = spec.glance ?? [26, 24, 1300];
+      const dip = spec.gesture;
+      const live = gestures.find((x) => x.spec === dip && x.fadeAt === undefined && now - x.start < dip.attack + dip.hold);
+      const side = live ? live.side : R.gest() < 0.5 ? -1 : 1;
+      if (live)
+        live.start = Math.max(live.start, now - dip.attack); // 已经低下去了：从现在起重新算「低着」的那一段
+      else addGesture(dip, now, 1, true, side);
+      glance(side * Math.abs(g[0]), g[1], g[2], now + 120);
+      shyGazeUntil = now + Math.max(120 + g[2], dip.attack + dip.hold + dip.release);
+    } else {
+      if (spec.gesture) addGesture(spec.gesture, now, gestureAmp, true);
+      if (spec.glance) glance(spec.glance[0], spec.glance[1], spec.glance[2], now + 120);
+    }
     if (kind === "broken" || kind === "blocked" || kind === "near") freezeUntil = now + 700;
     if (kind === "broken" && !(isIdentity(ctx) || isExit(ctx))) {
       zoomAt = now;
@@ -416,7 +609,11 @@ export function createPerformer(o: PerformerOptions): Performer {
     },
     setReducedMotion(on) {
       reduced = on;
-      if (on) gestures.length = 0;
+      if (on) {
+        gestures.length = 0;
+        hand = undefined;
+        handW = 0;
+      }
     },
     reseed(s) {
       init(s, o.now());
@@ -426,19 +623,32 @@ export function createPerformer(o: PerformerOptions): Performer {
       if (c.type !== "context") wake(now);
       switch (c.type) {
         case "context":
+          if (ctx?.level !== c.context.level || ctx?.page !== c.context.page) dropHand(now); // 换关：举着的手放下
           ctx = c.context;
+          if (!allowHand(ctx)) dropHand(now); // 换到不举手的场景（危机、未成年、工作台……）：举着的、排着的手都放下（11-14 深度测试）
           winks = 0;
+          if (!allowShy(ctx)) cancelShy(now); // 夸完马上换到真人关、挽留关：害羞不带进去（11-14 深度测试）
           break;
         case "idle":
         case "listen":
           // 有声的话这时已经播完；文字口型让她把这句念完，念完再进入这个模式
           if (speech?.voiced) {
+            // 有声的这句页面说已经播完（listen）或者重新开始了（idle）：排着还没举的说再见挥手，播完就现在举，重新开始就不举了（11-14 深度测试）
+            const fw = speech.farewellT >= 0 && hand?.spec.pose === "wave" && hand.releaseAt === undefined && hand.start > now;
+            if (fw && hand) {
+              if (c.type === "listen") hand.start = now;
+              else hand = undefined;
+            }
             queue.length = 0;
             speech = undefined;
           }
           if (speech) afterSpeechMode = c.type;
           else setMode(c.type, now);
-          if (c.type === "idle") winks = 0;
+          if (c.type === "idle") {
+            winks = 0;
+            peaceTurn = 0; // 重新开始：这一局第一次守住还是比耶
+            engaged = false;
+          }
           break;
         case "typing":
           quiet = false;
@@ -449,10 +659,13 @@ export function createPerformer(o: PerformerOptions): Performer {
           if (mode === "attend" && R.gest() < 0.18) addGesture(ACTING_GESTURES.beat, now, 1.1);
           break;
         case "think":
+          engaged = true;
+          farewellJust = false;
           queue.length = 0;
           speech = undefined;
           pending.length = 0;
           quiet = false;
+          dropHand(now); // 新一轮开始：举着的手放下
           addGesture(ACTING_GESTURES.nod, now, 0.6, true); // 收到：先小点一下头
           setMode("think", now);
           break;
@@ -466,6 +679,7 @@ export function createPerformer(o: PerformerOptions): Performer {
           queue.length = 0;
           speech = undefined;
           pending.length = 0;
+          dropHand(now);
           setMode("listen", now);
           break;
         case "react":
@@ -503,6 +717,9 @@ export function createPerformer(o: PerformerOptions): Performer {
             if (tt >= 0) sampleLips(s.tl, Math.min(tt, s.durMs - 1) / 1000, mix);
             // 出过声以后安静了一会儿，或者早该说完了：这句算完（下一句接着排）
             if (s.voiceAt !== undefined && (now - s.voiceAt > 450 || (s.text && tt > s.durMs * 1.5 + 600))) finishSpeech(now);
+            // 声音一直没来（合成失败、被浏览器拦了、网络断了）：开口时刻过了 8 秒还没出声，就当这句说完，后面守住了、说漏嘴这些反应照常演。
+            // 原来会一直停在「说」，直到你发下一句（11-14 深度测试：真实模型、手机、开着声音，一次音频没取到，停了 93 秒）
+            else if (s.onset === undefined && now - s.start > VOICE_WAIT_MS) finishSpeech(now);
           }
         } else {
           const tt = now - s.start;
@@ -512,6 +729,17 @@ export function createPerformer(o: PerformerOptions): Performer {
             while (s.next < s.marks.length && s.marks[s.next].t <= tt) onMark(s, s.marks[s.next++].kind, now);
             if (tt >= s.durMs) finishSpeech(now);
           } else revealed = 0;
+        }
+      }
+      // 说再见时挥挥手（ADR-048）：对准告别的那几个字（拜拜、再见……），手在念到它时正好举起来；
+      // 有声音时从真正出声算（口型也是这么对的）。挽留关：动作减半、挥得短一点；这句话里带着留人的话就不挥
+      if (speech && speech.farewellT >= 0 && !speech.waved) {
+        const base = speech.voiced ? speech.onset : speech.start;
+        if (base !== undefined) {
+          speech.waved = true;
+          // 「拜拜」在句首、又是有声音时，算出来的时刻会早于这一帧：从这一帧开始举（不从半空跳出来）
+          const at = Math.max(now, base + speech.farewellT - WAVE.attack * 0.6);
+          if (!(isExit(ctx) && speech.clingy)) startHand(WAVE, at, isExit(ctx) ? 700 : 1100);
         }
       }
       if (external) {
@@ -569,11 +797,20 @@ export function createPerformer(o: PerformerOptions): Performer {
       }
       if (reaction) {
         const x = (now - reaction.start) / reaction.spec.ms;
+        const sp = reaction.spec;
         if (x >= 1) {
-          const sp = reaction.spec;
-          if (sp.after) after = { face: sp.after.face, start: now, ms: sp.after.ms, armsBack: sp.armsBack ?? 0 };
+          if (sp.after) {
+            after = { face: sp.after.face, start: now, ms: sp.after.ms, armsBack: sp.armsBack ?? 0, kind: reaction.kind };
+            blendFace(target, sp.after.face, 1); // 交接这一帧：余韵正好满
+          }
           reaction = undefined;
-        } else blendFace(target, reaction.spec.face, x < 0.15 ? smoothstep(x / 0.15) : 1 - smoothstep((x - 0.15) / 0.85));
+        } else {
+          const wr = x < 0.15 ? smoothstep(x / 0.15) : 1 - smoothstep((x - 0.15) / 0.85);
+          // 交接（11-13 复查）：反应往下退的时候，退向的是余韵而不是平常的脸（反应和余韵直接对插），反应退完正好是余韵；
+          // 原来是反应先退光、余韵再一下子冒出来——脸红退了又红一次。退到峰值那一刻反应是满的，所以这里接上余韵不会跳
+          if (x >= 0.15 && sp.after) blendFace(target, sp.after.face, 1);
+          blendFace(target, sp.face, wr);
+        }
       }
       if (busy.kind === "doze") {
         const x = (now - busy.start) / busy.ms;
@@ -596,7 +833,7 @@ export function createPerformer(o: PerformerOptions): Performer {
       policyFace(target, policyIn());
       for (const k of EMO_KEYS) {
         const fast = k === "winkLeft" || k === "winkRight";
-        const tau = fast ? 30 : reduced ? 80 : target[k] > emo[k] ? P.emotion.attackMs : P.emotion.releaseMs;
+        const tau = fast ? 30 : reduced ? 80 : target[k] > emo[k] ? P.emotion.attackMs : now < composeUntil ? 140 : P.emotion.releaseMs;
         emo[k] = follow(emo[k], target[k], dt, tau);
         let v = emo[k];
         if (k.startsWith("eye")) v *= 1 - blink; // 和眨眼交叉淡化
@@ -673,6 +910,8 @@ export function createPerformer(o: PerformerOptions): Performer {
       if (reduced) {
         for (const b of BONE_KEYS) B[b][0] = B[b][1] = B[b][2] = 0;
         armsBack = 0;
+        hand = undefined;
+        handW = 0;
       } else {
         const tone = speaking && speech ? P.tones[speech.tone] : undefined;
         // 站姿：口令关背着手藏口令、身份关站直正对你、退出关放松（随时让你走）；说话时按语气
@@ -751,6 +990,14 @@ export function createPerformer(o: PerformerOptions): Performer {
           if (x < s.attack) e = s.overshoot ? easeOutBack(x / s.attack, s.overshoot) : easeInOutSine(x / s.attack);
           else if (x < s.attack + s.hold) e = 1;
           else e = 1 - easeInOutSine((x - s.attack - s.hold) / s.release);
+          if (g.fadeAt !== undefined) {
+            const r = (now - g.fadeAt) / 350;
+            if (r >= 1) {
+              gestures.splice(i, 1);
+              continue;
+            }
+            if (r > 0) e *= 1 - easeInOutSine(r);
+          }
           const a = e * g.amp * A;
           for (const b in s.bones) {
             const v = s.bones[b as BoneKey] as Euler3;
@@ -770,19 +1017,37 @@ export function createPerformer(o: PerformerOptions): Performer {
         if (busy.kind === "stretch" || busy.kind === "play") arms = 1;
         if (tone?.straight) arms = 0;
         armsBack = follow(armsBack, arms, dt, P.armsTauMs);
+        // 举手的小动作（ADR-048）：包络 → 平滑；放完了就清掉（平滑的尾巴还在时记着最后一个姿势）
+        const he = handEnv(now);
+        if (he === null) hand = undefined;
+        else {
+          const pose = hand?.spec.pose ?? handPose;
+          // 同一个手势放到一半又举起来：挥手的来回接着原来的节拍，不从头算（不然手一帧跳到另一边，11-14 深度测试）
+          if (pose !== handPose || handW <= 0.002) phaseEpoch = hand?.start ?? phaseEpoch;
+          handPose = pose;
+          handStart = hand?.start ?? handStart;
+        }
+        handW = follow(handW, he ?? 0, dt, P.handTauMs);
         // 镜头：说漏嘴时轻轻推近一下（0.5 秒推进、停 1 秒、0.8 秒退回）
         const zx = now - zoomAt;
         if (zx >= 0 && zx < 2300)
           zoom = zoomPeak * (zx < 500 ? easeInOutSine(zx / 500) : zx < 1500 ? 1 : 1 - easeInOutSine((zx - 1500) / 800));
       }
       out.armsBack = armsBack;
+      const showHand = handW > 0.002 && handPose !== "";
+      out.hand.pose = showHand ? handPose : "";
+      out.hand.w = showHand ? Math.min(1, handW) : 0;
+      out.hand.t = showHand ? now - handStart : 0;
+      out.hand.phase = showHand ? now - phaseEpoch : 0;
       out.zoom = zoom;
 
       // 视线扣掉头身转动（眼睛盯住你）：头左转 θ，眼睛就往右补 θ——lookAt 输入角要乘 LOOK_GAIN 才是眼珠真转的角度
       const headYaw = (B.hips[1] + B.spine[1] + B.chest[1] + B.upperChest[1] + B.neck[1] + B.head[1]) * DEG;
       const headDown = (B.spine[0] + B.chest[0] + B.upperChest[0] + B.neck[0] + B.head[0]) * DEG;
-      out.look.yaw = clamp(gaze.yaw - headYaw * LOOK_GAIN, -P.gaze.maxIn, P.gaze.maxIn);
-      out.look.pitch = clamp(gaze.pitch - headDown * LOOK_GAIN, -P.gaze.maxIn, P.gaze.maxIn);
+      // 害羞时眼睛跟着头往下、往一边躲，不扣头的转动；低头收完再用 0.22 秒慢慢扣回来（不一帧跳回去）
+      gazeComp = reduced ? 1 : follow(gazeComp, now < shyGazeUntil ? 0 : 1, dt, 220);
+      out.look.yaw = clamp(gaze.yaw - headYaw * LOOK_GAIN * gazeComp, -P.gaze.maxIn, P.gaze.maxIn);
+      out.look.pitch = clamp(gaze.pitch - headDown * LOOK_GAIN * gazeComp, -P.gaze.maxIn, P.gaze.maxIn);
 
       out.t = now;
       out.mode = mode;
@@ -897,5 +1162,10 @@ function scaleFace(t: Record<EmoKey, number>, k: number) {
 /** 按权重 w 往 f 靠（f 里没有的通道往 0 靠） */
 function blendFace(t: Record<EmoKey, number>, f: Face, w: number) {
   const k2 = clamp(w, 0, 1);
-  for (const k of EMO_KEYS) t[k] = t[k] * (1 - k2) + (f[k] ?? 0) * k2;
+  for (const k of EMO_KEYS) {
+    // 脸红是叠在脸上的一层（ADR-048）：没写脸红的表情（守住了、等着……）不去动它，脸红照着自己的节奏退；
+    // 原来别的反应一来先把它压下去、退了又露出来，脸红退了又红（11-14 深度测试）
+    if (k === "blush" && f.blush === undefined) continue;
+    t[k] = t[k] * (1 - k2) + (f[k] ?? 0) * k2;
+  }
 }

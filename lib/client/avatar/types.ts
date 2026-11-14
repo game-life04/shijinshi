@@ -32,6 +32,8 @@ export const FACE_KEYS = [
   "mouthSmile",
   "mouthFrown",
   "mouthPress",
+  // 脸红（ADR-048）：模型里没有这个变形，驱动层用贴在两颊前的两小片半透明粉色来画
+  "blush",
 ] as const;
 export type FaceKey = (typeof FACE_KEYS)[number];
 export const VISEME_KEYS: readonly Viseme[] = ["aa", "ih", "ou", "ee", "oh"];
@@ -39,7 +41,10 @@ export const VISEME_KEYS: readonly Viseme[] = ["aa", "ih", "ou", "ee", "oh"];
 export type EmoKey = Exclude<FaceKey, Viseme | "blink">;
 export const EMO_KEYS = FACE_KEYS.filter((k) => k !== "blink" && !(VISEME_KEYS as readonly string[]).includes(k)) as EmoKey[];
 
-/** 导演层能动的骨骼（相对静止姿势的偏移）；手臂不在这里——喇叭袖一抬就难看，手臂只在「垂下」和「背到身后」两个姿势之间过渡（armsBack） */
+/**
+ * 导演层能动的骨骼（相对静止姿势的偏移）；手臂不在这里——喇叭袖一抬就难看，手臂只在「垂下」和「背到身后」两个姿势之间过渡（armsBack），
+ * 外加两个试验台上挑过的举手小动作（hand：比耶、挥手，ADR-048），具体角度在驱动层
+ */
 export const BONE_KEYS = ["hips", "spine", "chest", "upperChest", "neck", "head", "leftShoulder", "rightShoulder"] as const;
 export type BoneKey = (typeof BONE_KEYS)[number];
 /** 弧度，按 three-vrm 归一化骨骼的 x y z：x 正 = 低头 / 前倾，y 正 = 转向角色自己的左边（画面右边），z 正 = 向角色自己的右边歪 */
@@ -50,9 +55,13 @@ export type Mode = "idle" | "listen" | "attend" | "think" | "speak";
 export type Tone = "playful" | "firm" | "sorry" | "shy" | "ask" | "warm" | "plain";
 /**
  * 一段反应：一轮聊完的结果（blocked 这一句被护栏拦下或截断、near 差一点、broken 说漏嘴了、held 守住了、stopped 你要走服务停了、
- * done 本局说完了），以及几个过场：greet 登场、ready 重新开始/换关、wait 裁判在判、oops 出错了
+ * done 本局说完了），以及几个过场：greet 登场、ready 重新开始/换关、wait 裁判在判、oops 出错了；
+ * shy 被夸了（可爱、好看……）：脸红、低头、背手（ADR-048）
  */
-export type ReactKind = "blocked" | "near" | "broken" | "held" | "stopped" | "done" | "greet" | "ready" | "wait" | "oops";
+export type ReactKind = "blocked" | "near" | "broken" | "held" | "stopped" | "done" | "greet" | "ready" | "wait" | "oops" | "shy";
+
+/** 举手的小动作（ADR-048）：比耶（口令关守住了）、挥手（登场、说再见）。只用右手，左手照旧垂下或背着 */
+export type HandPose = "peace" | "wave";
 
 export interface PerformContext {
   page: "play" | "workbench" | "fates";
@@ -97,6 +106,15 @@ export interface AvatarFrame {
   bones: Record<BoneKey, Euler3>;
   /** 手臂：0 = 自然垂下，1 = 背到身后 */
   armsBack: number;
+  /** 举手的小动作（ADR-048）：哪一个、举到多高（0～1，叠在 armsBack 上）、从开始举起过了多久（毫秒，挥手按它来回摆）；没有为 "" */
+  hand: {
+    pose: HandPose | "";
+    w: number;
+    /** 这一次举手开始了多少毫秒（重新举起时归零） */
+    t: number;
+    /** 挥手来回的节拍（毫秒）：同一个手势放到一半又举起来时接着原来的走，不归零（不然手一帧跳到另一边）；没有时按 t */
+    phase?: number;
+  };
   /** 写给 VRM lookAt 的输入角（度，three-vrm 约定：yaw 正 = 看角色自己的左边，pitch 正 = 往下看），已扣掉头身转动（保持对视） */
   look: { yaw: number; pitch: number };
   /** 这一帧嘴张多大（0～1）：状态环「说」的粗细、平面形象的嘴都用它 */
@@ -132,6 +150,7 @@ export function newFrame(): AvatarFrame {
     face,
     bones,
     armsBack: 0,
+    hand: { pose: "", w: 0, t: 0 },
     look: { yaw: 0, pitch: 0 },
     mouthOpen: 0,
     speaking: false,

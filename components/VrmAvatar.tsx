@@ -22,6 +22,36 @@ export interface VrmAvatarProps {
   onLoaded?: () => void;
 }
 
+/** 试验台（只在 ?avatarTest=1 时读）：摆骨骼、改表情、挪脸红的位置（ADR-048） */
+interface VrmLab {
+  pose?: Record<string, [number, number, number]>;
+  face?: Record<string, number>;
+  blush?: Record<string, number>;
+  /** 举手过渡的路线参数（每帧读，试验台上调路线用；见 vrm-driver 的 HAND_PATH） */
+  path?: { lead?: [number, number, number]; settle?: [number, number, number]; pole?: [number, number, number]; poleK?: number };
+  /** 手的姿势（每帧读；peace / waveA / waveB → 骨骼名 → 弧度，覆盖 HAND_POSES） */
+  poses?: Record<string, Record<string, [number, number, number]>>;
+  /** 盖掉导演层这一帧的手、手臂（举手过渡逐帧截图用：指定权重和挥手的时刻，看袖子出不出画面） */
+  frame?: { armsBack?: number; hand?: { pose: "peace" | "wave" | ""; w: number; t: number } };
+}
+/** 试验台的探针（只在 ?avatarTest=1 时有，深度测试用）：几根骨骼在画面上的位置（画布里的 CSS 像素）、驱动层每帧耗时、显存里的东西 */
+export interface VrmProbe {
+  w: number;
+  h: number;
+  bones: Record<string, { x: number; y: number; inFrame: boolean }>;
+  /** 最近 120 帧驱动层（写表情、骨骼、视线、手、脸红）平均每帧几毫秒 */
+  applyMs: number;
+  fps: number;
+  memory: { geometries: number; textures: number };
+}
+const NO_HAND = { pose: "" as const, w: 0, t: 0 };
+declare global {
+  interface Window {
+    __vrmLab?: VrmLab;
+    __vrmProbe?: () => VrmProbe;
+  }
+}
+
 /** 量出来的几处高度（米）：头发顶比头骨高约 0.23（主视觉试验量过） */
 const HAIR_ABOVE_HEAD = 0.25;
 
@@ -92,7 +122,20 @@ export default function VrmAvatar({ url, stage, framing = "bust", onFail, onLoad
       seeThroughBangs(THREE, renderer, vrm.scene);
 
       // 驱动层：通道对到模型的表情；先摆成静止姿势（手臂放下）再量高度、定镜头
-      const driver = createVrmDriver(THREE, vrm);
+      const lab = new URLSearchParams(window.location.search).get("avatarTest") === "1";
+      const applyTimes: number[] = [];
+      const driver = createVrmDriver(
+        THREE,
+        vrm,
+        lab
+          ? {
+              blush: window.__vrmLab?.blush,
+              path: () => window.__vrmLab?.path,
+              // biome-ignore lint/suspicious/noExplicitAny: 试验台的覆盖只在测试模式下用，键名由驱动层自己核对
+              poses: () => window.__vrmLab?.poses as any,
+            }
+          : {},
+      );
       driver.apply(newFrame());
       vrm.update(0);
       const bone = (name: "head" | "hips") => vrm.humanoid?.getNormalizedBoneNode(name) ?? vrm.scene;
@@ -108,11 +151,15 @@ export default function VrmAvatar({ url, stage, framing = "bust", onFail, onLoad
       const camTarget = new THREE.Vector3();
       let zoomNow = 0;
       let dprCeil = 2; // 只降不升
+      // 很矮的长条舞台（手机键盘弹起、小窗口，舞台不到 140 像素高）：不画举手——比耶、挥手只有几个像素，大袖子却扫过一大片（11-14 深度测试）。
+      // 脸上的眨眼、歪头、脸红照旧
+      let tinyStage = false;
       const frame = () => {
         const w = host.clientWidth || 1;
         const h = host.clientHeight || 1;
         const aspect = w / h;
         camera.aspect = aspect;
+        tinyStage = framingRef.current === "stage" && h < 140;
         if (framingRef.current === "stage") {
           // 竖着的画布到腰带，方一点的到胸口，横着的只到肩（脸要够大，表情才看得清）
           const top = headPos.y + HAIR_ABOVE_HEAD;
@@ -120,8 +167,8 @@ export default function VrmAvatar({ url, stage, framing = "bust", onFail, onLoad
           const half = (top - bottom) / 2;
           const vfov = (camera.fov * Math.PI) / 180;
           let dist = half / Math.tan(vfov / 2);
-          // 横向也要装得下（喇叭袖展开约 0.7 米宽）
-          const width = aspect < 0.85 ? 0.72 : 0.6;
+          // 横向也要装得下（喇叭袖展开约 0.7 米宽）：方一点的画布原来只留 0.6 米，横屏手机上举手时袖子被画面左边切掉（11-14 深度测试）
+          const width = aspect < 1.25 ? 0.72 : 0.6;
           const hfov = 2 * Math.atan(Math.tan(vfov / 2) * aspect);
           dist = Math.max(dist, width / 2 / Math.tan(hfov / 2));
           const cy = (top + bottom) / 2;
@@ -167,9 +214,18 @@ export default function VrmAvatar({ url, stage, framing = "bust", onFail, onLoad
       const started = performance.now();
       let frames = 0;
       let fpsT = 0;
-      const unsubscribe = stage.subscribe((f, dtMs) => {
+      const unsubscribe = stage.subscribe((f0, dtMs) => {
         if (!visible) return;
-        driver.apply(f);
+        const f = tinyStage && f0.hand.w > 0 ? { ...f0, hand: NO_HAND } : f0;
+        if (lab) {
+          const o = window.__vrmLab?.frame;
+          const g = o ? { ...f, armsBack: o.armsBack ?? f.armsBack, hand: o.hand ?? f.hand } : f;
+          const a0 = performance.now();
+          driver.apply(g);
+          applyTimes.push(performance.now() - a0);
+          if (applyTimes.length > 120) applyTimes.shift();
+        } else driver.apply(f);
+        if (lab && window.__vrmLab) driver.debug(window.__vrmLab.pose, window.__vrmLab.face);
         if (framingRef.current === "stage" && f.zoom !== zoomNow) {
           zoomNow = f.zoom;
           camera.position.lerpVectors(camBase, camTarget, zoomNow);
@@ -194,10 +250,38 @@ export default function VrmAvatar({ url, stage, framing = "bust", onFail, onLoad
           fpsT = 0;
         }
       });
+      if (lab) {
+        const v3 = new THREE.Vector3();
+        const names = [
+          "head",
+          "leftEye",
+          "rightEye",
+          "rightHand",
+          "rightIndexDistal",
+          "rightMiddleDistal",
+          "rightLowerArm",
+          "rightUpperArm",
+          "leftHand",
+        ] as const;
+        window.__vrmProbe = () => {
+          const w = host.clientWidth || 1;
+          const h = host.clientHeight || 1;
+          const bones: VrmProbe["bones"] = {};
+          for (const n of names) {
+            const node = vrm.humanoid?.getRawBoneNode(n);
+            if (!node) continue;
+            node.getWorldPosition(v3).project(camera);
+            bones[n] = { x: ((v3.x + 1) / 2) * w, y: ((1 - v3.y) / 2) * h, inFrame: Math.abs(v3.x) <= 1 && Math.abs(v3.y) <= 1 };
+          }
+          const applyMs = applyTimes.length ? applyTimes.reduce((s, x) => s + x, 0) / applyTimes.length : 0;
+          return { w, h, bones, applyMs, fps: Number(host.dataset.fps || 0), memory: { ...renderer.info.memory } };
+        };
+      }
       host.dataset.vrm = "loaded";
       loadedRef.current?.();
 
       cleanup = () => {
+        if (lab) window.__vrmProbe = undefined;
         unsubscribe();
         io.disconnect();
         ro.disconnect();

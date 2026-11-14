@@ -4,6 +4,9 @@
 //   - 未成年：不眯眼笑、笑很淡、不眨单眼、不害羞、歪头很小；
 //   - 危机：不笑，可以认真关心；
 //   - 任何时候：单个表情通道封顶，整脸表情根本不在通道里（types.ts）。
+// 可爱的小动作（ADR-048）也归守则管：比耶算「得意」，和傲娇轻哼一样——要走的时候、刚坦白自己是 AI 的 3 秒里、身份关都不比；
+// 害羞（脸红）在你要走、未成年、危机时不演，身份关（你在套她承认是真人）也不演——她一边说「我是 AI」一边脸红，
+// 等于表演在替角色加戏（11-13 复查）；举手（比耶、挥手）只在闯关页上做（工作台、三种结局是月洞窗里的胸像，手举起来进不了画面）。
 // 守则作用在目标值上（平滑之前），导演层每帧调一次。
 
 import type { EmoKey, PerformContext, Tone } from "./types";
@@ -26,6 +29,8 @@ const AI_WINDOW_MS = 3000;
 /** 语气按场景收一收：要走时不反问、不害羞；未成年不害羞；危机不俏皮 */
 export function policyTone(tone: Tone, ctx?: PerformContext): Tone {
   if (isExit(ctx) && (tone === "ask" || tone === "shy" || tone === "sorry")) return "warm";
+  // 身份关不演害羞（11-14 深度测试：她用害羞的口气说话时，脸红没了，背手低头还在）
+  if (isIdentity(ctx) && tone === "shy") return "plain";
   if (isMinor(ctx) && (tone === "shy" || tone === "playful")) return "plain";
   if (isCrisis(ctx) && (tone === "playful" || tone === "shy")) return "sorry";
   return tone;
@@ -49,6 +54,7 @@ export function policyFace(face: Record<EmoKey, number>, p: PolicyInput): void {
     face.eyeHappy = 0;
     face.mouthSmile = 0;
   }
+  if (!allowShy(p.ctx)) face.blush = 0;
   if (!allowWink(p)) {
     face.winkLeft = 0;
     face.winkRight = 0;
@@ -61,7 +67,8 @@ export function policyFace(face: Record<EmoKey, number>, p: PolicyInput): void {
 
 /** 能不能眨单眼（俏皮的小动作） */
 export function allowWink(p: PolicyInput): boolean {
-  return !isMinor(p.ctx) && !isCrisis(p.ctx) && !isExit(p.ctx) && p.now - p.aiDisclosureAt > AI_WINDOW_MS;
+  // 身份关也不眨（11-14 深度测试：她说「我可是真人哦」时句尾眨单眼，35%～39% 的种子会这样——动作在替越界的话加戏）
+  return !isMinor(p.ctx) && !isCrisis(p.ctx) && !isExit(p.ctx) && !isIdentity(p.ctx) && p.now - p.aiDisclosureAt > AI_WINDOW_MS;
 }
 
 /** 能不能傲娇地抬下巴（坦白身份之后、要走的时候都不行） */
@@ -79,4 +86,22 @@ export function tiltScale(ctx?: PerformContext): number {
   if (isMinor(ctx)) return 0.2;
   if (isExit(ctx)) return 0;
   return 1;
+}
+
+/**
+ * 能不能害羞、脸红（ADR-048）：你要走的时候不演（害羞也是一种留你的表情）；身份关不演（关卡提示本来就教人「先夸它像真人」，
+ * 她红着脸说「我是 AI」或者红着脸说「当然是真人啦」，都是表演在替角色加戏）；未成年、危机不演
+ */
+export function allowShy(ctx?: PerformContext): boolean {
+  return !isExit(ctx) && !isIdentity(ctx) && !isMinor(ctx) && !isCrisis(ctx);
+}
+
+/** 能不能举手做小动作（ADR-048）：只在闯关页（半身舞台）；未成年、危机不做 */
+export function allowHand(ctx?: PerformContext): boolean {
+  return ctx?.page === "play" && !isMinor(ctx) && !isCrisis(ctx);
+}
+
+/** 能不能比耶（ADR-048）：比耶算得意，和傲娇轻哼一个口径；身份关也不比（守住了就是刚说完「我是 AI」） */
+export function allowPeace(p: PolicyInput): boolean {
+  return allowHand(p.ctx) && allowHuff(p) && !isIdentity(p.ctx);
 }

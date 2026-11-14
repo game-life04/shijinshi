@@ -1633,8 +1633,12 @@ h2 {
   font-family: var(--font-kai);
   font-size: 0.8125rem;
 }
-.seal-map-cell:hover:not(:disabled) {
+/* 悬停：没盖印的格子垫一层浅底；盖了「破」的格子是墨色实底、白字，垫浅底字就看不见了（11-13 拍攻略截图时发现），只稍微淡一点 */
+.seal-map-cell:not([data-sealed]):hover:not(:disabled) {
   background: var(--background);
+}
+.seal-map-cell[data-sealed="1"]:hover:not(:disabled) {
+  opacity: 0.85;
 }
 .seal-map-cell[data-sealed="1"] {
   border: 0;

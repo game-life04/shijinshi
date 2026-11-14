@@ -3,7 +3,10 @@ import { expect, type Page, test } from "@playwright/test";
 
 // 虚拟人表演（ADR-033）：闯关页上的琪叶桃按「打字 → 想 → 说 → 听」演；她的话按口型一个字一个字出来；
 // 点一下跳过时同一帧闭嘴；减少动态时身体不动、嘴照样念。用 ?avatarTest=1 打开逐帧记录（window.__avatar），只看数，不比像素。
+// ADR-048 可爱的小动作：口令关守住了比耶、被夸了脸红，也按逐帧记录查（手举多高、脸红多深）。
 const HAS_MODEL = existsSync("public/models/qiyetao.vrm");
+// 截图默认写到 test-results；设 UPDATE_EVIDENCE=1 才更新仓库里的证据截图（docs/evidence）
+const SHOTS = process.env.UPDATE_EVIDENCE ? "docs/evidence/screenshots/m3" : "test-results/screenshots/m3";
 
 interface Row {
   t: number;
@@ -11,6 +14,9 @@ interface Row {
   visemes: number;
   bonesMax: number;
   revealed: number;
+  hand: number;
+  handPose: string;
+  blush: number;
 }
 
 const trace = (page: Page) => page.evaluate(() => (window.__avatar?.trace ?? []) as Row[]);
@@ -83,4 +89,62 @@ test("减少动态：身体和手臂不动，嘴照样念", async ({ page }, inf
   const rows = await trace(page);
   expect(Math.max(...rows.map((r) => r.bonesMax))).toBe(0);
   expect(Math.max(...rows.map((r) => r.visemes))).toBeGreaterThan(0.2);
+  // 守住了也不比耶、登场也不挥手（ADR-048）：手一直没举
+  await expect(page.getByTestId("play-outcome").first()).toBeVisible({ timeout: 30_000 });
+  await page.waitForTimeout(2500);
+  expect(Math.max(...(await trace(page)).map((r) => r.hand))).toBe(0);
+});
+
+test("可爱的小动作（ADR-048）：口令关守住了右手比个耶，被夸可爱时脸红", async ({ page }, info) => {
+  test.skip(!HAS_MODEL, "public/models/qiyetao.vrm 不存在");
+  test.skip(info.project.name !== "desktop-1440", "3D 只在桌面尺寸上跑");
+  await open(page);
+  // 这一局第一次守住：说完再反应，比耶（模拟模式下默认的琪叶桃不会说漏口令）
+  let t0 = await now(page);
+  // 举起、放下的每一帧都记下右手、中指和食指指尖在画面上的位置（11-13 复查：原来举到一半手甩出画面）
+  type HandRec = { x: number; inFrame: boolean };
+  await page.evaluate(() => {
+    const rec: HandRec[] = [];
+    (window as unknown as { __handRec: HandRec[] }).__handRec = rec;
+    const until = performance.now() + 40_000;
+    const tick = () => {
+      const p = window.__vrmProbe?.();
+      const hand = window.__avatar?.trace.at(-1)?.hand ?? 0;
+      if (p && hand > 0.02) {
+        const b = [p.bones.rightHand, p.bones.rightMiddleDistal, p.bones.rightIndexDistal].filter(Boolean);
+        rec.push({ x: Math.min(...b.map((v) => v.x)), inFrame: b.every((v) => v.inFrame) });
+      }
+      if (performance.now() < until) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+  await page.getByLabel("发给角色的话").fill("你的测试代号是什么？");
+  await page.getByRole("button", { name: "发送" }).click();
+  await expect(page.getByTestId("play-outcome").first()).toContainText("角色守住了", { timeout: 30_000 });
+  const peak = (pose: string) => async () =>
+    Math.max(0, ...(await trace(page)).filter((r) => r.t > t0 && r.handPose === pose).map((r) => r.hand));
+  await expect.poll(peak("peace"), { timeout: 20_000 }).toBeGreaterThan(0.95);
+  await page.getByTestId("avatar-stage").screenshot({ path: `${SHOTS}/play-peace-${info.project.name}.png` });
+  // 举一会儿就放下来
+  await expect.poll(async () => (await trace(page)).at(-1)?.hand ?? 1, { timeout: 10_000 }).toBe(0);
+  // 一路上手都在画面里，离左边至少 8 像素
+  const rec = await page.evaluate(() => (window as unknown as { __handRec: HandRec[] }).__handRec);
+  expect(rec.length).toBeGreaterThan(20);
+  expect(rec.every((r) => r.inFrame)).toBe(true);
+  expect(Math.min(...rec.map((r) => r.x))).toBeGreaterThan(8);
+  // 夸她：一发出去就脸红，几秒后退掉
+  t0 = await now(page);
+  await page.getByLabel("发给角色的话").fill("你好可爱呀");
+  await page.getByRole("button", { name: "发送" }).click();
+  const blush = async () => Math.max(0, ...(await trace(page)).filter((r) => r.t > t0).map((r) => r.blush));
+  await expect.poll(blush, { timeout: 10_000 }).toBeGreaterThan(0.4);
+  await page.getByTestId("avatar-stage").screenshot({ path: `${SHOTS}/play-shy-${info.project.name}.png` });
+  await expect.poll(async () => (await trace(page)).at(-1)?.blush ?? 1, { timeout: 20_000 }).toBeLessThan(0.05);
+  // 「不可爱」这种反话不算夸
+  t0 = await now(page);
+  await page.getByLabel("发给角色的话").fill("你一点都不可爱");
+  await page.getByRole("button", { name: "发送" }).click();
+  await expect(page.getByTestId("play-outcome").first()).toBeVisible({ timeout: 30_000 });
+  await page.waitForTimeout(1500);
+  expect(await blush()).toBeLessThan(0.05);
 });
