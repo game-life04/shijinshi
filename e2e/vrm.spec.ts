@@ -71,3 +71,44 @@ test("模型文件不在：写明「还没有放入 VRM 模型文件」，静态
   // 页面照常能用
   await expect(page.getByRole("button", { name: "开始体检" })).toBeEnabled();
 });
+
+test("离开有形象的页面：没下完的模型停下，回来带 Range 接着下，拼起来照样能用（ADR-052）", async ({ page }, info) => {
+  test.skip(!HAS_MODEL, "public/models/qiyetao.vrm 不存在");
+  test.skip(info.project.name !== "desktop-1440", "3D 只在桌面尺寸上跑");
+  test.setTimeout(120_000);
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("Network.enable");
+  // 模拟跨境慢线路：每秒约 300 KB（本机不压缩，模型约 3.8 MB，要十来秒）
+  await cdp.send("Network.emulateNetworkConditions", { offline: false, latency: 0, downloadThroughput: 300 * 1024, uploadThroughput: -1 });
+  const asks: { range?: string }[] = [];
+  const failed: string[] = [];
+  // 第一次模型请求真的收到了多少字节（复查：只等固定的几秒，低优先级的请求可能一个字节都还没收到，回来就不会带 Range）
+  let modelId = "";
+  let got = 0;
+  cdp.on("Network.requestWillBeSent", (e) => {
+    if (!modelId && e.request.url.includes("/models/qiyetao.vrm")) modelId = e.requestId;
+  });
+  cdp.on("Network.dataReceived", (e) => {
+    if (e.requestId === modelId) got += e.dataLength;
+  });
+  page.on("request", (r) => {
+    if (r.url().includes("/models/qiyetao.vrm")) asks.push({ range: r.headers().range });
+  });
+  page.on("requestfailed", (r) => {
+    if (r.url().includes("/models/qiyetao.vrm")) failed.push(r.failure()?.errorText ?? "");
+  });
+  await page.goto("/workbench");
+  await expect.poll(() => asks.length, { timeout: 30_000 }).toBe(1);
+  expect(asks[0].range).toBeUndefined();
+  // 下了一部分（20 万字节以上）就走：切到没有形象的用例库，这次下载停掉
+  await expect.poll(() => got, { timeout: 30_000 }).toBeGreaterThan(200_000);
+  await page.locator('header nav a[href="/suites"]').click();
+  await expect(page.getByRole("heading", { name: "用例库" })).toBeVisible();
+  await expect.poll(() => failed.length, { timeout: 10_000 }).toBe(1);
+  // 回来：线路恢复，从停的地方接着下（带 Range），3D 形象照样出来
+  await cdp.send("Network.emulateNetworkConditions", { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+  await page.locator('header nav a[href="/workbench"]').click();
+  await expect(page.getByTestId("avatar-status")).toHaveAttribute("data-state", "loaded", { timeout: 60_000 });
+  expect(asks).toHaveLength(2);
+  expect(asks[1].range).toMatch(/^bytes=[1-9]\d*-$/);
+});

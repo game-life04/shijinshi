@@ -10,7 +10,7 @@ import dynamic from "next/dynamic";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { type AvatarStage, useAvatarStage, usePerformer } from "@/lib/client/avatar/stage";
 import type { PerformContext, Performer } from "@/lib/client/avatar/types";
-import { fetchModel } from "@/lib/client/model-fetch";
+import { holdModel } from "@/lib/client/model-fetch";
 import bustStill from "./avatar-art/qiyetao-bust.jpg";
 import stageTallStill from "./avatar-art/qiyetao-stage-tall.jpg";
 import stageWideStill from "./avatar-art/qiyetao-stage-wide.jpg";
@@ -78,10 +78,9 @@ export default function Avatar({
   // 慢线路上浏览器会报「预加载了但几秒内没用上」）。
   // 提前到「页面能用以后」为止，不写进首屏的 HTML（ADR-045）：11-13 在线上实测，跨境线路只有约 150 KB/s 时，
   // 写在首屏里的预加载会和页面自己的脚本抢带宽，一个 30 KB 的脚本被挤了 17 秒，页面 22 秒才能打字。
-  // 放进 effect 里：页面先能用（这时显示静态图），模型和 three.js 的脚本一起在后面下载。失败了这里不管，VrmAvatar 会再试一次并说明原因
-  useEffect(() => {
-    fetchModel(VRM_URL).catch(() => {});
-  }, []);
+  // 放进 effect 里：页面先能用（这时显示静态图），模型和 three.js 的脚本一起在后面下载。失败了这里不管，VrmAvatar 会再试一次并说明原因。
+  // ADR-052：形象在页面上时占着下载，离开这一页（换到没有形象的页面）就暂停、已经下好的留着，回来接着下——不再和别的页面抢跨境带宽。
+  // （这一句写在下面 fallback 后面：3D 出不来、已经退成静态图时不占着，不白下一份用不上的模型）
   const own = usePerformer(context ?? { page: "workbench" });
   const ownStage = useAvatarStage(performer ?? own, mouth, !given);
   const stage = given ?? ownStage;
@@ -90,6 +89,7 @@ export default function Avatar({
   const greetTimer = useRef<number | undefined>(undefined);
   const [fallback, setFallback] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+  useEffect(() => (fallback ? undefined : holdModel(VRM_URL)), [fallback]);
   // 登场：她看见你了，闭眼一笑、点个头、挥挥手（只演一次）。等静态图真正淡完再演：3D 形象刚出来那一下主线程会卡半秒多
   // （第一次画、编译着色器），淡出跟着往后推，按时钟等会和还没淡完的静态图叠在一起（11-14 量过：卡 0.56 秒，淡完在 1 秒左右）。
   // 淡出结束有事件；「减少动态」时没有过渡、不发事件，1.5 秒兜底

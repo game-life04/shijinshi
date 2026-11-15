@@ -72,6 +72,12 @@ export default function VrmAvatar({ url, stage, framing = "bust", onFail, onLoad
     if (!host) return;
     let disposed = false;
     let cleanup = () => {};
+    // 离开这一页时让下面「等模型下完」那一步马上醒来退出（ADR-052 复查：模型现在会暂停，不醒来的话这一步一直挂着，
+    // 连着已经卸掉的这一页一起留在内存里，来回换页 N 次就留 N 份）
+    let wake = () => {};
+    const gone = new Promise<null>((r) => {
+      wake = () => r(null);
+    });
 
     (async () => {
       const probe = document.createElement("canvas");
@@ -92,7 +98,9 @@ export default function VrmAvatar({ url, stage, framing = "bust", onFail, onLoad
       // （复查：慢线路上模型要下半分钟，这期间来回换页，原来每个离开的页面都留着一个渲染器、等下载完还各解析一遍）
       let data: ArrayBuffer;
       try {
-        data = await model;
+        const got = await Promise.race([model, gone]);
+        if (got === null || disposed) return;
+        data = got;
       } catch (e) {
         if (disposed) return;
         // 404：还没放模型文件（仓库里本来有，删掉了或者 NEXT_PUBLIC_VRM_URL 指错了）
@@ -323,6 +331,7 @@ export default function VrmAvatar({ url, stage, framing = "bust", onFail, onLoad
 
     return () => {
       disposed = true;
+      wake();
       cleanup();
     };
   }, [url, stage]);
