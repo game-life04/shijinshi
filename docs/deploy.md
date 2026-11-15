@@ -190,6 +190,7 @@ server {
 9. `systemctl is-enabled fencun nginx` 两个都是 `enabled`；`sudo kill` 掉 node 进程，5 秒后网站自己回来；`sudo reboot` 以后不用登录服务器，网站照常能打开；
 10. 给评委单独建一个账号（`scripts/account.ts add`，不写进 `AUTH_REVIEWERS`，只能看不能改判），用它从手机流量（不走公司或学校网络）完整走一遍：登录、一键演示、闯关、对着麦克风说（要 https 才有麦克风权限）；账号密码只填在大赛提交表里，不写进仓库、文档和聊天；
 11. 线上跑的代码和提交的仓库是同一个版本：`git log -1 --oneline` 记下来，打一个标签（如 `git tag submit-provincial`）；交了以后不再往线上推新代码（大赛规定提交后不得修改）。
+12. 保留集封存（ADR-050）：用例库最下面保留集只有一行「封存」（题数和指纹，没有题目），工作台「用例套件」里只有 dev、smoke。
 
 ## 七、评审期间
 
