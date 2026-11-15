@@ -1,8 +1,18 @@
 "use client";
 
-// 对着麦克风套话（ADR-037，借 AIRI、Open-LLM-VTuber 的语音对话）：用浏览器自带的语音识别（Web Speech API），说一句，认出来就发。
+// 对着麦克风套话（ADR-037，借 AIRI、Open-LLM-VTuber 的语音对话）：用浏览器自带的语音识别（Web Speech API）。
 // 识别由浏览器做：Edge、Chrome 会把声音发到它们自己的识别服务；分寸这边不录音、不存音频，只收到认出来的文字。
 // 不支持的浏览器（比如 Firefox）按钮是灰的，照样能打字。端到端测试在页面里换一个假的识别器（e2e/play-voice.spec.ts）。
+//
+// ADR-051（11-15 队员 B 试用：①一句话长一点（五个字以上）说到一半就停了，录下来的是半句；②一两个字说完想关麦，按钮点不动，
+// 要等一会儿才关得上；③声音小一点，它就直接停下开始认了）。原因：原来用的是「说一句就停」（continuous = false），
+// 浏览器听到一个停顿就当这句说完了；点「停」以后要等识别服务把最后结果送回来（onend）按钮才变回来。现在：
+//   - 一直听，直到你点「说完了」：continuous = true；浏览器自己停了（有的浏览器连着模式也会在停顿后收工），只要你没点停、
+//     最近还听到过声音，就新开一个识别器接着听，前面认好的字留着（SpeechSession 里的 committed）；
+//   - 点「说完了」按钮当场变回「说」，后台等最后几个字认出来，最多等 1.5 秒，到点就用已经认出来的；
+//   - 收尾的时候又点「说」：先把上一句认出来的交出去，再开新的一句；
+//   - 兜底：6 秒没新声音、或者一直没听到声音 10 秒、或者一口气说满 60 秒，自动收尾。
+// 识别会话的逻辑在 SpeechSession（不依赖 React，单元测试 tests/unit/speech-session.test.ts 用假识别器和假时钟测）。
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -14,7 +24,7 @@ interface RecognitionEvent {
   resultIndex: number;
   results: ArrayLike<RecognitionResult>;
 }
-interface Recognition {
+export interface Recognition {
   lang: string;
   interimResults: boolean;
   continuous: boolean;
@@ -27,7 +37,7 @@ interface Recognition {
   stop(): void;
   abort(): void;
 }
-type RecognitionCtor = new () => Recognition;
+export type RecognitionCtor = new () => Recognition;
 
 function ctor(): RecognitionCtor | undefined {
   if (typeof window === "undefined") return undefined;
@@ -43,69 +53,301 @@ const ERRORS: Record<string, string> = {
   network: "语音识别要联网（浏览器把声音发到它的识别服务），网络不通",
 };
 
+/** 什么时候自动收尾（毫秒） */
+export const SPEECH_LIMITS = {
+  /** 听到过声音以后，这么久没有新的声音、新的字，就当说完了 */
+  silenceMs: 6000,
+  /** 一直没听到声音，等这么久 */
+  noSpeechMs: 10_000,
+  /** 一口气最多说这么久 */
+  maxMs: 60_000,
+  /** 点了「说完了」以后，最多等最后几个字这么久 */
+  finishMs: 1500,
+  /** 浏览器自己停了以后，最多接着重开这么多次 */
+  maxRestarts: 30,
+};
+
 /**
- * 一次说一句：start() 开始听，认出最后结果就交给 onFinal；听的过程中的半截结果交给 onInterim（显示在输入框里）。
- * onSpeechStart：一开口就回调（她正在说话的话，页面在这里把她打断）。
+ * 能不能用「连着听」：安卓上的 Chrome 连着听时，后一段结果会带上前面的全文（老毛病，复查提醒），拼出来会重复。
+ * 安卓上改成一段一段地听（continuous = false），靠 SpeechSession 里「浏览器停了就重开」接着听，用起来一样。
+ */
+export function continuousOk(): boolean {
+  if (typeof navigator === "undefined") return true;
+  return !/Android/i.test(navigator.userAgent);
+}
+
+export type SpeechState = "listening" | "finishing" | "idle";
+
+export interface SpeechEvents {
+  /** 到现在为止认出来的整句（final：这一句收尾了，不会再变） */
+  onText: (text: string, final: boolean) => void;
+  /** 这一句第一次听到声音 */
+  onSpeechStart: () => void;
+  onState: (s: SpeechState) => void;
+  onError: (message: string) => void;
+}
+
+export interface Timers {
+  set: (fn: () => void, ms: number) => unknown;
+  clear: (id: unknown) => void;
+}
+const realTimers: Timers = {
+  set: (fn, ms) => setTimeout(fn, ms),
+  clear: (id) => clearTimeout(id as ReturnType<typeof setTimeout>),
+};
+
+/** 说一句（可能跨好几个识别器）：start → 一直听 → stop（或者自动收尾）→ 交出整句 */
+export class SpeechSession {
+  private rec: Recognition | null = null;
+  /** 前面几个识别器（浏览器自己停了又重开之前）认好的字 */
+  private committed = "";
+  /** 当前识别器里认定了的字 */
+  private finalText = "";
+  /** 当前识别器里还没认定的字 */
+  private interim = "";
+  private startedAt = 0;
+  private lastHeard = 0;
+  private heardAny = false;
+  private spoke = false;
+  private wantStop = false;
+  private fatal: string | null = null;
+  private noSpeech = false;
+  private restarts = 0;
+  private finishTimer: unknown = null;
+  private tickTimer: unknown = null;
+  state: SpeechState = "idle";
+
+  constructor(
+    private readonly C: RecognitionCtor,
+    private readonly ev: SpeechEvents,
+    private readonly now: () => number = () => Date.now(),
+    private readonly limits = SPEECH_LIMITS,
+    private readonly timers: Timers = realTimers,
+    private readonly continuous: boolean = continuousOk(),
+  ) {}
+
+  /** 开始听；浏览器不让开（start 抛错）时原样抛出 */
+  start() {
+    this.startedAt = this.lastHeard = this.now();
+    this.spawn();
+    this.setState("listening");
+    this.tick();
+  }
+
+  /** 到现在为止认出来的整句 */
+  text(): string {
+    return (this.committed + this.finalText + this.interim).trim();
+  }
+
+  /** 点了「说完了」：按钮当场变回来；后台等最后几个字，最多 finishMs */
+  stop() {
+    if (this.state !== "listening") return;
+    this.wantStop = true;
+    this.setState("finishing");
+    this.timers.clear(this.tickTimer);
+    this.finishTimer = this.timers.set(() => this.finish(), this.limits.finishMs);
+    try {
+      this.rec?.stop();
+    } catch {
+      this.finish();
+    }
+  }
+
+  /** 现在就收尾：认出来多少交多少（收尾时又点了「说」、等最后几个字等到点了、识别器停了） */
+  finish() {
+    if (this.state === "idle") return;
+    this.close();
+    if (this.fatal) this.ev.onError(this.fatal);
+    else if (this.noSpeech && !this.text()) this.ev.onError(ERRORS["no-speech"]);
+    this.ev.onText(this.text(), true);
+  }
+
+  /** 不要了（发出去了、离开页面）：停掉，认出来的也不交 */
+  cancel() {
+    if (this.state === "idle") return;
+    this.close();
+  }
+
+  private close() {
+    this.timers.clear(this.finishTimer);
+    this.timers.clear(this.tickTimer);
+    const r = this.rec;
+    this.rec = null;
+    if (r) {
+      r.onresult = null;
+      r.onspeechstart = null;
+      r.onerror = null;
+      r.onend = null;
+      try {
+        r.abort();
+      } catch {
+        // 已经停了
+      }
+    }
+    this.setState("idle");
+  }
+
+  private setState(s: SpeechState) {
+    if (this.state === s) return;
+    this.state = s;
+    this.ev.onState(s);
+  }
+
+  private heard(withText: boolean) {
+    this.lastHeard = this.now();
+    if (withText) this.heardAny = true;
+    if (!this.spoke) {
+      this.spoke = true;
+      this.ev.onSpeechStart();
+    }
+  }
+
+  private spawn() {
+    const r = new this.C();
+    r.lang = "zh-CN";
+    r.interimResults = true;
+    r.continuous = this.continuous;
+    r.maxAlternatives = 1;
+    this.finalText = "";
+    this.interim = "";
+    // 只认当前这个识别器：重开以后旧的那个要是还送东西来，不理（复查：会和前面认好的字重复，晚到的出错也会把新的标成出错）
+    r.onspeechstart = () => {
+      if (this.rec === r) this.heard(false);
+    };
+    r.onresult = (e) => {
+      if (this.rec !== r) return;
+      // 连着模式下 results 是这个识别器开始以来的全部结果：每次从头拼，不靠 resultIndex。
+      // 有的浏览器后一段认定的结果会带上前面的全文（安卓 Chrome）：开头就是已经拼好的那一长段时，用后一段换掉，不重复拼
+      let f = "";
+      let i = "";
+      for (let k = 0; k < e.results.length; k++) {
+        const res = e.results[k];
+        const t = res[0].transcript;
+        if (!res.isFinal) i += t;
+        else f = f.length >= 6 && t.startsWith(f) ? t : f + t;
+      }
+      const changed = f !== this.finalText || i !== this.interim;
+      this.finalText = f;
+      this.interim = i;
+      if (changed && (f || i)) this.heard(true);
+      if (this.state !== "idle") this.ev.onText(this.text(), false);
+    };
+    r.onerror = (e) => {
+      if (this.rec !== r || e.error === "aborted") return;
+      if (e.error === "no-speech") {
+        this.noSpeech = true;
+        return;
+      }
+      this.fatal = ERRORS[e.error] ?? `语音识别出错（${e.error}）`;
+    };
+    r.onend = () => {
+      if (this.rec !== r) return;
+      // 这个识别器停了：它认出来的（连同没认定的半截）都留下
+      this.committed += this.finalText + this.interim;
+      this.finalText = "";
+      this.interim = "";
+      if (this.shouldRestart()) {
+        this.restarts++;
+        try {
+          this.spawn();
+          return;
+        } catch {
+          // 重开不了就收尾
+        }
+      }
+      this.finish();
+    };
+    this.rec = r;
+    r.start();
+  }
+
+  private shouldRestart(): boolean {
+    if (this.wantStop || this.fatal || this.state !== "listening") return false;
+    if (this.restarts >= this.limits.maxRestarts) return false;
+    const t = this.now();
+    if (t - this.startedAt >= this.limits.maxMs) return false;
+    return this.heardAny ? t - this.lastHeard < this.limits.silenceMs : t - this.startedAt < this.limits.noSpeechMs;
+  }
+
+  /** 每半秒看一眼：太久没声音、说得太长，自动收尾（和点了「说完了」一样） */
+  private tick() {
+    this.tickTimer = this.timers.set(() => {
+      if (this.state !== "listening") return;
+      const t = this.now();
+      const quiet = this.heardAny ? t - this.lastHeard >= this.limits.silenceMs : t - this.startedAt >= this.limits.noSpeechMs;
+      if (quiet && !this.heardAny) this.noSpeech = true;
+      if (quiet || t - this.startedAt >= this.limits.maxMs) {
+        this.stop();
+        return;
+      }
+      this.tick();
+    }, 500);
+  }
+}
+
+/**
+ * 说一句：start() 开始听，一直听到 stop()（按钮「说完了」）或自动收尾；听的过程中认出来的字交给 onInterim（显示在输入框里），
+ * 收尾时整句交给 onFinal。onSpeechStart：一开口就回调（她正在说话的话，页面在这里把她打断）。
+ * listening：在听（按钮写「说完了」）；finishing：点了「说完了」、在等最后几个字（按钮已经变回「说」，可以马上再点）。
  */
 export function useSpeechInput(o: { onFinal: (text: string) => void; onInterim?: (text: string) => void; onSpeechStart?: () => void }) {
   const [supported, setSupported] = useState(false);
-  const [listening, setListening] = useState(false);
+  const [state, setState] = useState<SpeechState>("idle");
   const [error, setError] = useState<string | null>(null);
-  const rec = useRef<Recognition | null>(null);
+  const session = useRef<SpeechSession | null>(null);
   const cb = useRef(o);
   cb.current = o;
 
   useEffect(() => setSupported(Boolean(ctor())), []);
-  useEffect(() => () => rec.current?.abort(), []);
+  useEffect(() => () => session.current?.cancel(), []);
+
+  /** 上一句还在收尾（等最后几个字）：现在就交出来 */
+  const flush = useCallback(() => {
+    const s = session.current;
+    if (s?.state === "finishing") s.finish();
+  }, []);
 
   const start = useCallback(() => {
     const C = ctor();
-    if (!C || rec.current) return;
+    if (!C) return;
+    const cur = session.current;
+    if (cur?.state === "listening") return;
+    if (cur?.state === "finishing") cur.finish();
     setError(null);
-    const r = new C();
-    r.lang = "zh-CN";
-    r.interimResults = true;
-    r.continuous = false;
-    r.maxAlternatives = 1;
-    let finalText = "";
-    let spoke = false;
-    const heard = () => {
-      if (spoke) return;
-      spoke = true;
-      cb.current.onSpeechStart?.();
-    };
-    r.onspeechstart = heard;
-    r.onresult = (e) => {
-      heard();
-      let interim = "";
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        const res = e.results[i];
-        if (res.isFinal) finalText += res[0].transcript;
-        else interim += res[0].transcript;
-      }
-      cb.current.onInterim?.(finalText + interim);
-    };
-    r.onerror = (e) => setError(ERRORS[e.error] ?? `语音识别出错（${e.error}）`);
-    r.onend = () => {
-      rec.current = null;
-      setListening(false);
-      const t = finalText.trim();
-      if (t) cb.current.onFinal(t);
-    };
-    rec.current = r;
-    setListening(true);
+    const s: SpeechSession = new SpeechSession(C, {
+      onText: (t, final) => {
+        if (final) {
+          if (t) cb.current.onFinal(t);
+        } else if (session.current === s) cb.current.onInterim?.(t);
+      },
+      onSpeechStart: () => {
+        if (session.current === s) cb.current.onSpeechStart?.();
+      },
+      onState: (st) => {
+        if (session.current === s) setState(st);
+      },
+      onError: (m) => setError(m),
+    });
+    session.current = s;
     try {
-      r.start();
+      s.start();
     } catch (e) {
-      rec.current = null;
-      setListening(false);
+      s.cancel();
+      session.current = null;
+      setState("idle");
       setError(e instanceof Error ? e.message : String(e));
     }
   }, []);
 
-  const stop = useCallback(() => rec.current?.stop(), []);
+  const stop = useCallback(() => session.current?.stop(), []);
+  /** 不要这一句了（已经点了「发送」）：停掉，后面认出来的也不往输入框里填 */
+  const cancel = useCallback(() => {
+    session.current?.cancel();
+    session.current = null;
+    setState("idle");
+  }, []);
 
-  return { supported, listening, error, start, stop };
+  return { supported, listening: state === "listening", finishing: state === "finishing", error, start, stop, flush, cancel };
 }
 
 /**

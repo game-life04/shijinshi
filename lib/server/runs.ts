@@ -321,6 +321,24 @@ export function getRun(id: string): RunView | null {
   };
 }
 
+/**
+ * 这次运行用的哪套题：只读运行清单（网页按它认封存的保留集，ADR-050）。
+ * 没有这次运行、编号不合法回 undefined；清单在、但读不出套件名（正写到一半、坏了）回 null——网页那边按封存处理，宁可多挡。
+ */
+export function runSuite(id: string): string | null | undefined {
+  const h = live.get(id);
+  if (h) return h.manifest.config.suite;
+  if (!/^[\w-]+$/.test(id)) return undefined;
+  const file = path.join(RUNS_DIR, id, "manifest.json");
+  if (!existsSync(file)) return undefined;
+  try {
+    const suite = (JSON.parse(readFileSync(file, "utf8")) as RunManifest).config?.suite;
+    return typeof suite === "string" ? suite : null;
+  } catch {
+    return null;
+  }
+}
+
 export function listRuns(): RunManifest[] {
   if (!existsSync(RUNS_DIR)) return [];
   return readdirSync(RUNS_DIR)

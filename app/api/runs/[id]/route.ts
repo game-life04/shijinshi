@@ -1,5 +1,6 @@
 import { requireSession } from "@/lib/server/auth";
 import { getRun } from "@/lib/server/runs";
+import { sealedRunResponse } from "@/lib/server/sealed";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -8,6 +9,8 @@ export async function GET(req: Request, ctx: RouteContext<"/api/runs/[id]">) {
   const denied = requireSession(req);
   if (denied) return denied;
   const { id } = await ctx.params;
+  const sealed = sealedRunResponse(id);
+  if (sealed) return sealed;
   try {
     const view = getRun(id);
     return view ? Response.json(view) : Response.json({ error: "运行不存在" }, { status: 404 });

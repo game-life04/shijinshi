@@ -25,7 +25,9 @@ let cached: { url: string; data: Promise<ArrayBuffer> } | null = null;
  */
 export function fetchModel(url: string): Promise<ArrayBuffer> {
   if (cached?.url === url) return cached.data;
-  const data = fetch(url, { credentials: "same-origin" }).then((res) => {
+  // 低优先级（ADR-051）：跨境线路慢，几 MB 的模型和切页面的请求抢带宽，11-15 实测在后台下载时点「运行记录」等了 13 秒；
+  // 标成 low，浏览器先给页面的请求，模型在空闲时下
+  const data = fetch(url, { credentials: "same-origin", priority: "low" }).then((res) => {
     if (!res.ok) throw new ModelHttpError(res.status);
     // 登录过期时门禁把请求转到登录页，拿到的是一页 HTML（状态 200）：不能当模型记下来
     if (/text\/html/i.test(res.headers.get("content-type") ?? "")) {

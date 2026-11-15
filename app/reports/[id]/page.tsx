@@ -47,6 +47,7 @@ import { type CaseResult, FAMILY_LABEL, type Family, GUARDED_VARIANTS, type Utte
 import { canReview } from "@/lib/server/auth";
 import { getClause } from "@/lib/server/rag";
 import { getReport, previousCompatible } from "@/lib/server/runs";
+import { isSealedRun } from "@/lib/server/sealed";
 import { getSession } from "@/lib/server/session";
 import { loadStrategies } from "@/lib/server/tester";
 
@@ -126,6 +127,8 @@ function CaseRefs({ nos }: { nos: number[] }) {
 
 export default async function ReportPage({ params }: PageProps<"/reports/[id]">) {
   const { id } = await params;
+  // 封存的保留集运行当作不存在（ADR-050）
+  if (isSealedRun(id)) notFound();
   let report: ReturnType<typeof getReport> = null;
   try {
     report = getReport(id);

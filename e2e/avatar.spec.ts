@@ -23,7 +23,7 @@ const trace = (page: Page) => page.evaluate(() => (window.__avatar?.trace ?? [])
 
 async function open(page: Page, query = "") {
   await page.goto(`/play?avatarTest=1&avatarSeed=42${query}`);
-  await expect(page.getByTestId("avatar-status")).toContainText("VRM 3D 形象", { timeout: 60_000 });
+  await expect(page.getByTestId("avatar-status")).toHaveAttribute("data-state", "loaded", { timeout: 60_000 });
   // 她先开口（ADR-046）：等开场白念完再动手，下面只看动手以后的帧
   await expect(page.getByTestId("greeting")).toHaveAttribute("data-done", "1", { timeout: 30_000 });
 }

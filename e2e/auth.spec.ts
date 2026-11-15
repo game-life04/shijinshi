@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { expect, type Page, test } from "@playwright/test";
-import { E2E_ACCOUNT, E2E_BASE, E2E_PASSWORD } from "./accounts";
+import { E2E_ACCOUNT, E2E_BASE, E2E_GUEST, E2E_GUEST_PASSWORD, E2E_PASSWORD } from "./accounts";
 import { openSettings } from "./settings";
 
 // 账号登录（ADR-032）。3101 那台配了测试账号（e2e/accounts.ts），3100 那台不登录，两台用同一份构建、都是模拟模式。
@@ -98,12 +98,42 @@ test.describe("配了账号的服务器（3101）", () => {
     expect(hours).toBeLessThanOrEqual(168.1);
     // 登录以后 3D 形象（public 里的模型文件要带 cookie 才拿得到）和体检都照常；只在桌面尺寸上跑一次
     if (info.project.name !== "desktop-1440") return;
-    if (HAS_MODEL) await expect(page.getByTestId("avatar-status")).toContainText("VRM 3D 形象", { timeout: 60_000 });
+    // 3D 出来了：形象下面那行只剩「AI 角色 琪叶桃」（ADR-051），看 data-state
+    if (HAS_MODEL) await expect(page.getByTestId("avatar-status")).toHaveAttribute("data-state", "loaded", { timeout: 60_000 });
     await expect(page.getByText("模拟数据（非真实模型）")).toBeVisible();
     await openSettings(page);
     await page.getByLabel("最多用例").fill("1");
     await page.getByRole("button", { name: "开始体检" }).click();
     await expect(page.getByText("已完成")).toBeVisible({ timeout: 60_000 });
+  });
+
+  test("只看自己的（ADR-051）：没跑过体检的账号，攻防地图说清楚、给按钮；运行记录是「我的 / 全部」两个按钮", async ({ page }, info) => {
+    test.skip(info.project.name !== "desktop-1440", "和屏幕尺寸无关，只在桌面上跑一次（排在上面跑体检那条后面，全站一定有数）");
+    await page.goto("/login");
+    await login(page, E2E_GUEST, E2E_GUEST_PASSWORD);
+    await expect(page).not.toHaveURL(/\/login/);
+    await page.goto("/map");
+    const empty = page.getByTestId("map-empty");
+    await expect(empty).toContainText("你还没跑过体检");
+    await expect(page.getByTestId("map-summary")).toHaveCount(0);
+    await expect(empty.getByRole("link", { name: "去体检工作台" })).toHaveAttribute("href", "/workbench");
+    // 上面那条用 e2e-judge 跑过一次：全站有数，点过去看的就是全站的，按钮亮在「全站」
+    await empty.getByRole("link", { name: /^先看全站的（\d+ 次体检）$/ }).click();
+    await expect(page).toHaveURL(/\/map\?who=all/);
+    await expect(page.getByRole("navigation", { name: "看谁的" }).getByRole("link", { name: "全站" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    await expect(page.getByTestId("map-summary")).toBeVisible();
+    // 运行记录：原来那句「只列 xxx 发起的运行 · 看全部」换成两个按钮
+    await page.goto("/runs");
+    const whose = page.getByTestId("runs-whose");
+    await expect(whose.getByRole("link", { name: "我的" })).toHaveAttribute("aria-current", "page");
+    await expect(page.getByText(/发起的运行/)).toHaveCount(0);
+    await expect(page.getByText("还没有运行记录")).toBeVisible();
+    await whose.getByRole("link", { name: "全部" }).click();
+    await expect(page).toHaveURL(/\/runs\?all=1$/);
+    await expect(whose.getByRole("link", { name: "全部" })).toHaveAttribute("aria-current", "page");
   });
 
   test("点「退出」：提示已退出，再打开工作台又要登录", async ({ page }) => {

@@ -24,7 +24,7 @@ import {
   Film,
   LogOut,
   Mic,
-  MicOff,
+  RefreshCw,
   RotateCcw,
   ScrollText,
   Send,
@@ -34,7 +34,7 @@ import {
   X,
 } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isCompliment } from "@/lib/client/avatar/compliment";
 import { useAvatarStage, usePerformer } from "@/lib/client/avatar/stage";
 import { type Topic, topicOf } from "@/lib/client/avatar/topic";
@@ -49,12 +49,15 @@ import {
   LEVELS,
   type LevelId,
   PLAY_MAX_TURNS,
+  type PlayAlso,
   type PlayLayer,
   type PlayOutcome,
+  type PlaySensitive,
   TIERS,
   type Tier,
 } from "@/lib/domain/levels";
 import { DEFAULT_PERSONA, isDefaultPersona, PERSONA_STORAGE_KEY, type PersonaConfig } from "@/lib/domain/persona";
+import { caseHints, type HintCase, hintBatches } from "@/lib/domain/play-hints";
 import { type Evidence, GUARD_RULE_LABEL, type TurnRecord } from "@/lib/domain/types";
 import Avatar from "./Avatar";
 import { bubble, Chop, duration, Note, Row } from "./Chat";
@@ -72,6 +75,7 @@ const OUTCOME_LABEL: Record<PlayOutcome, string> = {
   near: "差一点",
   held: "角色守住了",
   stopped: "服务已停止",
+  sensitive: "不算闯关",
 };
 
 /** 每关几句可以点的开场白（点了填进输入框，不直接发） */
@@ -134,6 +138,10 @@ interface Attempt {
   session: string;
   /** 身份、退出两关：裁判还在后台判，判完再更新 */
   judging: boolean;
+  /** 别的关的检查也越界了（ADR-051） */
+  also?: PlayAlso[];
+  /** 说到了轻生、未成年：不算闯关，单看她接没接住（ADR-051） */
+  sensitive?: PlaySensitive;
 }
 
 interface Verdict {
@@ -141,6 +149,8 @@ interface Verdict {
   message: string;
   evidence: Evidence[];
   stopped_by: PlayLayer | null;
+  also?: PlayAlso[];
+  sensitive?: PlaySensitive;
 }
 
 async function post<T>(body: Record<string, unknown>): Promise<T> {
@@ -158,9 +168,33 @@ function trimLabel(message: string, outcome: PlayOutcome): string {
   return message.startsWith(label) ? message.slice(label.length).replace(/^[：:。，,\s]+/, "") : message;
 }
 
-/** 结果章，和工作台同一套：越界播出是墨色实印（同「不合格」），守住是朱红章（同「合格」），差一点是朱红小「拦」印 */
-function Stamp({ outcome }: { outcome: PlayOutcome }) {
+/**
+ * 结果章，和工作台同一套：越界播出是墨色实印（同「不合格」），守住是朱红章（同「合格」），差一点是朱红小「拦」印。
+ * 说到轻生、未成年（ADR-051）：接住了是朱红章，没接住是墨色实印，拿不准是淡字；不是闯关，所以不写「闯关成功」
+ */
+function Stamp({ outcome, sensitive }: { outcome: PlayOutcome; sensitive?: PlaySensitive }) {
   const kai = { fontFamily: "var(--font-kai)" };
+  if (outcome === "sensitive") {
+    const word = sensitive?.kind === "minor" ? ["守住了", "没守住"] : ["接住了", "没接住"];
+    if (sensitive?.ok === true)
+      return (
+        <span className="seal inline-flex items-center px-1.5 py-0.5 text-xs font-semibold whitespace-nowrap" data-verdict="pass">
+          {word[0]}
+        </span>
+      );
+    if (sensitive?.ok === false)
+      return (
+        <span
+          className="inline-flex items-center rounded-sm bg-foreground px-1.5 py-0.5 text-xs font-semibold whitespace-nowrap text-surface"
+          style={kai}
+          data-verdict="fail"
+        >
+          {word[1]}
+        </span>
+      );
+    // 拿不准、裁判说不涉及、服务停了、她没说话：这一句只是不算闯关，细节写在旁边那句里
+    return <Badge tone="muted">不算闯关</Badge>;
+  }
   if (outcome === "broken")
     return (
       <span
@@ -185,10 +219,53 @@ function Stamp({ outcome }: { outcome: PlayOutcome }) {
   return <span className="text-xs whitespace-nowrap text-muted">服务已停止</span>;
 }
 
+/**
+ * 结论下面再说两样（ADR-051）：别的关的检查也越界了（不算这一关的攻破、不盖那一关的印）；说到轻生时留一行求助热线
+ * （闯关是在测她，可打字的人也可能真的难受）。热线和护栏兜底句里的同一个号码（lib/server/guard.ts 的 FALLBACK.crisis）。
+ */
+function VerdictMore({ a, stage = false }: { a: Pick<Attempt, "also" | "sensitive">; stage?: boolean }) {
+  const also = a.also ?? [];
+  if (!also.length && a.sensitive?.kind !== "crisis") return null;
+  return (
+    <div className={`space-y-1 ${stage ? "text-xs" : "text-[13px]"}`} data-testid="verdict-more">
+      {also.map((x) => {
+        const n = LEVELS.findIndex((l) => l.id === x.level) + 1;
+        const why = x.reason && <span className="text-muted">（{x.reason}）</span>;
+        return (
+          <p
+            key={`${x.level}${x.here ? "-here" : ""}`}
+            className="flex flex-wrap items-baseline gap-x-1.5"
+            data-testid="verdict-also"
+            data-level={x.level}
+            data-here={x.here ? "1" : undefined}
+          >
+            <span className="rounded-[2px] border border-foreground px-1 text-[11px] leading-4 whitespace-nowrap">
+              {x.here ? "这一关" : "别处越界"}
+            </span>
+            {x.here ? (
+              <span>按这一关的检查她也越界了{why}，可这句说到了敏感话题，不算闯关、不盖印</span>
+            ) : (
+              <span>
+                她在第 {n} 关「{LEVELS[n - 1]?.title}」那条上越界了{why}。不算这一关的攻破
+              </span>
+            )}
+          </p>
+        );
+      })}
+      {a.sensitive?.kind === "crisis" && (
+        <p className="text-muted" data-testid="verdict-help">
+          如果你真的有这样的念头：可以拨打 12356 心理援助热线，或者告诉身边信任的人。
+        </p>
+      )}
+    </div>
+  );
+}
+
 /** 这一招被哪一层拦住（ADR-038）：一句话说清 */
 function layerSay(a: Pick<Attempt, "outcome" | "stopped_by" | "tier">): string {
   if (a.outcome === "broken") return a.tier === 1 ? "只有人设，没拦住" : `开着的 ${a.tier} 层都没拦住`;
   if (a.outcome === "stopped") return "规则按「说要走就停」直接停了";
+  if (a.outcome === "sensitive" && a.stopped_by === null) return "说到了敏感话题，没人拦";
   switch (a.stopped_by) {
     case "persona":
       return "她自己没说（只靠人设也守住了）";
@@ -326,9 +403,10 @@ function PlayTurn({ a, name, shown }: { a: Attempt; name: string; shown: number 
         </Row>
       )}
       <p className="flex flex-wrap items-center gap-2 text-sm" data-testid="play-outcome">
-        {a.judging ? <Badge tone="muted">裁判在判……</Badge> : <Stamp outcome={a.outcome} />}
+        {a.judging ? <Badge tone="muted">裁判在判……</Badge> : <Stamp outcome={a.outcome} sensitive={a.sensitive} />}
         <span className="text-muted">{a.judging ? a.message : trimLabel(a.message, a.outcome)}</span>
       </p>
+      {!a.judging && <VerdictMore a={a} />}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <LayerStrip a={a} />
         {!a.judging && speaking === false && (
@@ -386,6 +464,10 @@ export default function Play() {
     setSessionState(s);
   };
   const [live, setLive] = useState<boolean | null>(null);
+  /** 用例库（公开套件）里的题：「换一批」的问法从这里取（ADR-051） */
+  const [library, setLibrary] = useState<{ cases?: HintCase[] }[] | null>(null);
+  /** 「挑一句递给她」现在摆的是第几批 */
+  const [hintBatch, setHintBatch] = useState(0);
   const [attempts, setAttempts] = useState<Attempt[]>([]);
   const [pending, setPending] = useState<{ text: string; by?: AttackBy } | null>(null);
   const [left, setLeft] = useState<number>(PLAY_MAX_TURNS);
@@ -458,6 +540,11 @@ export default function Play() {
   const spokenRef = useRef<string | null>(null);
   /** 这次点「说」时输入框里已有的字：认出来的话接在后面，不把它盖掉（ADR-049 深度测试：说到一半停了再点「说」，前半句没了） */
   const speechBaseRef = useRef("");
+  /** 输入框里现在的字（语音认出来填进去的那一刻就更新，不等重新渲染）：收尾时又点「说」，新的一句接在它后面（ADR-051） */
+  const textRef = useRef("");
+  textRef.current = text;
+  /** 点了「发送」：还在听的那一句不要了（定义在 send 后面的 useSpeechInput 里，这里先留个口） */
+  const speechCancel = useRef<() => void>(() => {});
   /** 刚认出一句、还没发：输入框下面提示「看看对不对，再点发送」 */
   const [heard, setHeard] = useState(false);
 
@@ -528,8 +615,9 @@ export default function Play() {
     // 开局前就告诉你是不是模拟数据
     fetch("/api/status")
       .then((r) => (toLoginIfExpired(r.status) || !r.ok ? null : r.json()))
-      .then((s: { live?: boolean; voice?: string } | null) => {
+      .then((s: { live?: boolean; voice?: string; suites?: { cases?: HintCase[] }[] } | null) => {
         setLive(s ? Boolean(s.live) : null);
+        if (Array.isArray(s?.suites)) setLibrary(s.suites);
         // 真实的语音合成：默认让她出声（这是语音角色）；模拟发声只是凑音节，默认不放
         if (s?.voice === "dashscope" && !voiceChosen.current) {
           voiceWant.current = true;
@@ -702,6 +790,8 @@ export default function Play() {
   /** 换关卡、换层、换角色都重新开一局：口令、上下文都重新来；她先说这一关的开场白（greet: false 不说，比如示范马上要发话） */
   const reset = (next?: { level?: LevelId; tier?: Tier; fault?: boolean; greet?: boolean }) => {
     const gen = ++greetGen.current; // 排着的开场白作废
+    // 还在听的那一句不要了：换关、换层、重新开始以后，再认出来的字不往新一局的框里填（ADR-051 复查）
+    speechCancel.current();
     if (next?.level) setLevel(next.level);
     if (next?.tier) setTier(next.tier);
     if (next?.fault !== undefined) setFault(next.fault);
@@ -764,6 +854,8 @@ export default function Play() {
   ): Promise<SendResult | null> => {
     const t = (override ?? text).trim();
     if (!t || busy) return null;
+    // 还在听就点了「发送」：这一句按框里的字发，后面再认出来的不往框里填了（ADR-051）
+    if (!override) speechCancel.current();
     if (!override && spokenRef.current) spoken = true; // 语音认出来、在框里看过改过才发的
     spokenRef.current = null;
     setHeard(false);
@@ -814,6 +906,8 @@ export default function Play() {
           message: r.message,
           evidence: r.evidence,
           stopped_by: r.stopped_by,
+          also: r.also,
+          sensitive: r.sensitive,
           guarded: tr >= 3,
           tier: tr,
           by,
@@ -916,6 +1010,8 @@ export default function Play() {
    */
   const watch = async () => {
     if (busy || watching) return;
+    // AI 玩家要在输入框里打字：还在听的那一句停掉，免得认出来的字盖掉它打的（ADR-051 复查）
+    speechCancel.current();
     stopWatch.current = false;
     setWatching(true);
     greetGen.current++; // 排着的开场白作废
@@ -985,14 +1081,20 @@ export default function Play() {
   // 一开口，她要是正在说话，就当场打断她（ADR-037）
   const speech = useSpeechInput({
     onFinal: (t) => {
-      setText(joinSpeech(speechBaseRef.current, t));
+      const joined = joinSpeech(speechBaseRef.current, t);
+      textRef.current = joined;
+      setText(joined);
       spokenRef.current = t;
       setHeard(true);
       // 电脑上把焦点放到输入框，回车就发；手机上不放（一聚焦键盘就弹出来，挡住她；ADR-047 同一条规矩），点「发送」就行
       if (!window.matchMedia(SHEET_MQ).matches) inputRef.current?.focus({ preventScroll: true });
     },
     onInterim: (t) => {
-      setText(joinSpeech(speechBaseRef.current, t));
+      const joined = joinSpeech(speechBaseRef.current, t);
+      textRef.current = joined;
+      setText(joined);
+      // 还在说就点了「发送」，照样算「用嘴说的」
+      spokenRef.current = t;
       performer.cue({ type: "typing" });
     },
     onSpeechStart: () => {
@@ -1008,22 +1110,31 @@ export default function Play() {
       }
     },
   });
-  const talk = async () => {
+  speechCancel.current = speech.cancel;
+  /**
+   * 「说」/「说完了」（ADR-051）：在听的时候点，当场停（按钮马上变回「说」，最后几个字在后台认完再填进框里）；
+   * 没在听就开始听。上一句还在认最后几个字时又点了「说」：先把它填进框里，这一句接在后面。
+   * 原来要先等声音解锁（最多 1.5 秒）才开始听，这段时间按钮没反应；现在先开始听，声音在同一次点击里顺手解锁、不等它。
+   */
+  const talk = () => {
     if (speech.listening) {
       speech.stop();
       return;
     }
-    // 用嘴说的时候她也用声音回答：这次点击顺便把声音打开（浏览器要求在点击里解锁）
-    if (!voiceRef.current) {
-      // 声音打不开、或者一直没解锁（最多等 1.5 秒）也照样能说
-      await Promise.race([ensureVoice().catch(() => {}), wait(1500)]);
-    }
-    speechBaseRef.current = text;
+    speech.flush();
+    speechBaseRef.current = textRef.current;
     speech.start();
+    // 用嘴说的时候她也用声音回答：这次点击顺便把声音打开（浏览器要求在点击里解锁）；打不开也照样能说
+    if (!voiceRef.current) void ensureVoice().catch(() => {});
   };
 
   const lv = LEVELS.find((l) => l.id === level) ?? LEVELS[0];
   const levelNo = LEVELS.findIndex((l) => l.id === level) + 1;
+  // 「挑一句递给她」：第一批是写好的三句，「换一批」往后是用例库里这一关那一类的问法（ADR-051）；换关从第一批看起
+  const batches = useMemo(() => hintBatches(EXAMPLES[level], caseHints(library, level, EXAMPLES[level])), [library, level]);
+  const hints = batches[hintBatch % batches.length];
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 换关时回到第一批，只看 level
+  useEffect(() => setHintBatch(0), [level]);
   const tierInfo = TIERS.find((t) => t.tier === tier) ?? TIERS[0];
   const beatenHere = beaten[level] ?? [];
   // 只看这一局的：重新开始会清空记录，这里再按局过滤一道，旧一局晚到的东西不算数（ADR-047）
@@ -1322,10 +1433,15 @@ export default function Play() {
                   )}
                   {!speakingNow && (
                     <p className="flex flex-wrap items-center gap-2 text-sm" data-testid="stage-outcome">
-                      {current.judging ? <Badge tone="muted">裁判在判……</Badge> : <Stamp outcome={current.outcome} />}
+                      {current.judging ? (
+                        <Badge tone="muted">裁判在判……</Badge>
+                      ) : (
+                        <Stamp outcome={current.outcome} sensitive={current.sensitive} />
+                      )}
                       <span className="text-muted">{current.judging ? current.message : trimLabel(current.message, current.outcome)}</span>
                     </p>
                   )}
+                  {!speakingNow && !current.judging && <VerdictMore a={current} stage />}
                 </>
               ) : (
                 <div className="space-y-2 text-sm">
@@ -1335,6 +1451,7 @@ export default function Play() {
                       data-testid="greeting"
                       data-done={greetDone ? "1" : undefined}
                       data-voiced={greet?.voiced ? "1" : undefined}
+                      title="开场白是写好的固定句子，不经过模型，也不进对话历史"
                     >
                       <p className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted lg:text-xs">
                         <span
@@ -1345,9 +1462,6 @@ export default function Play() {
                           {name.slice(-1)}
                         </span>
                         {name}
-                        <span title="开场白是写好的固定句子，不经过模型，也不进对话历史">
-                          · 写好的开场白<span className="play-wide-only">，不经过模型</span>
-                        </span>
                         <button
                           type="button"
                           onClick={() => void hearGreeting()}
@@ -1375,21 +1489,37 @@ export default function Play() {
                   </p>
                   <p className="play-wide-only text-muted">挑一句递给她，或者自己打一句、点「说」直接讲。拦住你的那一层会变红。</p>
                   <div className="play-starters">
-                    <ul className="play-examples">
-                      {EXAMPLES[level].map((ex) => (
-                        <li key={ex}>
+                    <ul className="play-examples" data-testid="play-hints" data-batch={hintBatch % batches.length}>
+                      {hints.map((h) => (
+                        <li key={h.text}>
                           <button
                             type="button"
                             className="w-full truncate rounded-sm border border-dashed border-border px-2.5 py-1.5 text-left hover:border-foreground/40 hover:bg-surface lg:whitespace-normal"
+                            title={h.from ? `用例库 ${h.from}：${h.text}` : h.text}
+                            data-from={h.from}
                             onClick={() => {
-                              setText(ex);
+                              setText(h.text);
                               inputRef.current?.focus();
                             }}
                           >
-                            「{ex}」
+                            「{h.text}」
                           </button>
                         </li>
                       ))}
+                      {batches.length > 1 && (
+                        <li>
+                          <button
+                            type="button"
+                            className="inline-flex h-full items-center gap-1 rounded-sm px-2 py-1.5 whitespace-nowrap text-muted hover:bg-surface hover:text-foreground"
+                            onClick={() => setHintBatch((k) => (k + 1) % batches.length)}
+                            title="换几句用例库里的问法（只用公开的开发集和冒烟题）"
+                            data-testid="play-hints-more"
+                          >
+                            <RefreshCw size={13} aria-hidden />
+                            换一批
+                          </button>
+                        </li>
+                      )}
                     </ul>
                     <p className="flex flex-wrap items-center gap-2 text-xs text-muted">
                       <Button onClick={demo} disabled={locked} title="换成「故意出错」的角色、第 4 层，发上面第一句，先看一次护栏怎么拦">
@@ -1450,22 +1580,28 @@ export default function Play() {
             }}
           >
             <Button
-              onClick={() => void talk()}
+              onClick={talk}
               disabled={!speech.supported || (busy && !speech.listening) || watching || left <= 0}
               title={
-                speech.supported
-                  ? "按一下，对着麦克风说一句；认出来的话填进输入框，看看对不对再点「发送」。语音识别用的是浏览器自带的（Edge、Chrome 会把声音发到它们的识别服务），分寸不录音、不存音频"
-                  : "这个浏览器不支持语音识别，用 Edge 或 Chrome；照样可以打字"
+                !speech.supported
+                  ? "这个浏览器不支持语音识别，用 Edge 或 Chrome；照样可以打字"
+                  : speech.listening
+                    ? "在听你说：中间停顿也接着听，说完点这里（6 秒没声音也会自己收尾）"
+                    : "按一下开始说，说完再按一下；认出来的话填进输入框，看看对不对再点「发送」。语音识别用的是浏览器自带的（Edge、Chrome 会把声音发到它们的识别服务），分寸不录音、不存音频"
               }
             >
-              {speech.listening ? <MicOff size={14} aria-hidden /> : <Mic size={14} aria-hidden />}
-              {speech.listening ? "在听……" : "说"}
+              {speech.listening ? <span className="mic-live" aria-hidden /> : <Mic size={14} aria-hidden />}
+              {speech.listening ? "说完了" : "说"}
             </Button>
             <input
               ref={inputRef}
               className="play-input"
               placeholder={
-                left > 0 ? (speech.listening ? "在听你说……" : "打一句话发给角色（最多 200 字）") : "本局的话说完了，点「重新开始」"
+                left > 0
+                  ? speech.listening
+                    ? "在听你说……说完点「说完了」"
+                    : "打一句话发给角色（最多 200 字）"
+                  : "本局的话说完了，点「重新开始」"
               }
               maxLength={200}
               value={text}
@@ -1498,9 +1634,6 @@ export default function Play() {
               {voiceOn ? <Volume2 size={13} aria-hidden /> : <VolumeX size={13} aria-hidden />}
               {voiceOn ? "她用声音回答（开着）" : "她用声音回答（关着）"}
             </button>
-            <span className="play-foot-hint">
-              {tier >= 3 ? "被拦下的那句，你听不到。" : "这一局没开规则和护栏模型：她想好的话直接说出口。"}
-            </span>
             <InkDots left={left} />
           </div>
         </section>
@@ -1684,11 +1817,10 @@ export default function Play() {
             </span>
             <span
               className="cursor-help underline decoration-dotted underline-offset-2"
-              title="口令关用程序规则判；身份、退出两关先查关键词，再由裁判看语义，必须摘出原话才算（和体检同一套检查）。闯关结果只供体验，不进入体检统计。"
+              title="口令关用程序规则判；身份、退出两关先查关键词，再由裁判看语义，必须摘出原话才算（和体检同一套检查）。另外两关的检查也顺带看一眼，越界了另记一行，不算这一关的攻破；说到轻生、未成年的那一句不算闯关，单看她接没接住。闯关结果只供体验，不进入体检统计。"
             >
               怎么判的
             </span>
-            <span>角色回复和声音由 AI 生成。</span>
           </p>
         </div>
       </section>

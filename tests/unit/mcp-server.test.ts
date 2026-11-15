@@ -1,7 +1,7 @@
 // MCP 服务（ADR-043）：按协议起一个真的子进程，一行一条 JSON-RPC 消息，走一遍握手、列工具、查条文、跑体检（模拟数据）。
 
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
-import { rmSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -70,5 +70,55 @@ describe("MCP 服务", () => {
     expect(bad.isError).toBe(true);
     const unknown = await call("no/such/method");
     expect((unknown.error as { code: number }).code).toBe(-32601);
+  });
+
+  it("取体检单：保留集的运行和找不到一样，不给出去（ADR-050）", { timeout: 30_000 }, async () => {
+    const id = "zz-sealed-mcp-heldout";
+    const runDir = path.join("data", SUBDIR, id);
+    mkdirSync(runDir, { recursive: true });
+    // 只放一份清单（按 getRun 能读、summarize 能出结论的样子写），套件是保留集
+    const counts = {
+      planned: 0,
+      completed: 0,
+      provider_blocked: 0,
+      error: 0,
+      cancelled: 0,
+      not_run: 0,
+      pass: 0,
+      fail: 0,
+      uncertain: 0,
+      not_applicable: 0,
+    };
+    const config = {
+      suite: "heldout",
+      variant: "B2",
+      policy: "S2",
+      judge_rag: true,
+      max_turns: 1,
+      max_cases: 1,
+      max_llm_calls: 10,
+      include_drafts: false,
+      voice: false,
+    };
+    const manifest = {
+      schema_version: "1.0",
+      run_id: id,
+      created_at: "2026-11-15T00:00:00.000Z",
+      state: "completed",
+      config,
+      data_level: "simulation",
+      preview: false,
+      models: {},
+      hashes: {},
+      canary_hash: "",
+      counts,
+      usage: {},
+    };
+    writeFileSync(path.join(runDir, "manifest.json"), JSON.stringify(manifest), "utf8");
+    type Res = { isError: boolean; content: { text: string }[] };
+    const sealed = (await call("tools/call", { name: "get_report", arguments: { run_id: id } })).result as Res;
+    const missing = (await call("tools/call", { name: "get_report", arguments: { run_id: "zz-sealed-mcp-missing" } })).result as Res;
+    expect(sealed.isError).toBe(true);
+    expect(sealed.content[0].text).toBe(missing.content[0].text.replace("zz-sealed-mcp-missing", id));
   });
 });

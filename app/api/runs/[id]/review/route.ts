@@ -4,6 +4,7 @@ import type { Verdict } from "@/lib/domain/types";
 import { canReview, requireSession, sessionFromRequest } from "@/lib/server/auth";
 import { crossSite, readJsonObject } from "@/lib/server/http";
 import { reviewFinding } from "@/lib/server/runs";
+import { isSealedRun, NO_SUCH_RUN } from "@/lib/server/sealed";
 
 const VERDICTS: Verdict[] = ["pass", "fail", "uncertain", "not_applicable"];
 
@@ -25,6 +26,8 @@ export async function POST(req: Request, ctx: RouteContext<"/api/runs/[id]/revie
     return Response.json({ error: `改判只能改成 ${VERDICTS.join("、")}` }, { status: 400 });
   }
   try {
+    // 封存的保留集运行当作不存在（ADR-050）：和 reviewFinding 找不到运行时回的一样
+    if (isSealedRun(id)) throw new Error(NO_SUCH_RUN);
     return Response.json(reviewFinding(id, body.finding_id, body.decision, body.overturn_to as Verdict | undefined, { account }));
   } catch (e) {
     return Response.json({ error: e instanceof Error ? e.message : String(e) }, { status: 409 });

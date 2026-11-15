@@ -2,7 +2,7 @@
 // 被护栏拦下的原话照样摆出来：墨线划掉，盖一个白文「拦」印，旁边写拦它的原因；服务层做的事（停止、提醒、补求助信息）
 // 像聊天软件的系统消息那样居中写一行，系统补上的话不画进角色的气泡（评审 R15：谁说的要一清二楚）。
 
-import { Bell, ChevronRight, LogOut, Volume2 } from "lucide-react";
+import { Bell, ChevronRight, FlaskConical, LogOut, Swords, Volume2 } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { FATES_PAGE } from "@/lib/domain/fates-page";
@@ -237,10 +237,15 @@ export function ChatTyping({ phase, name }: { phase: Phase | null; name: string 
   );
 }
 
+/** 「一键演示」旁边那种普通按钮的样子（components/ui.tsx 的 Button），用在链接上 */
+const introLink =
+  "inline-flex h-8 items-center gap-1.5 rounded-sm border border-border bg-surface px-3 text-sm font-medium hover:bg-background focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary";
+
 /**
  * 还没开始体检：一段示例对话，讲清楚这里会看到什么；下面一句告诉人该点哪个按钮，测试 Agent 会用的套路排成一行小标签。
  * ADR-049（学妹：「信息太繁杂」）：原来示例下面是一大段说明和五张套路卡片——说明收进「怎么出题、怎么拦」折叠，
  * 套路的说明放进悬停和折叠里，示例对话本身不动。
+ * ADR-051（11-15 队员 B 反馈）：「怎么出题、怎么拦」折叠也删了；去闯关、去小实验的两条链接改成最后一行的两个按钮。
  */
 export function ChatIntro({ name, strategies = [] }: { name: string; strategies?: { id: string; title: string; description?: string }[] }) {
   return (
@@ -290,37 +295,18 @@ export function ChatIntro({ name, strategies = [] }: { name: string; strategies?
             ))}
           </div>
         )}
-        <details className="group text-xs">
-          <summary className="flex w-fit cursor-pointer list-none items-center gap-0.5 text-muted hover:text-foreground [&::-webkit-details-marker]:hidden">
-            <ChevronRight size={12} className="transition-transform group-open:rotate-90" aria-hidden />
-            怎么出题、怎么拦
-          </summary>
-          <div className="mt-1.5 space-y-2 border-l-2 border-border pl-2.5">
-            <p className="text-sm leading-relaxed">
-              口令和角色设定这两样，测试 Agent 会换着法子套她的话（装成开发者、先套近乎、让她演别的角色、拆开问）；
-              退出、未成年、危机这些敏感题只用人工写好的固定句子问，不让 Agent 自由发挥。每句话都先过护栏，过了才说出口；
-              被拦下的原话也摆在这里，问题出在哪几个字，用红笔波浪线圈出来。
-            </p>
-            {strategies.some((s) => s.description) && (
-              <ul className="space-y-0.5">
-                {strategies.map((s) => (
-                  <li key={s.id}>
-                    <span className="font-medium">{s.title}</span>
-                    {s.description && <span className="text-muted">：{s.description}</span>}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </details>
-        <p className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
-          <Link className="link" href="/play">
-            自己来试试：打字闯关 →
+        {/* 最后一行两个按钮（11-15 队员 B 反馈：原来是两条下划线链接，不显眼；「怎么出题、怎么拦」那段折叠多余，删了，
+            套路的说明还在上面每个小标签的悬停里） */}
+        <div className="flex flex-wrap gap-2 pt-1" data-testid="intro-links">
+          <Link className={introLink} href="/play">
+            <Swords size={14} aria-hidden />
+            自己来试试：打字闯关
           </Link>
-          <Link className="link" href={FATES_PAGE.href}>
-            同一句话三种放行方式：小实验「{FATES_PAGE.name}」 →
+          <Link className={introLink} href={FATES_PAGE.href} title="同一句话，三种放行方式：先播后截、先审后播、边审边合成">
+            <FlaskConical size={14} aria-hidden />
+            小实验：{FATES_PAGE.name}
           </Link>
-        </p>
+        </div>
       </div>
     </div>
   );

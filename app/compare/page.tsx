@@ -16,6 +16,7 @@ import { caseLayers, passTally } from "@/lib/domain/layers";
 import { DEFAULT_PERSONA, lineDiff } from "@/lib/domain/persona";
 import { FAMILY_LABEL, GUARDED_VARIANTS, type RunManifest } from "@/lib/domain/types";
 import { compatibility, getReport, type ReportModel } from "@/lib/server/runs";
+import { isSealedRun, sealedSuiteMatcher } from "@/lib/server/sealed";
 
 export const dynamic = "force-dynamic";
 
@@ -76,9 +77,11 @@ export default async function ComparePage({ searchParams }: PageProps<"/compare"
   if (!a || !b) return <Missing text="要先选两次运行：改之前的一次（A）和改之后的一次（B）。" />;
   let A: ReportModel | null = null;
   let B: ReportModel | null = null;
+  // 封存的保留集运行当作找不到（ADR-050）
+  const sealed = sealedSuiteMatcher();
   try {
-    A = getReport(a);
-    B = getReport(b);
+    A = isSealedRun(a, sealed) ? null : getReport(a);
+    B = isSealedRun(b, sealed) ? null : getReport(b);
   } catch {
     // 编号不合法时当成找不到
   }

@@ -151,6 +151,7 @@ export function Button({
   title,
   type = "button",
   id,
+  size = "md",
 }: {
   children: ReactNode;
   onClick?: () => void;
@@ -159,6 +160,8 @@ export function Button({
   title?: string;
   type?: "button" | "submit";
   id?: string;
+  /** sm：矮一号（工作台配置条里用，ADR-051） */
+  size?: "md" | "sm";
 }) {
   const style =
     variant === "primary"
@@ -173,7 +176,7 @@ export function Button({
       title={title}
       disabled={disabled}
       onClick={onClick}
-      className={`inline-flex h-8 items-center gap-1.5 rounded-sm px-3 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:opacity-50 ${style}`}
+      className={`inline-flex ${size === "sm" ? "h-7 px-2.5 text-[13px]" : "h-8 px-3 text-sm"} items-center gap-1.5 rounded-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:opacity-50 ${style}`}
     >
       {children}
     </button>

@@ -809,7 +809,6 @@ export default function Fates({ live }: { live: boolean }) {
               每一遍都是点了按钮以后真跑的，数字是这一次的实测。
             </p>
           )}
-          <p className="text-xs text-muted">声音由程序合成，不是真人录音。</p>
           {order.join() !== "0,1,2" && (
             <p className="text-xs text-muted" data-testid="fates-order">
               这次的播放次序（实验用）：{order.map((i) => FATES[i].name).join(" → ")}

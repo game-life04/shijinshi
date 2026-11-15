@@ -20,7 +20,7 @@ describe("fetchModel", () => {
     expect(new Uint8Array(await later)).toEqual(new Uint8Array([1, 2, 3]));
     expect(fetchMock).toHaveBeenCalledTimes(1);
     // 和原来 GLTFLoader 的请求一样：只带同源凭据
-    expect(fetchMock).toHaveBeenCalledWith("/models/a.vrm", { credentials: "same-origin" });
+    expect(fetchMock).toHaveBeenCalledWith("/models/a.vrm", { credentials: "same-origin", priority: "low" });
     // 下载完以后再要（换了一页）：还是这一份，不再发请求
     await fetchModel("/models/a.vrm");
     expect(fetchMock).toHaveBeenCalledTimes(1);

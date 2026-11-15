@@ -1,9 +1,10 @@
 // 工作台初始化用：当前是真实模型还是模拟、用的模型、可用套件及其校验结果、已登记的策略。
+// 套件只给公开的：保留集封存，题目不经这里发出去（ADR-050）。
 
-import { listSuites } from "@/lib/domain/cases";
 import { requireSession } from "@/lib/server/auth";
 import { isLive, modelFor } from "@/lib/server/llm";
 import { loadKb } from "@/lib/server/rag";
+import { publicSuites } from "@/lib/server/sealed";
 import { loadStrategies } from "@/lib/server/tester";
 import { ttsProvider } from "@/lib/server/tts";
 
@@ -14,7 +15,7 @@ export async function GET(req: Request) {
   const denied = requireSession(req);
   if (denied) return denied;
   try {
-    const suites = listSuites().map((s) => ({
+    const suites = publicSuites().map((s) => ({
       id: s.id,
       file: s.file,
       errors: s.errors,

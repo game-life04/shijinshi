@@ -101,18 +101,24 @@ export default function Avatar({
   };
   useEffect(() => () => window.clearTimeout(greetTimer.current), []);
   const status = (
-    <p className="mt-1 text-center text-[11px] text-muted" data-testid="avatar-status">
+    <p
+      className="mt-1 text-center text-[11px] text-muted"
+      data-testid="avatar-status"
+      data-state={fallback ? "fallback" : loaded ? "loaded" : "loading"}
+    >
       <span className="mr-1 rounded-sm bg-foreground px-1 text-surface">AI 角色</span>
-      {/* 三段：是谁、形象怎么来的、不是真人。舞台很矮时（小屏手机）样式表把中间一段收起来；再窄，名字也收起来，
-          只留「AI 角色 · 不是真人」（globals.css 里 .play-avatar 的 @container） */}
+      {/* 常驻的只有「AI 角色」和名字（ADR-051，11-15 队员 B：名字后面的都不需要）：原来还写「VRM 3D 形象」「不是真人」，
+          AI 标识顶栏一直挂着。形象还在下载、没加载出来时，名字后面临时写一句，出来了就没有。
+          舞台很矮时（小屏手机）样式表把这一句收起来；再窄，名字也收起来，只留「AI 角色」（globals.css 里 .play-avatar 的 @container） */}
       <span className="avatar-status-name">
         {subjectName && subjectName !== "琪叶桃" ? `形象：琪叶桃（示意）· 被测角色：${subjectName}` : "琪叶桃"}
       </span>
-      <span className="avatar-status-how">
-        {" · "}
-        {fallback ? `3D 形象没加载出来，先显示静态图（${fallback}）` : loaded ? "VRM 3D 形象" : "正在加载 3D 形象……"}
-      </span>
-      <span className="avatar-status-real"> · 不是真人</span>
+      {(fallback || !loaded) && (
+        <span className="avatar-status-how">
+          {" · "}
+          {fallback ? `3D 形象没加载出来，先显示静态图（${fallback}）` : "正在加载 3D 形象……"}
+        </span>
+      )}
     </p>
   );
   // 静态图（评审 R48，scripts/avatar-stills.ts 用同一个模型、同样的取景渲的）：3D 出来之前先显示它，出来以后淡出；

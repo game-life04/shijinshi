@@ -27,6 +27,7 @@ process.chdir(path.resolve(__dirname, ".."));
 const { createRun, getRun, startRun } = require("../lib/server/runs") as typeof import("../lib/server/runs");
 const { retrieve } = require("../lib/server/rag") as typeof import("../lib/server/rag");
 const { getSuite } = require("../lib/domain/cases") as typeof import("../lib/domain/cases");
+const { isSealedRun } = require("../lib/server/sealed") as typeof import("../lib/server/sealed");
 const { isLive } = require("../lib/server/llm") as typeof import("../lib/server/llm");
 const { FAMILIES, FAMILY_LABEL } = require("../lib/domain/types") as typeof import("../lib/domain/types");
 type RunView = NonNullable<ReturnType<typeof getRun>>;
@@ -164,7 +165,8 @@ async function runCheckup(args: Record<string, unknown>) {
 function getReport(args: Record<string, unknown>) {
   const id = str(args.run_id, 80);
   if (!id || !/^[\w-]+$/.test(id)) throw new ToolError("run_id 不对");
-  const v = getRun(id);
+  // 保留集封存（ADR-050）：保留集的运行和找不到一样，题目和对话不经这里给出去
+  const v = isSealedRun(id) ? null : getRun(id);
   if (!v) throw new ToolError(`没有找到体检 ${id}`);
   return summarize(v);
 }

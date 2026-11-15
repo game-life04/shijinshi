@@ -604,7 +604,7 @@ export default function Workbench() {
       {/* 顶上一行（R05；ADR-049 改短成一句）：给谁用、做什么、对照哪部法规。右边是这次的结果算不算数（草稿题、模拟数据）和「怎么用」；
           「改了再测」四步路标（R22）和三栏各看什么收在「怎么用」里。「怎么用」的卡片紧跟在按钮后面（键盘按 Tab 直接进卡片），浮在下面 */}
       <div className="relative flex flex-wrap items-center gap-x-3 gap-y-1.5 px-1">
-        <p className="min-w-0 flex-1 basis-[20rem] text-xs leading-relaxed text-muted sm:text-[13px]">
+        <p className="min-w-0 flex-1 basis-[20rem] text-[11px] leading-relaxed text-muted sm:text-xs">
           给 AI 陪聊、AI 玩具这类会说话的角色做上线前的安全体检，对照
           <span className="text-foreground" title={LAW_EFFECTIVE}>
             {LAW_FULL}
@@ -655,12 +655,12 @@ export default function Workbench() {
 
       {/* 配置条：被测配置、被测角色、语音播放、一键演示、开始体检，其余收进「实验设置」（R06）。
           放不下就折到下一行，不会把按钮挤出屏幕（ADR-049 复查：排成一行不许折时，长角色名把「开始体检」挤出去了） */}
-      <div className="space-y-2 rounded-sm border border-border bg-surface px-2.5 py-2 text-sm">
-        <div className="flex flex-wrap items-end gap-x-2.5 gap-y-2">
-          <label className="flex min-w-0 max-w-full flex-col gap-0.5" title={VARIANT_HINT[variant]}>
-            <span className="text-xs text-muted">被测配置</span>
+      <div className="space-y-1.5 rounded-sm border border-border bg-surface px-2.5 py-1.5 text-[13px]">
+        <div className="flex flex-wrap items-end gap-x-2.5 gap-y-1.5 sm:items-center">
+          <label className="flex min-w-0 max-w-full flex-col gap-0.5 sm:flex-row sm:items-center sm:gap-1.5" title={VARIANT_HINT[variant]}>
+            <span className="shrink-0 text-xs text-muted">被测配置</span>
             <select
-              className="h-8 max-w-[26rem] rounded border border-border bg-surface px-1"
+              className="h-7 min-w-0 max-w-[26rem] rounded border border-border bg-surface px-1"
               value={variant}
               onChange={(e) => setVariant(e.target.value as SubjectVariant)}
               disabled={Boolean(running)}
@@ -672,14 +672,14 @@ export default function Workbench() {
               ))}
             </select>
           </label>
-          <div className="flex min-w-0 max-w-full flex-col gap-0.5">
-            <span className="text-xs text-muted">被测角色</span>
+          <div className="flex min-w-0 max-w-full flex-col gap-0.5 sm:flex-row sm:items-center sm:gap-1.5">
+            <span className="shrink-0 text-xs text-muted">被测角色</span>
             {/* 角色名最长 20 个字：名字那一段可以截短（鼠标停上去看全名），按钮整个也能缩，不把右边的按钮挤出去 */}
             <button
               type="button"
               onClick={() => setPersonaOpen((o) => !o)}
               aria-expanded={personaOpen}
-              className="inline-flex h-8 min-w-0 max-w-full items-center gap-1 rounded border border-border bg-surface px-2 hover:bg-background"
+              className="inline-flex h-7 min-w-0 max-w-full items-center gap-1 rounded border border-border bg-surface px-2 hover:bg-background"
               data-testid="persona-toggle"
               title={`${persona.name}${isDefaultPersona(persona) ? "（默认）" : "（你的设定）"}：粘贴你自己角色的人设和边界提示，改一处再测`}
             >
@@ -692,7 +692,7 @@ export default function Workbench() {
             </button>
           </div>
           <label
-            className="flex h-8 shrink-0 items-center gap-1 whitespace-nowrap"
+            className="flex h-7 shrink-0 items-center gap-1 whitespace-nowrap"
             title="放行的句子合成语音，在浏览器播放并计量；每轮播完才进入下一轮"
           >
             <input type="checkbox" checked={voice} onChange={(e) => setVoice(e.target.checked)} disabled={Boolean(running)} />
@@ -704,7 +704,7 @@ export default function Workbench() {
             aria-expanded={settingsOpen}
             aria-controls="run-settings"
             title={settingsOpen ? undefined : `实验设置：${settingsSummary}`}
-            className="inline-flex h-8 min-w-0 max-w-full items-center gap-1 rounded px-1.5 text-xs text-muted hover:bg-background hover:text-foreground"
+            className="inline-flex h-7 min-w-0 max-w-full items-center gap-1 rounded px-1.5 text-xs text-muted hover:bg-background hover:text-foreground"
           >
             <ChevronDown size={14} className={`shrink-0 transition-transform ${settingsOpen ? "rotate-180" : ""}`} aria-hidden />
             <span className="shrink-0 whitespace-nowrap">实验设置</span>
@@ -713,6 +713,7 @@ export default function Workbench() {
           <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
             {!running && (
               <Button
+                size="sm"
                 onClick={() => void start(true)}
                 disabled={busy || Boolean(personaProblem)}
                 title="演示用的是「故意出错」的角色：故意设成会越界（说口令、自称真人、挽留），用来看护栏怎么拦；开语音，只跑四道题，约一分钟"
@@ -723,6 +724,7 @@ export default function Workbench() {
             )}
             {!running && (
               <Button
+                size="sm"
                 variant="primary"
                 onClick={() => void start()}
                 disabled={busy || !suiteInfo || suiteInfo.errors.length > 0 || Boolean(personaProblem) || plannedCount === 0}
@@ -733,19 +735,19 @@ export default function Workbench() {
               </Button>
             )}
             {manifest?.state === "running" && (
-              <Button onClick={() => act("pause")} title="当前用例跑完后暂停，不再派发新用例">
+              <Button size="sm" onClick={() => act("pause")} title="当前用例跑完后暂停，不再派发新用例">
                 <Pause size={14} aria-hidden />
                 暂停
               </Button>
             )}
             {(manifest?.state === "paused" || manifest?.state === "pausing") && (
-              <Button onClick={() => act("resume")}>
+              <Button size="sm" onClick={() => act("resume")}>
                 <Play size={14} aria-hidden />
                 继续
               </Button>
             )}
             {running && (
-              <Button id="stop-run" variant="danger" onClick={() => act("cancel")} title="立即中止当前用例，不可恢复">
+              <Button size="sm" id="stop-run" variant="danger" onClick={() => act("cancel")} title="立即中止当前用例，不可恢复">
                 <Square size={14} aria-hidden />
                 终止
               </Button>
@@ -909,7 +911,7 @@ export default function Workbench() {
           />
         )}
         {/* 三栏（ADR-049）：中间的对话是主角，最宽；左右两栏定宽、窄一点。
-            左栏不窄于 15.5rem：再窄，她下面那行「AI 角色 琪叶桃 · VRM 3D 形象 · 不是真人」会折行，掉下一个「人」 */}
+            左栏不窄于 15.5rem（ADR-049 定的；那时她下面那行是「AI 角色 琪叶桃 · VRM 3D 形象 · 不是真人」，ADR-051 起只剩「AI 角色 琪叶桃」） */}
         <div className="grid min-h-0 flex-1 gap-2 lg:grid-cols-[15.5rem_minmax(0,1fr)_19.5rem] lg:grid-rows-[minmax(0,1fr)] lg:gap-2.5 xl:grid-cols-[15.5rem_minmax(0,1fr)_22rem] 2xl:grid-cols-[17rem_minmax(0,1fr)_25rem]">
           {/* 左：角色 + 用例进度（淡一点，不抢中间对话的眼） */}
           <div className={`${panelClass("cases")} min-h-0 flex-col gap-2 lg:overflow-y-auto`}>

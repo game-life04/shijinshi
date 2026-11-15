@@ -24,7 +24,9 @@ test("VRM 形象加载后在动，说话时口型跟着声音", async ({ page },
     if (/preload/i.test(m.text())) notes.push(m.text());
   });
   await page.goto("/workbench");
-  await expect(page.getByTestId("avatar-status")).toContainText("VRM 3D 形象", { timeout: 60_000 });
+  await expect(page.getByTestId("avatar-status")).toHaveAttribute("data-state", "loaded", { timeout: 60_000 });
+  // 出来以后形象下面只写「AI 角色」和名字（ADR-051：「VRM 3D 形象」「不是真人」删了，AI 标识顶栏一直挂着）
+  await expect(page.getByTestId("avatar-status").first()).toHaveText(/^AI 角色\s*琪叶桃$/);
   await expect(page.locator('link[rel="preload"][href*="qiyetao.vrm"]')).toHaveCount(0);
   expect(downloads.length).toBe(1);
   expect(others).toEqual([]);

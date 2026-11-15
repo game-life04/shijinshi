@@ -2,7 +2,8 @@
 //   - 时间按北京时间写，不再只露格林尼治时间的运行编号（编号在体检单链接的悬停里）；状态、配置都写中文；
 //   - 「拦截」改叫「平台拒答」：那是模型平台自己的内容审核挡下的，和护栏的「拦」不是一回事；补上「不适用」；
 //   - 三种结局、一键演示这类只跑几道指定题的运行收进单独一组，不和完整体检混在一起；
-//   - 配了账号时默认只列自己发起的，可以切到「全部」。
+//   - 配了账号时默认只列自己发起的，可以切到「全部」。ADR-051（11-15 队员 B：小字多余）：原来那句「只列 xxx 发起的运行 · 看全部」
+//     改成标题旁边「我的 / 全部」两个按钮。
 // listRuns 是服务端函数，分组、筛选只在这一页做。
 
 import Link from "next/link";
@@ -14,6 +15,7 @@ import { DEFAULT_PERSONA } from "@/lib/domain/persona";
 import type { RunManifest } from "@/lib/domain/types";
 import { authConfig } from "@/lib/server/auth";
 import { listRuns } from "@/lib/server/runs";
+import { publicRuns } from "@/lib/server/sealed";
 import { getSession } from "@/lib/server/session";
 
 export const dynamic = "force-dynamic";
@@ -68,13 +70,18 @@ function row(m: RunManifest): RunRow {
   };
 }
 
+/** 「我的 / 全部」：选中的墨底白字，没选的描边（和攻防地图的筛选按钮一个意思） */
+const seg = (on: boolean) =>
+  `inline-flex h-7 items-center rounded-sm border px-2.5 ${on ? "border-foreground bg-foreground text-surface" : "border-border bg-surface hover:bg-background"}`;
+
 export default async function RunsPage({ searchParams }: PageProps<"/runs">) {
   const sp = await searchParams;
   const a = typeof sp.a === "string" ? sp.a : undefined;
   const b = typeof sp.b === "string" ? sp.b : undefined;
   const all = sp.all === "1";
   const me = authConfig().mode === "accounts" ? (await getSession())?.account : undefined;
-  const runs = listRuns();
+  // 封存的保留集运行不列（ADR-050）
+  const runs = publicRuns(listRuns());
   const shown = me && !all ? runs.filter((r) => r.created_by === me) : runs;
   // 只跑指定几道题的（三种结局每播一遍一题、一键演示四题）单独一组
   const picked = (r: RunManifest) => Boolean(r.config.case_ids?.length);
@@ -87,12 +94,14 @@ export default async function RunsPage({ searchParams }: PageProps<"/runs">) {
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h1 className="text-xl font-semibold">运行记录</h1>
           {me && (
-            <p className="text-xs text-muted">
-              {all ? "全部账号的运行" : `只列 ${me} 发起的运行`} ·{" "}
-              <Link className="link" href={all ? "/runs" : "/runs?all=1"}>
-                {all ? "只看我的" : `看全部（${runs.length}）`}
+            <nav className="flex items-center gap-1.5 text-xs" aria-label="看谁的运行" data-testid="runs-whose">
+              <Link className={seg(!all)} href="/runs" aria-current={!all ? "page" : undefined}>
+                我的
               </Link>
-            </p>
+              <Link className={seg(all)} href="/runs?all=1" aria-current={all ? "page" : undefined} title="所有账号发起的运行">
+                全部
+              </Link>
+            </nav>
           )}
         </div>
         {!shown.length && <p className="text-muted">还没有运行记录。到「体检工作台」开始一次体检。</p>}

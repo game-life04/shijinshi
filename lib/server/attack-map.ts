@@ -8,6 +8,7 @@ import path from "node:path";
 import { type AttackMap, buildAttackMap, type MapLayer } from "../domain/attack-map";
 import { type DataLevel, GUARDED_VARIANTS, type RunManifest, type SubjectVariant } from "../domain/types";
 import { getRun, listRuns } from "./runs";
+import { publicRuns } from "./sealed";
 import { loadStrategies } from "./tester";
 
 export const MAP_VARIANTS: SubjectVariant[] = ["B0", "B1", "B2"];
@@ -28,7 +29,8 @@ export function mapRuns(): RunManifest[] {
     if (!suiteExists.has(s)) suiteExists.set(s, existsSync(path.join(process.cwd(), "suites", `${s}.jsonl`)));
     return suiteExists.get(s);
   };
-  return listRuns().filter(
+  // 封存的保留集运行不上地图（ADR-050）
+  return publicRuns(listRuns()).filter(
     (m) =>
       m.state === "completed" &&
       !m.config.persona &&

@@ -1,4 +1,7 @@
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import { expect, type Page, test } from "@playwright/test";
+import { openSettings } from "./settings";
 
 // 截图默认写到 test-results；设 UPDATE_EVIDENCE=1 才更新仓库里的证据截图（docs/evidence）
 const SHOTS = process.env.UPDATE_EVIDENCE ? "docs/evidence/screenshots/m1" : "test-results/screenshots/m1";
@@ -9,6 +12,27 @@ async function startRun(page: Page, variant?: string) {
   if (variant) await page.getByLabel("被测配置").selectOption(variant);
   await page.getByRole("button", { name: "开始体检" }).click();
 }
+
+test("还没开始体检：去闯关、去小实验是最后一行两个按钮，「怎么出题、怎么拦」删了；顶栏 AI 标识不再写「回复和声音由 AI 生成」（ADR-051）", async ({
+  page,
+}, info) => {
+  test.skip(info.project.name === "laptop-1280", "桌面和手机各看一次");
+  await page.goto("/workbench");
+  await expect(page.getByText("模拟数据（非真实模型）")).toBeVisible();
+  if (info.project.name === "phone-390") await page.getByRole("tab", { name: "对话" }).click();
+  const links = page.getByTestId("intro-links");
+  await expect(links.getByRole("link", { name: "自己来试试：打字闯关" })).toHaveAttribute("href", "/play");
+  await expect(links.getByRole("link", { name: /^小实验：/ })).toHaveAttribute("href", "/fates");
+  await expect(page.getByText("怎么出题、怎么拦")).toHaveCount(0);
+  // 两个按钮在同一行、一样高（像按钮，不是下划线链接）
+  const [a, b] = await links.getByRole("link").evaluateAll((els) => els.map((e) => e.getBoundingClientRect()));
+  expect(Math.abs(a.top - b.top) < 2 || info.project.name === "phone-390").toBe(true);
+  expect(a.height).toBeGreaterThanOrEqual(30);
+  // 顶栏的 AI 标识还在（法规要求显著提示），只是不再写「回复和声音由 AI 生成」（悬停里有）
+  const chip = page.getByRole("banner").getByTitle(/回复和声音由 AI 生成/);
+  await expect(chip).toBeVisible();
+  await expect(chip).not.toContainText("回复和声音由 AI 生成");
+});
 
 test("完整体检：从开始到报告，分母对得上，证据可见", async ({ page }, info) => {
   await startRun(page);
@@ -53,6 +77,17 @@ test("用例库、运行记录、设置三个视图可以打开", async ({ page 
   // 每套用例各一个校验结果（11-08 起有冒烟题和开发集两套）：都要通过
   await expect(page.getByText("校验通过").first()).toBeVisible();
   await expect(page.getByText(/校验失败/)).toHaveCount(0);
+  // 按类别收起来（ADR-051）：开发集七类各一行、默认都收着；顶上那段文件和校验的说明删了
+  const dev = page.locator('[data-testid="suite"][data-suite="dev"]');
+  await expect(dev.getByTestId("suite-family")).toHaveCount(7);
+  await expect(dev.locator("details[open]")).toHaveCount(0);
+  await expect(page.getByText(/用例文件在/)).toHaveCount(0);
+  await expect(page.getByText("DEV-002", { exact: true })).toBeHidden();
+  const canary = dev.locator('[data-family="CANARY"]');
+  await expect(canary).toContainText("无害口令不外泄");
+  await expect(canary).toContainText("3 题");
+  await canary.locator("summary").click();
+  await expect(page.getByText("DEV-002", { exact: true })).toBeVisible();
   await page.screenshot({ path: `${SHOTS}/suites-${info.project.name}.png`, fullPage: true });
   await page.goto("/runs");
   await expect(page.getByRole("heading", { name: "运行记录" })).toBeVisible();
@@ -60,4 +95,90 @@ test("用例库、运行记录、设置三个视图可以打开", async ({ page 
   await page.goto("/settings");
   await expect(page.getByText(/共 32 条/)).toBeVisible();
   await page.screenshot({ path: `${SHOTS}/settings-${info.project.name}.png`, fullPage: true });
+});
+
+test("保留集封存：用例库只写一行，工作台选不到，接口不给、不给跑（ADR-050）", async ({ page }, info) => {
+  test.skip(info.project.name === "laptop-1280", "和屏幕尺寸无关，桌面和手机各查一次");
+  await page.goto("/suites");
+  const sealed = page.getByTestId("sealed-suite");
+  await expect(sealed).toHaveCount(1);
+  await expect(sealed).toContainText("封存");
+  await expect(sealed).toContainText("保留集 28 题");
+  // 页面上没有保留集的题号（只查有没有，不读题目）
+  await expect(page.getByText(/HOLD-\d/)).toHaveCount(0);
+  await page.goto("/workbench");
+  await expect(page.getByText("模拟数据（非真实模型）")).toBeVisible();
+  await openSettings(page);
+  const options = await page
+    .getByLabel("用例套件")
+    .locator("option")
+    .evaluateAll((os) => os.map((o) => (o as HTMLOptionElement).value));
+  expect(options).toEqual(["dev", "smoke"]);
+  // 接口上也一样：状态里没有保留集，拿保留集开跑回 403
+  const body = (await (await page.request.get("/api/status")).json()) as { suites: { id: string }[] };
+  expect(body.suites.map((s) => s.id)).toEqual(["dev", "smoke"]);
+  expect(/HOLD-\d/.test(JSON.stringify(body))).toBe(false);
+  const run = await page.request.post("/api/runs", { data: { suite: "heldout" } });
+  expect(run.status()).toBe(403);
+  expect(((await run.json()) as { error: string }).error).toBe("保留集是封存的，网页上不能跑");
+});
+
+test("保留集的运行记录：运行记录、体检单、前后对比、攻防地图上都没有（ADR-050）", async ({ page }, info) => {
+  test.skip(info.project.name !== "desktop-1440", "只看服务端给不给，在桌面上查一次");
+  // 照抄一条跑完的运行，套件名改成保留集（题目还是冒烟题的，不碰真的保留集）；按攻防地图能收的样子改成 B2、S2
+  const dir = path.join("data", "runs-e2e");
+  const done = (d: string) => {
+    try {
+      const m = JSON.parse(readFileSync(path.join(dir, d, "manifest.json"), "utf8"));
+      return m.state === "completed" && !m.config.case_ids?.length && existsSync(path.join(dir, d, "results.jsonl"));
+    } catch {
+      return false;
+    }
+  };
+  const src = existsSync(dir) ? readdirSync(dir).find(done) : undefined;
+  test.skip(!src, "还没有跑完的运行可以照抄");
+  const from = path.join(dir, src as string);
+  const id = "zz-e2e-sealed-heldout";
+  const to = path.join(dir, id);
+  mkdirSync(to, { recursive: true });
+  for (const f of ["results.jsonl", "events.jsonl"]) if (existsSync(path.join(from, f))) copyFileSync(path.join(from, f), path.join(to, f));
+  const m = JSON.parse(readFileSync(path.join(from, "manifest.json"), "utf8"));
+  Object.assign(m, { run_id: id, created_at: new Date().toISOString() });
+  Object.assign(m.config, { suite: "heldout", variant: "B2", policy: "S2", guard_delay_ms: 0 });
+  delete m.config.persona;
+  writeFileSync(path.join(to, "manifest.json"), JSON.stringify(m), "utf8");
+  try {
+    await page.goto("/runs");
+    await expect(page.locator('a[href^="/reports/"]').first()).toBeVisible();
+    await expect(page.locator(`a[href*="${id}"]`)).toHaveCount(0);
+    expect((await page.goto(`/reports/${id}`))?.status()).toBe(404);
+    await page.goto(`/compare?a=${src}&b=${id}`);
+    await expect(page.getByText("找不到其中一次运行")).toBeVisible();
+    await page.goto("/map?suite=heldout");
+    await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+    await expect(page.getByText(/heldout|保留集/)).toHaveCount(0);
+    expect((await page.request.get(`/api/runs/${id}`)).status()).toBe(404);
+  } finally {
+    rmSync(to, { recursive: true, force: true });
+  }
+});
+
+test("切页面（ADR-051）：数据还没到，点下去顶栏就换到那一项，先出占位，到了换成真的页面", async ({ page }, info) => {
+  test.skip(info.project.name !== "desktop-1440", "和屏幕尺寸无关，只在桌面上跑一次");
+  await page.goto("/settings");
+  // 顶栏的链接进了屏幕，浏览器会先把各页的占位取好：等它取完
+  await page.waitForLoadState("networkidle");
+  // 只拖慢点下去以后要的那份页面数据（模拟跨境线路慢），先取好的占位不拖
+  await page.route("**/runs?_rsc=*", async (route) => {
+    const h = route.request().headers();
+    const prefetch = Object.keys(h).some((k) => k.startsWith("next-router-prefetch") || k.startsWith("next-router-segment-prefetch"));
+    if (!prefetch) await new Promise((r) => setTimeout(r, 2000));
+    await route.continue();
+  });
+  await page.locator('header nav a[href="/runs"]').click();
+  await expect(page.getByTestId("page-loading")).toBeVisible({ timeout: 1000 });
+  await expect(page.locator('header nav a[aria-current="page"]')).toHaveAttribute("href", "/runs");
+  await expect(page.getByTestId("page-loading")).toContainText("正在打开「运行记录」");
+  await expect(page.getByRole("heading", { name: "运行记录" })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("page-loading")).toHaveCount(0);
 });

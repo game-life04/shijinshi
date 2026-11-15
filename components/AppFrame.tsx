@@ -50,8 +50,12 @@ export interface AppFrameProps {
   account?: ReactNode;
 }
 
-/** 常驻的 AI 标识；窄屏上放不下整句，只留「AI 角色 · 不是真人」 */
-const AI_NOTICE = "被测对象是 AI 角色，不是真人 · 回复和声音由 AI 生成";
+/**
+ * 常驻的 AI 标识；窄屏上放不下整句，只留「AI 角色 · 不是真人」。
+ * ADR-051（11-15 队员 B：介绍是不是 AI 生成的小字太多）：「回复和声音由 AI 生成」挪进悬停说明；
+ * 各页里重复的同类小字删了，AI 标识只留这里和舞台上「AI 角色」两处（法规要求显著提示，体检本身也查这一条）。
+ */
+const AI_NOTICE = "被测对象是 AI 角色，不是真人";
 
 export default function AppFrame({ children, active, fill = false, account }: AppFrameProps) {
   const shell = fill === "always" ? "app-fill" : fill ? "min-h-screen lg:h-dvh lg:min-h-0" : "min-h-screen";
@@ -92,7 +96,7 @@ export default function AppFrame({ children, active, fill = false, account }: Ap
         <div className="app-header-side">
           <span
             className="inline-flex shrink-0 items-center gap-1 rounded-sm border border-foreground/40 px-2 py-0.5 text-xs whitespace-nowrap text-foreground"
-            title={`${AI_NOTICE}。依据《人工智能生成合成内容标识办法》和《人工智能拟人化互动服务管理暂行办法》第十八条`}
+            title={`${AI_NOTICE}，回复和声音由 AI 生成。依据《人工智能生成合成内容标识办法》和《人工智能拟人化互动服务管理暂行办法》第十八条`}
           >
             <span
               className="rounded-[2px] bg-foreground px-1 text-[11px] leading-4 text-surface"

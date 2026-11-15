@@ -6,6 +6,7 @@ import { rateLimit, rateLimitEnabled } from "@/lib/server/access";
 import { requireSession, sessionFromRequest } from "@/lib/server/auth";
 import { crossSite, readJsonObject } from "@/lib/server/http";
 import { createRun, listRuns, startRun } from "@/lib/server/runs";
+import { publicRuns, sealedSuiteMatcher } from "@/lib/server/sealed";
 
 const POLICIES = Object.keys(POLICY_LABEL) as ReleasePolicy[];
 
@@ -65,6 +66,10 @@ export async function POST(req: Request) {
     // 和默认角色一字不差时不记，运行清单里没有 persona 就表示默认角色
     persona: persona.value && !isDefaultPersona(persona.value) ? persona.value : undefined,
   };
+  // 保留集封存（ADR-050）：网页上不能拿它跑（正式实验在命令行里跑）。查最后真用的套件，放在限流前面：被拒的不算开跑次数
+  if (sealedSuiteMatcher()(config.suite)) {
+    return Response.json({ error: "保留集是封存的，网页上不能跑" }, { status: 403 });
+  }
   const limited = rateLimit(req, "run");
   if (limited) return limited;
   try {
@@ -79,5 +84,5 @@ export async function POST(req: Request) {
 export async function GET(req: Request) {
   const denied = requireSession(req);
   if (denied) return denied;
-  return Response.json(listRuns());
+  return Response.json(publicRuns(listRuns()));
 }

@@ -8,6 +8,9 @@
 //   「拦住攻击的是哪一层」改成一层一行的条（她自己没说 → 规则 → 护栏模型 → 没拦住），三档对照时三档并排；
 //   筛选的叫法改短（看哪一档 / 按哪句算 / 用哪批题 / 用哪几次），默认值不变；「怎么数的」留两行，其余收进「详细规则」。
 //   数字一个不改：都直接取 AttackMap（说法在 ./summary.ts，各块在 ./parts.tsx）。
+// 只看自己的（ADR-051，11-15 队员 B：「还没开始测，为什么就有标记和统计图」——原来画的是全站所有人跑过的体检）：
+//   配了账号时默认只数自己发起的（和运行记录页一样），自己还没跑过就说清楚、给去工作台的按钮，可以切到「全站」；
+//   没配账号（本机、评委自己电脑上）不分人。结论下面那行小字（真实模型 · 哪批题 · 哪一档）删了：上面的筛选已经写着。
 
 import Link from "next/link";
 import AppShell from "@/components/AppShell";
@@ -15,13 +18,16 @@ import { VARIANT_SHORT } from "@/components/wording";
 import { type MapLayer, OPENING } from "@/lib/domain/attack-map";
 import type { DataLevel, SubjectVariant } from "@/lib/domain/types";
 import { attackMap, MAP_VARIANTS, mapRuns } from "@/lib/server/attack-map";
+import { authConfig } from "@/lib/server/auth";
+import { getSession } from "@/lib/server/session";
 import { loadStrategies } from "@/lib/server/tester";
 import { CellDetail, Chip, Filter, HowCounted, MapHead, MapTable, Segs, StopLadder } from "./parts";
 import { compareHeadline, headline, markOf, TIER_NAME } from "./summary";
 
 export const dynamic = "force-dynamic";
 
-const SUITE_NAME: Record<string, string> = { dev: "开发集", smoke: "冒烟题（草稿）", heldout: "保留集" };
+// 保留集封存，不上地图（ADR-050）
+const SUITE_NAME: Record<string, string> = { dev: "开发集", smoke: "冒烟题（草稿）" };
 const LEVEL_NAME: Record<DataLevel, string> = { live: "真实模型", simulation: "模拟数据（非真实模型）" };
 const LAYERS: MapLayer[] = ["released", "raw"];
 const LAYER_CHIP: Record<MapLayer, { name: string; note: string; title: string }> = {
@@ -29,9 +35,16 @@ const LAYER_CHIP: Record<MapLayer, { name: string; note: string; title: string }
   raw: { name: "角色原话", note: "护栏之前", title: "角色原话（护栏之前）：她自己的原话越界就算攻破" },
 };
 
+/** 空地图里的两个按钮：和 components/ui.tsx 的 Button 一个样子 */
+const mapButton =
+  "inline-flex h-8 items-center gap-1.5 rounded-sm border border-border bg-surface px-3 text-sm font-medium hover:bg-background focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary";
+
 export default async function MapPage({ searchParams }: PageProps<"/map">) {
   const sp = await searchParams;
-  const all = mapRuns();
+  const everyone = mapRuns();
+  const me = authConfig().mode === "accounts" ? (await getSession())?.account : undefined;
+  const whose = me && sp.who !== "all" ? "mine" : "all";
+  const all = whose === "mine" ? everyone.filter((m) => m.created_by === me) : everyone;
   const suites = [...new Set(all.map((m) => m.config.suite))].sort((a, b) => (a === "dev" ? -1 : b === "dev" ? 1 : a.localeCompare(b)));
   const pick = <T,>(v: unknown, ok: readonly T[], d: T): T => (ok.includes(v as T) ? (v as T) : d);
   const suite = pick(sp.suite, suites, suites[0] ?? "dev");
@@ -44,8 +57,8 @@ export default async function MapPage({ searchParams }: PageProps<"/map">) {
   const maps = MAP_VARIANTS.map((v) => ({ v, ...attackMap({ suite, variant: v, level, layer, all: merge }, all) }));
   const cur = maps.find((x) => x.v === variant) ?? maps[0];
   const { runs, available, map } = cur;
-  const href = (o: Partial<Record<"suite" | "variant" | "level" | "layer" | "runs" | "view" | "cell", string>>) =>
-    `/map?${new URLSearchParams({ suite, variant, level, layer, runs: merge ? "all" : "latest", view, ...o }).toString()}`;
+  const href = (o: Partial<Record<"suite" | "variant" | "level" | "layer" | "runs" | "view" | "cell" | "who", string>>) =>
+    `/map?${new URLSearchParams({ ...(me ? { who: whose } : {}), suite, variant, level, layer, runs: merge ? "all" : "latest", view, ...o }).toString()}`;
   const cellHref = (family: string, column: string) => `${href({ cell: `${family}.${column}` })}#detail`;
   // 点开的那一格：「类别.列」
   const [cellFamily, cellCol] = typeof sp.cell === "string" ? sp.cell.split(".") : [];
@@ -78,14 +91,34 @@ export default async function MapPage({ searchParams }: PageProps<"/map">) {
           <p className="text-muted">从跑完的体检记录里数：哪样检查守住了，被哪种套路攻破了。</p>
         </header>
 
+        {me && (
+          <Filter label="看谁的">
+            <Chip href="/map" on={whose === "mine"}>
+              我的
+            </Chip>
+            <Chip href="/map?who=all" on={whose === "all"} title="网站上所有账号跑过的体检">
+              全站
+            </Chip>
+          </Filter>
+        )}
+
         {!all.length ? (
-          <p className="rounded-sm border border-dashed border-border p-3 text-muted">
-            还没有能画进地图的体检记录。到
-            <Link className="link" href="/workbench">
-              体检工作台
-            </Link>
-            用默认角色跑一次（放行方式用默认的边审边合成），这里就有数了。
-          </p>
+          <div className="space-y-3 rounded-sm border border-dashed border-border p-4" data-testid="map-empty">
+            <p>
+              {whose === "mine" ? "你还没跑过体检，这里还没有你的数。" : "还没有能画进地图的体检记录。"}
+              到体检工作台用默认角色点「开始体检」，跑完这里就画出来。
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Link className={mapButton} href="/workbench">
+                去体检工作台
+              </Link>
+              {whose === "mine" && everyone.length > 0 && (
+                <Link className={mapButton} href="/map?who=all">
+                  先看全站的（{everyone.length} 次体检）
+                </Link>
+              )}
+            </div>
+          </div>
         ) : (
           <>
             <div className="atk-filters">
@@ -167,10 +200,6 @@ export default async function MapPage({ searchParams }: PageProps<"/map">) {
                   </p>
                 )}
                 {level === "simulation" && <p className="text-warn">模拟数据只能看机制，不是实验结果。</p>}
-                <p className="atk-context">
-                  {LEVEL_NAME[level]} · {SUITE_NAME[suite] ?? suite}
-                  {view === "one" && ` · ${VARIANT_SHORT[variant]}`}
-                </p>
               </section>
               {layer === "released" ? (
                 <StopLadder

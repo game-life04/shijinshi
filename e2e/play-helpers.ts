@@ -3,8 +3,18 @@ import { expect, type Page } from "@playwright/test";
 // 闯关页的测试小工具（ADR-047）。手机版面（宽不到 768，或者高不到 520）上「选关卡」「记录」收在从底下拉出来的面板里，
 // 要点里面的东西得先把面板拉出来；平板、大屏上它们一直摆在旁边，这里什么都不用做。
 
+/**
+ * 页面换上来了：切页、打开页面时先出「正在打开」的占位（ADR-051，app/play/loading.tsx），真页面随后换上来（React 会把换上来的那一下
+ * 攒一攒，最多晚几百毫秒）。下面两个小工具都要先看「是不是手机版面」，看早了会把占位当成页面，所以先等占位没了、闯关版面出来
+ */
+async function ready(page: Page) {
+  await expect(page.getByTestId("page-loading")).toHaveCount(0);
+  await page.locator(".play-grid").waitFor();
+}
+
 /** 把面板拉出来（已经开着就不动，开着另一个就先收起）。返回是不是手机版面 */
 export async function openPanel(page: Page, which: "levels" | "log"): Promise<boolean> {
+  await ready(page);
   const chip = page.getByTestId(which === "log" ? "open-log" : "open-levels");
   if (!(await chip.isVisible())) return false;
   const open = await page.locator(".play-grid").getAttribute("data-sheet");
@@ -36,6 +46,7 @@ export async function pickLevel(page: Page, title: RegExp) {
 
 /** 现在打的是哪一关：大屏上看右边一栏的标题，手机上看关卡条 */
 export async function expectLevel(page: Page, title: string) {
+  await ready(page);
   if (await page.getByTestId("open-levels").isVisible()) await expect(page.getByTestId("open-levels")).toContainText(title);
   else await expect(page.getByRole("heading", { name: title })).toBeVisible();
 }

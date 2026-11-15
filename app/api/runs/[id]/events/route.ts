@@ -3,6 +3,7 @@
 import type { RunEvent } from "@/lib/domain/types";
 import { requireSession } from "@/lib/server/auth";
 import { getRun, subscribe } from "@/lib/server/runs";
+import { sealedRunResponse } from "@/lib/server/sealed";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,6 +12,8 @@ export async function GET(req: Request, ctx: RouteContext<"/api/runs/[id]/events
   const denied = requireSession(req);
   if (denied) return denied;
   const { id } = await ctx.params;
+  const sealed = sealedRunResponse(id);
+  if (sealed) return sealed;
   let view: ReturnType<typeof getRun> = null;
   try {
     view = getRun(id);

@@ -9,12 +9,15 @@ export const E2E_BASE = "http://127.0.0.1:3101";
 export const E2E_ACCOUNT = "e2e-judge";
 /** 只给测试用的密码，会随仓库公开 */
 export const E2E_PASSWORD = "e2e-only-judge-pass-7k3q";
+/** 第二个测试账号：从来不跑体检，看「只看自己的」页面空着时是什么样（ADR-051） */
+export const E2E_GUEST = "e2e-guest";
+export const E2E_GUEST_PASSWORD = "e2e-only-guest-pass-4m8w";
 const E2E_SESSION_SECRET = "e2e-only-session-secret-public-in-repo-do-not-deploy";
 
 /** 3101 那台测试服务的环境变量：一个测试账号；登录次数、输错次数的上限放宽，锁定的逻辑在单元测试里测 */
 export function e2eAuthEnv(): Record<string, string> {
   return {
-    AUTH_ACCOUNTS: `${E2E_ACCOUNT}:${hashPasswordSync(E2E_PASSWORD)}`,
+    AUTH_ACCOUNTS: `${E2E_ACCOUNT}:${hashPasswordSync(E2E_PASSWORD)} ${E2E_GUEST}:${hashPasswordSync(E2E_GUEST_PASSWORD)}`,
     SESSION_SECRET: E2E_SESSION_SECRET,
     AUTH_ALLOW_E2E_ACCOUNTS: "1",
     RATE_LOGIN_PER_10MIN: "100",

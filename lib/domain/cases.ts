@@ -14,6 +14,8 @@ export interface SuiteInfo {
   cases: CaseV1[];
   errors: string[];
   sha256: string;
+  /** 原始行里有没有标成保留集（split 为 heldout）的题：校验没过、cases 是空的也照样认得出（ADR-050 封存用） */
+  heldout: boolean;
 }
 
 const ROOT = process.cwd();
@@ -76,6 +78,7 @@ export function loadSuite(file: string): SuiteInfo {
     cases: errors.length ? [] : (rows as CaseV1[]),
     errors,
     sha256: createHash("sha256").update(text).digest("hex"),
+    heldout: rows.some((r) => typeof r === "object" && r !== null && (r as { split?: unknown }).split === "heldout"),
   };
 }
 
@@ -89,4 +92,17 @@ export function listSuites(): SuiteInfo[] {
 
 export function getSuite(id: string): SuiteInfo | undefined {
   return listSuites().find((s) => s.id === id);
+}
+
+/** 保留集的套件名（ADR-050：网页上封存，见 lib/server/sealed.ts） */
+export const SEALED_SUITE = "heldout";
+
+/** 按名字认保留集：heldout 开头的都算（heldout、heldout-2027……）；运行记录里只记套件名，套件文件不在了也认得出 */
+export function isSealedSuiteName(id: string): boolean {
+  return id.startsWith(SEALED_SUITE);
+}
+
+/** 封存的套件：套件名以 heldout 开头，或者原始行里有标成保留集的题（校验没过也算） */
+export function isSealedSuite(s: Pick<SuiteInfo, "id" | "heldout">): boolean {
+  return isSealedSuiteName(s.id) || s.heldout;
 }
