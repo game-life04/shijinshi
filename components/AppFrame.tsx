@@ -1,5 +1,5 @@
 // 页面外框：顶部是「分寸」印章、导航（主要视图）；已登录时右头是当前账号和「退出」（ADR-032）。
-// AI 标识不再挂在顶栏（ADR-053（11-16 队员 B 修改稿 3））：现在只在形象旁边标「AI 角色」（components/Avatar.tsx）。
+// AI 标识不再挂在顶栏（ADR-053（11-16 队员 B 修改稿 3））：标识跟着她的话走：形象下面（components/Avatar.tsx）、闯关台词卡片上她名字旁边、聊天记录里她说的每一行（components/Chat.tsx 的 Row）、攻防地图明细里她的话前面。
 // 这一层不读 cookie，客户端组件（出错页 app/error.tsx）也能用；账号那块由服务端的 AppShell 传进来（account）。
 // 窄屏上顶栏压成两行（ADR-047）：第一行 印章 + 账号，第二行是能左右滑的导航；样式在 globals.css 的 .app-header。
 // 「用法」（队员 B 的建议 4）放在导航最后、单独一格：窄屏上导航左右滑，它钉在这一行的右头，哪一页都看得见。
@@ -88,7 +88,7 @@ export default function AppFrame({ children, active, fill = false, account }: Ap
           </Link>
         </nav>
         {/* ADR-053（11-16 队员 B 修改稿 3）：顶栏常驻的「被测对象是 AI 角色，不是真人」删了，
-            AI 标识只留形象旁边的「AI 角色」小印（components/Avatar.tsx）；这里只放账号和「退出」 */}
+            AI 标识改成跟着她的话走（见文件开头）；这里只放账号和「退出」 */}
         <div className="app-header-side">{account}</div>
       </header>
       <main className={`flex min-h-0 flex-1 flex-col ${body}`}>{children}</main>

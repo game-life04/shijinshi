@@ -13,6 +13,32 @@ async function startRun(page: Page, variant?: string) {
   await page.getByRole("button", { name: "开始体检" }).click();
 }
 
+test("宽 1100 的屏幕上打开「角色设定」抽屉：一键演示、开始体检都还点得到（抽屉开着时按钮回到配置条）", async ({ page }, info) => {
+  test.skip(info.project.name !== "desktop-1440", "换尺寸的检查只跑一次");
+  // 复查（11-16）：按钮挪到「对话」标题栏以后，宽 1024～1279 时 36rem 宽的抽屉正好盖住「一键演示」；
+  // 从体检单点「改一处再测」进来（?persona=open）一打开就是这个样子
+  await page.setViewportSize({ width: 1100, height: 800 });
+  await page.goto("/workbench?persona=open");
+  await expect(page.getByRole("heading", { name: "角色设定" })).toBeVisible();
+  const start = page.getByRole("button", { name: "开始体检" });
+  const demo = page.getByRole("button", { name: /^一键演示/ });
+  await expect(start).toHaveCount(1);
+  await expect(demo).toHaveCount(1);
+  await expect(page.getByTestId("run-actions")).toBeHidden();
+  // 真的点得到（没有东西盖在上面）：试点一下，不真跑
+  await start.click({ trial: true, timeout: 3000 });
+  await demo.click({ trial: true, timeout: 3000 });
+  // 收起抽屉：按钮回到「对话」标题栏
+  await page.getByRole("button", { name: "收起", exact: true }).click();
+  await expect(page.getByTestId("run-actions").getByRole("button", { name: "开始体检" })).toBeVisible();
+  // 1280 宽起抽屉盖不到标题栏，开着抽屉按钮也留在标题栏
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.getByTestId("persona-toggle").click();
+  await expect(page.getByRole("heading", { name: "角色设定" })).toBeVisible();
+  await expect(page.getByTestId("run-actions").getByRole("button", { name: "开始体检" })).toBeVisible();
+  await page.getByTestId("run-actions").getByRole("button", { name: "开始体检" }).click({ trial: true, timeout: 3000 });
+});
+
 test("还没开始体检：最上面一行是五种套路；一键演示、开始体检在「对话」标题栏（手机上在配置条）；右栏「七样测试」编号 1～7、不写条款号；顶栏没有 AI 标识（ADR-053）", async ({
   page,
 }, info) => {
@@ -27,9 +53,14 @@ test("还没开始体检：最上面一行是五种套路；一键演示、开�
   await expect(chips).toBeVisible();
   await expect(chips).toContainText("测试 Agent 会用的 5 种套路");
   await expect(page.getByTestId("dialog-panel").getByText(/种套路/)).toHaveCount(0);
-  // 顶栏不再有 AI 标识（ADR-053）：AI 标识只留形象旁边的「AI 角色」
+  // 顶栏不再有 AI 标识（ADR-053）：标识跟着她的话走——形象下面一处，「对话」里她说的每一行名字后面一处。
+  // 手机上默认停在「对话」标签、形象在另一个标签里：这一屏也要看得见「AI 角色」（复查：原来这一屏找不到「AI」两个字）
   await expect(page.getByRole("banner").getByText(/不是真人/)).toHaveCount(0);
   await expect(page.getByRole("banner").getByTitle(/由 AI 生成/)).toHaveCount(0);
+  const tag = page.getByTestId("dialog-panel").locator(".ai-tag").first();
+  await expect(tag).toBeVisible();
+  await expect(tag).toHaveText("AI 角色");
+  await expect(tag).toHaveAttribute("title", /由 AI 生成，不是真人/);
   // 一键演示、开始体检：桌面上在「对话」标题那一行右头；手机上照旧在配置条里（「对话」只是三个标签之一）
   const start = page.getByRole("button", { name: "开始体检" });
   const demo = page.getByRole("button", { name: /^一键演示/ });

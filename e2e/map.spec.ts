@@ -1,4 +1,4 @@
-import { expect, type Locator, test } from "@playwright/test";
+import { expect, type Locator, type Page, test } from "@playwright/test";
 
 // 攻防地图（ADR-038）：先用接口跑一次模拟体检（冒烟题里口令、身份两类各一题，草稿题只能预览），再打开地图。
 // ADR-053（11-16 队员 B 修改稿 3）：最上面三张卡片（测试了 / 守住了 / 没守住）、七项检查结果、本次要看的问题；
@@ -18,8 +18,8 @@ const countsOf = async (loc: Locator): Promise<Counts> => ({
   unsure: await num(loc, "data-unsure"),
 });
 
-test("攻防地图：三张卡片、七项检查结果、要看的问题；展开详细矩阵点一格看明细", async ({ page }, info) => {
-  test.setTimeout(120_000);
+/** 用接口跑一次模拟体检（冒烟题里口令、身份各一题），等它跑完，返回运行编号 */
+async function smokeRun(page: Page): Promise<string> {
   const created = await page.request.post("/api/runs", {
     data: {
       suite: "smoke",
@@ -36,6 +36,45 @@ test("攻防地图：三张卡片、七项检查结果、要看的问题；展�
       timeout: 60_000,
     })
     .toBe("completed");
+  return run_id;
+}
+
+test("从上面点「查看原话」：折叠自己展开、明细卷进屏幕、她的话前面标着 AI 角色；收起以后再点同一个链接照样展开", async ({ page }, info) => {
+  test.skip(info.project.name === "laptop-1280", "桌面和手机各跑一次");
+  test.setTimeout(120_000);
+  await smokeRun(page);
+  await page.goto("/map?suite=smoke&level=simulation&variant=B2&layer=released");
+  await expect(page.getByRole("heading", { level: 1, name: "攻防地图" })).toBeVisible();
+  // 「查看原话」在两处：没守住的问题里、拿不准的那几样后面。模拟体检里身份那一题裁判判不了，至少有拿不准的那一个
+  const see = page.getByTestId("map-issues").getByRole("link", { name: "查看原话" });
+  test.skip((await see.count()) === 0, "这次模拟体检没有没守住、也没有拿不准的题，没有「查看原话」可点");
+  // 读屏名字里带着是哪样检查（一页上有好几个「查看原话」，光这四个字分不清）
+  await expect(see.first()).toHaveAttribute("aria-label", /^查看原话：.+/);
+  const fold = page.getByTestId("map-fold");
+  const detail = page.getByTestId("map-detail");
+  await expect(fold).not.toHaveAttribute("open");
+  await see.first().click();
+  await expect(page).toHaveURL(/cell=.+#detail$/);
+  await expect(fold).toHaveAttribute("open", "");
+  await expect(detail).toBeInViewport();
+  // 这一页没有形象、顶栏也不标 AI：她的话前面自己写明是 AI 角色说的
+  await expect(detail).toContainText("她（AI 角色）说出口的：");
+  // 把折叠收起来、卷回顶上，再点同一个链接：地址没变，也要展开、卷过去（复查：原来点了没反应）
+  await fold.locator(":scope > summary").click();
+  await expect(fold).not.toHaveAttribute("open");
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await see.first().click();
+  await expect(fold).toHaveAttribute("open", "");
+  await expect(detail).toBeInViewport();
+  // 手改地址带坏掉的 %xx：页面照常打开，不整页报错
+  await page.goto("/map?suite=smoke&level=simulation&variant=B2&layer=released#cmp-%E0");
+  await expect(page.getByRole("heading", { level: 1, name: "攻防地图" })).toBeVisible();
+  await expect(page.getByTestId("map-summary")).toBeVisible();
+});
+
+test("攻防地图：三张卡片、七项检查结果、要看的问题；展开详细矩阵点一格看明细", async ({ page }, info) => {
+  test.setTimeout(120_000);
+  const run_id = await smokeRun(page);
 
   await page.goto("/map?suite=smoke&level=simulation&variant=B2&layer=released");
   await expect(page.getByRole("heading", { level: 1, name: "攻防地图" })).toBeVisible();

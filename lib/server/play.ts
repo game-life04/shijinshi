@@ -2,7 +2,7 @@
 // 三关各对应一类检查：口令关用程序规则（和体检断言、护栏同一套）；身份、退出两关用体检的检查项，关键词抓不到的交给裁判看语义、必须摘出原话。
 // 结果只供体验，不进入体检统计。
 // 护栏可以开（B2）也可以关（B1），同一句话开关各试一次，就能看到护栏拦了什么。
-// 会话只存在服务端内存里（30 分钟过期），本局口令不返回给浏览器；每局最多 8 轮，防止被刷调用量。
+// 会话只存在服务端内存里（30 分钟过期），本局口令不返回给浏览器；每局（一关的一层）最多 6 句（ADR-053，原来 8 句），防止被刷调用量。
 // ADR-037 加了三样：
 //   难度阶梯：开局时选第几层。ADR-038 起分四层（只有人设 / 加边界提示 / 加规则 / 加护栏模型），对应 B0 / B1 / B2 不问护栏模型 / B2；
 //     每一轮记下是哪一层拦住的（stopped_by），页面亮那一层；
@@ -180,7 +180,7 @@ export function startPlay(o: { level: LevelId; guard: boolean; fault?: boolean; 
     history: [],
     turns: [],
     // 每轮最多：被测角色 1 次 + 每句护栏 1～2 次 + 裁判最多 3 样（这一关或别的关两样，再加轻生 / 未成年，ADR-051），
-    // 每样出错会重试一次；8 轮留足余量。用超了的裁判记成拿不准，不影响她回答
+    // 每样出错会重试一次；一局的句数留足余量。用超了的裁判记成拿不准，不影响她回答
     meter: new UsageMeter(PLAY_MAX_TURNS * 16),
     created: Date.now(),
     busy: false,
@@ -493,7 +493,7 @@ export async function sayPlay(sessionId: string, text: string, opts: { voice?: b
   }
   const audio = opts.voice ? s.audio : undefined;
   if (s.busy) throw new Error("角色还在回答上一句");
-  if (s.turns.length >= PLAY_MAX_TURNS) throw new Error(`每局最多 ${PLAY_MAX_TURNS} 轮，请重新开始一局`);
+  if (s.turns.length >= PLAY_MAX_TURNS) throw new Error(`这一层最多说 ${PLAY_MAX_TURNS} 句：换一层，或者点「重新开始」`);
   const userText = text.trim().slice(0, 200);
   if (!userText) throw new Error("先输入一句话");
   s.busy = true;
@@ -644,7 +644,7 @@ function isAttackJSON(x: unknown): x is { message: string } {
 export async function nextAttack(sessionId: string): Promise<Attack> {
   const s = sessions.get(sessionId);
   if (!s) throw new Error("这一局已经过期，请重新开始");
-  if (s.turns.length >= PLAY_MAX_TURNS) throw new Error(`每局最多 ${PLAY_MAX_TURNS} 轮，请重新开始一局`);
+  if (s.turns.length >= PLAY_MAX_TURNS) throw new Error(`这一层最多说 ${PLAY_MAX_TURNS} 句：换一层，或者点「重新开始」`);
   const k = s.attacks++;
   const lastStop = s.lastStop;
   if (s.level !== "canary") {

@@ -139,8 +139,11 @@ export default function CheckList({
       <div className="mb-2 border-b border-border pb-2" data-testid="check-list">
         <ul className="space-y-0.5">
           {ORDER.filter((f) => cases.some((c) => c.family === f)).map((f) => (
-            <li key={f} className="grid grid-cols-[8.5rem_1fr] items-center gap-2">
-              <span className="truncate text-xs">{FAMILY_LABEL[f]}</span>
+            <li key={f} className="grid grid-cols-[9.5rem_1fr] items-center gap-2">
+              {/* 编号和整列时一样（按七样里的次序，不是这里第几行）：跑的时候右栏在整列和这一列之间来回换，号不变才认得出是同一样（复查） */}
+              <span className="truncate text-xs">
+                <span className="tabular-nums">{ORDER.indexOf(f) + 1}.</span> {FAMILY_LABEL[f]}
+              </span>
               {cells(f)}
             </li>
           ))}
@@ -166,6 +169,12 @@ export default function CheckList({
           </li>
         ))}
       </ol>
+      {/* 分组小标题和条款号删了以后（ADR-053），1～7 容易被读成七样都是法规要求：展开详情时说一句（复查；体检单上也是这么分的） */}
+      {explain && (
+        <p className="mt-1.5 text-xs text-muted">
+          第 1、2 样是我们自己加的稳定性测试，和法规无关；第 3～7 样对照法规条文，条文在体检单里。
+        </p>
+      )}
       {started && <Legend />}
     </div>
   );

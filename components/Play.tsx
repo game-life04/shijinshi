@@ -47,6 +47,7 @@ import {
   LAYER_NOTES,
   LEVELS,
   type LevelId,
+  layerHeld,
   PLAY_MAX_TURNS,
   type PlayAlso,
   type PlayLayer,
@@ -63,7 +64,7 @@ import Avatar from "./Avatar";
 import { bubble, Chop, duration, Note, Row } from "./Chat";
 import { GuardCell } from "./Layers";
 import PlayGates from "./PlayGates";
-import SealBook, { award, BADGES, emptySeals, markHeld, SEALS_KEY, type SealStore } from "./SealBook";
+import SealBook, { award, BADGES, emptySeals, markHeld, SEALS_KEY, type SealStore, sealKey } from "./SealBook";
 import SealMap from "./SealMap";
 import SentenceJourney, { slipsOf } from "./SentenceJourney";
 import type { Phase } from "./StatusRing";
@@ -97,6 +98,10 @@ const VOICE_KEY = "fencun.play.voice.v1";
 
 /** 手机版面（关卡、记录收进底下拉出来的面板）的条件；和 globals.css 里闯关版面的断点是同一个，改一处要改两处（ADR-047） */
 const SHEET_MQ = "(max-width: 767.98px), (max-height: 519.98px)";
+/** 一层六句都守住以后，她说完再过多久自动进下一层（ADR-053）；带声音时最多等播放器这么久 */
+const HELD_GO_MS = 6000;
+const HELD_VOICE_MAX_MS = 30_000;
+const SPEECH_UNSUPPORTED = "这个浏览器不支持语音识别：电脑上请用 Edge 或 Chrome，苹果手机上用 Safari；也可以直接打字。";
 
 /** 点了「听她说」、等了 8 秒声音还没解锁时的提示（解锁回来以后自动收掉） */
 const VOICE_SLOW = "声音还没打开（网慢的时候要多等一会儿），先看字；过一会儿再点一次「听她说」";
@@ -142,6 +147,8 @@ interface Attempt {
   also?: PlayAlso[];
   /** 说到了轻生、未成年：不算闯关，单看她接没接住（ADR-051） */
   sensitive?: PlaySensitive;
+  /** 裁判这次没判出来，结论是先按关键词规则算的：不算进「六句都没攻破」（ADR-053 复查） */
+  unjudged?: boolean;
 }
 
 interface Verdict {
@@ -374,7 +381,7 @@ function PlayTurn({ a, name, shown, mode }: { a: Attempt; name: string; shown: n
           {turn.service.exited ? (
             <Note icon={<LogOut size={12} aria-hidden />}>你说了要走，服务马上停了：她没有再说话</Note>
           ) : (
-            <Row side="right" who={name} chop={<Chop char={name.slice(-1)} tone="zhu" />}>
+            <Row side="right" who={name} ai chop={<Chop char={name.slice(-1)} tone="zhu" />}>
               {blocked.map((u) => (
                 <div key={u.utterance_id} className={`${bubble} relative border-primary/40 bg-primary-soft/50 pr-11`}>
                   <span className="text-muted line-through decoration-foreground decoration-[1.5px]">{u.text}</span>
@@ -1002,7 +1009,7 @@ export default function Play() {
             setAttempts((xs) =>
               xs.map((a) =>
                 a.session === sid && a.turn.turn_id === turnId
-                  ? { ...a, judging: false, message: "裁判这次没判出来，先按关键词规则的结果算" }
+                  ? { ...a, judging: false, unjudged: true, message: "裁判这次没判出来，先按关键词规则的结果算" }
                   : a,
               ),
             );
@@ -1142,6 +1149,12 @@ export default function Play() {
    * 原来要先等声音解锁（最多 1.5 秒）才开始听，这段时间按钮没反应；现在先开始听，声音在同一次点击里顺手解锁、不等它。
    */
   const talk = () => {
+    // 这个浏览器没有语音识别（ADR-053 复查）：原来按钮是灰的、原因只写在悬停里，手机上只看到一个点不动的按钮，
+    // 就是「语音识别不了了」；现在照样能点，点了在下面给一行看得见的说明
+    if (speech.supported === false) {
+      setError(SPEECH_UNSUPPORTED);
+      return;
+    }
     if (speech.listening) {
       speech.stop();
       return;
@@ -1197,8 +1210,11 @@ export default function Play() {
    * 这一局六句都说完了、都判完了、一句也没攻破（ADR-053，队员 B 修改稿 3）：印谱这一格记绿色「防」，
    * 过几秒自动进下一层。只说明这六句没攻破，不等于这一层绝对安全；后来攻破了，格子以「破」为准。
    * 没发出去、出错的那一句不算数（服务端只在真说了一句以后才扣次数）。
+   * 这一局里有一句说到了轻生、未成年（那一句不算闯关）：不算「六句都没攻破」，不记「防」、也不自动换层——
+   * 台上那一行求助信息要留着，不能过几秒被换层清掉（复查）。裁判没判出来的、检查服务不可用的那种也不算。
+   * 规则在 lib/domain/levels.ts 的 layerHeld 里（tests/unit/play-held.test.ts）。
    */
-  const heldAll = Boolean(session) && mine.length >= PLAY_MAX_TURNS && mine.every((a) => !a.judging && a.outcome !== "broken");
+  const heldAll = Boolean(session) && layerHeld(mine);
   const heldNow = heldNote && heldNote.session === session?.id ? heldNote : null;
   // biome-ignore lint/correctness/useExhaustiveDependencies: 只在「六句都守住」这件事成立的那一下记一笔
   useEffect(() => {
@@ -1207,19 +1223,79 @@ export default function Play() {
     if (next !== sealsRef.current) saveSeals(next);
     setHeldNote((n) => (n?.session === session.id ? n : { session: session.id, stay: false }));
   }, [heldAll, session?.id]);
-  // 自动进下一层：她说完、裁判判完、没在看 AI 打、面板没开时等 4 秒再走；点了「留在这一层」就不走。第 4 层没有下一层
-  const heldWait = Boolean(heldNow && !heldNow.stay && tier < 4 && !locked && !speakingNow && sheet === null && phase !== "speak");
+  // 自动进下一层：她说完、裁判判完、没在看 AI 打、面板没开时数 6 秒再走（台上写着还有几秒）；点了「留在这一层」就不走。第 4 层没有下一层。
+  // 「她说完」：不带声音时看字念完没有（speakingNow、phase）；带声音时这两样是按文字估的时长算的，真实合成有延迟，
+  // 所以另外每 250 毫秒问一次播放器是不是真的放完了，放完才开始数（复查：原来估的时间一到再过 4 秒就换层，最后一句的声音会被掐断）。
+  // 播放器 30 秒还说没放完（音频一直取不到）就不等了
+  // 你正在看东西的时候也不数（复查：换层会把这一层六句的记录清掉）：成就印开着；标签页切到后台；
+  // 键盘焦点在本轮结果、历史记录里；「看三层」摊开着。数到一半碰到这些就从头数。
+  // （焦点在「六句都守住」那一行自己的按钮上不算：那一行出来时焦点就是程序放上去的）
+  const heldWait = Boolean(
+    heldNow && !heldNow.stay && tier < 4 && !locked && !speakingNow && sheet === null && phase !== "speak" && !bookOpen,
+  );
+  /** 还有几秒自动进下一层；null = 还没开始数（她还在说，或者现在不会自动走） */
+  const [heldLeft, setHeldLeft] = useState<number | null>(null);
   // biome-ignore lint/correctness/useExhaustiveDependencies: 只看能不能走
   useEffect(() => {
-    if (!heldWait) return;
+    if (!heldWait) {
+      setHeldLeft(null);
+      return;
+    }
     const from = tier;
     const lv = level;
-    const t = setTimeout(() => {
+    const began = performance.now();
+    let quietAt: number | null = null;
+    const iv = window.setInterval(() => {
+      const now = performance.now();
+      const voiceOn = voiceRef.current && playerRef.current?.speaking() && now - began < HELD_VOICE_MAX_MS;
+      const reading =
+        document.hidden ||
+        Boolean(document.activeElement?.closest("[data-held-pause]")) ||
+        Boolean(document.querySelector(".play-result details[open]"));
+      if (voiceOn || reading) {
+        quietAt = null;
+        setHeldLeft(null);
+        return;
+      }
+      quietAt ??= now;
+      const ms = HELD_GO_MS - (now - quietAt);
+      if (ms > 0) {
+        const sec = Math.ceil(ms / 1000);
+        setHeldLeft((x) => (x === sec ? x : sec));
+        return;
+      }
+      window.clearInterval(iv);
       reset({ tier: (from + 1) as Tier });
       setMoved({ level: lv, from });
-    }, 4000);
-    return () => clearTimeout(t);
+    }, 250);
+    return () => window.clearInterval(iv);
   }, [heldWait]);
+  // 「六句都守住」那一行出来时：输入框已经关了，键盘焦点掉在页面上——放到这一行的第一个按钮上（「留在这一层」/「去第 n 层」），
+  // 键盘用户不用在几秒里一路 Tab 过去（复查）。焦点在别处（比如正在右边看记录）就不动它
+  const heldShown = Boolean(heldNow && !watching);
+  useEffect(() => {
+    if (!heldShown) return;
+    const at = document.activeElement;
+    if (at && at !== document.body && !(at as HTMLInputElement).disabled) return;
+    const note = document.querySelector('[data-testid="play-held"]');
+    (note?.querySelector<HTMLElement>("button.link") ?? note?.querySelector<HTMLElement>("button"))?.focus({ preventScroll: true });
+  }, [heldShown]);
+  // 自动换到下一层以后：大屏上焦点回到输入框，接着打字（手机上不动，免得弹出键盘）
+  useEffect(() => {
+    if (!moved || window.matchMedia(SHEET_MQ).matches) return;
+    const at = document.activeElement;
+    if (!at || at === document.body) inputRef.current?.focus({ preventScroll: true });
+  }, [moved]);
+  /** 这一格以前攻破过（印谱上以「破」为准）；这一关四层是不是都守住过、都没攻破过 */
+  const brokeBefore = seals.best[sealKey(level, tier)] !== undefined;
+  const allFourHeld = TIERS.every((t) => Boolean(seals.held?.[sealKey(level, t.tier)]) && seals.best[sealKey(level, t.tier)] === undefined);
+  const heldAuto = Boolean(heldNow && !heldNow.stay && tier < 4);
+  /** 给读屏的一句（常驻的播报区，只换里面的字：新插进页面的播报区很多读屏不念） */
+  const liveSay = heldShown
+    ? `第 ${tier} 层六句都没攻破。${heldAuto ? `过几秒自动进第 ${tier + 1} 层，可以点「留在这一层」。` : ""}`
+    : moved && moved.level === level && moved.from + 1 === tier && !mine.length
+      ? `已经进了第 ${tier} 层，重新数六句。`
+      : "";
   const movedHere = moved && moved.level === level && moved.from + 1 === tier && !mine.length && !pending ? moved : null;
   /**
    * 开场白：这一关的、还没开局时才显示。不带声音：念到哪显示到哪，念完显示全文；
@@ -1243,7 +1319,7 @@ export default function Play() {
   useEffect(() => {
     const el = cardRef.current;
     if (el && onStage && el.scrollHeight > el.clientHeight) el.scrollTop = el.scrollHeight;
-  }, [reveal.n, attempts.length, pending, heldNote]);
+  }, [reveal.n, attempts.length, pending, heldNote, watching]);
   // 换成没开局的样子（重新开始、换关）或者换了一句开场白：卡片回到顶上。只在这一下做，
   // 不跟着开场白念字一遍遍拉回去（小屏上你正往下划着找例句，会被拽回来）
   const greetId = greet?.id;
@@ -1340,7 +1416,7 @@ export default function Play() {
           data-testid="open-levels"
           aria-expanded={sheet === "levels"}
           aria-controls="play-side"
-          title="选关卡和难度、看 AI 来套话、重新开始"
+          title="选关卡和难度、看这一层的提问提示"
           onClick={(e) => openSheet("levels", e.currentTarget)}
         >
           <span className="truncate">
@@ -1368,7 +1444,6 @@ export default function Play() {
           记录{mine.length ? ` ${mine.length}` : ""}
         </button>
       </div>
-
       <aside className="play-avatar" aria-label="琪叶桃" inert={sheet !== null}>
         <Avatar
           performer={performer}
@@ -1380,7 +1455,6 @@ export default function Play() {
           overlay={current?.turn.service.exited ? <Curtain key={`${current.session}-${current.turn.turn_id}`} /> : undefined}
         />
       </aside>
-
       {/* 中间一栏（大屏）/ 她下面那一块（手机）：四层防守在上，隔窗对谈在下。
           隔窗对谈：你递进去的纸条、她说出口的话（大字，跟着声音一个字一个字出）、这一招的结果，下面是输入框 */}
       <div className="play-dock" inert={sheet !== null}>
@@ -1417,6 +1491,9 @@ export default function Play() {
               )}
             </div>
           )}
+          <p className="sr-only" aria-live="polite" data-testid="play-live">
+            {liveSay}
+          </p>
           <div ref={cardRef} className="play-card" data-testid="stage-card">
             {/* 顶上一行（ADR-053，队员 B 修改稿 3）：左边她的名字，名字旁边一个喇叭（她用不用声音回答，原来是输入框下面一整行的按钮）；
                 右边这一层说了几句（原来在输入框下面右边，不显眼） */}
@@ -1431,7 +1508,7 @@ export default function Play() {
                 </span>
                 <span className="truncate">{name}</span>
                 {/* 顶栏的 AI 标识删了（修改稿 3）：台上她名字旁边一直标着，形象收起来（很矮的屏、弹出键盘）时也看得见 */}
-                <span className="play-ai-tag" title="她的回复和声音由 AI 生成，不是真人">
+                <span className="ai-tag play-ai-tag" title="她的回复和声音由 AI 生成，不是真人">
                   AI 角色
                 </span>
                 <button
@@ -1454,7 +1531,7 @@ export default function Play() {
             <div className="play-card-inner">
               {/* 刚因为六句都守住自动换到这一层：在卡片最上面说一声，说了第一句就不提了（原来排在最底下，线上实测被卡片裁掉，只露出一个「防」字） */}
               {movedHere && (
-                <p className="play-held-note" data-testid="play-moved" aria-live="polite">
+                <p className="play-held-note" data-testid="play-moved">
                   <span className="play-fang" aria-hidden>
                     防
                   </span>
@@ -1624,29 +1701,51 @@ export default function Play() {
                 </p>
               )}
               {heldNow && !watching && (
-                <div className="play-held-note" data-testid="play-held" aria-live="polite">
+                <div className="play-held-note" data-testid="play-held">
                   <span className="play-fang" aria-hidden>
                     防
                   </span>
                   <p className="min-w-0 flex-1">
-                    第 {tier} 层六句都没攻破，印谱上这一格记了绿色「防」。
+                    {brokeBefore
+                      ? `第 ${tier} 层这六句都没攻破（这一格以前攻破过，印谱上还是「破」）。`
+                      : `第 ${tier} 层六句都没攻破，印谱上这一格记了绿色「防」。`}
                     {tier < 4
                       ? heldNow.stay
                         ? ""
-                        : `马上进第 ${tier + 1} 层。`
-                      : "这一关四层都守住了：换一关，或者勾上「故意出错」看护栏拦不拦得住。"}
+                        : `过几秒自动进第 ${tier + 1} 层。`
+                      : allFourHeld
+                        ? `这一关四层都守住了：换一关试试${fault ? "" : "，或者勾上「故意出错」看护栏拦不拦得住"}。`
+                        : "这是最后一层：换一关，或者回头打还没守住的层。"}
                     <span className="text-muted">（只说明这六句没攻破，不等于这一层绝对安全）</span>
+                    {/* 倒计时只给眼睛看：读屏听播报区那一句就够了，不用每秒念一遍 */}
+                    {heldAuto && heldLeft !== null && (
+                      <span className="play-held-count" aria-hidden data-testid="play-held-count">
+                        {heldLeft} 秒
+                      </span>
+                    )}
                   </p>
                   {tier < 4 && (
                     <span className="flex flex-wrap items-center gap-2">
-                      <Button onClick={() => reset({ tier: (tier + 1) as Tier })} disabled={locked}>
-                        {heldNow.stay ? `去第 ${tier + 1} 层 →` : "现在就去"}
-                      </Button>
                       {!heldNow.stay && (
-                        <button type="button" className="link text-xs" onClick={() => setHeldNote({ ...heldNow, stay: true })}>
+                        <button
+                          type="button"
+                          className="link text-xs"
+                          onClick={() => {
+                            setHeldNote({ ...heldNow, stay: true });
+                            // 这个按钮马上就没了：焦点交给旁边的「去第 n 层」
+                            requestAnimationFrame(() =>
+                              document.querySelector<HTMLElement>('[data-testid="play-held"] [data-held-go] button')?.focus(),
+                            );
+                          }}
+                        >
                           留在这一层
                         </button>
                       )}
+                      <span data-held-go>
+                        <Button onClick={() => reset({ tier: (tier + 1) as Tier })} disabled={locked}>
+                          {heldNow.stay ? `去第 ${tier + 1} 层 →` : "现在就去"}
+                        </Button>
+                      </span>
                     </span>
                   )}
                 </div>
@@ -1666,7 +1765,7 @@ export default function Play() {
             <p role="alert" className="flex flex-wrap items-center gap-x-2 text-xs text-bad" data-testid="play-error">
               <span>{error ?? speech.error}</span>
               {/* 语音没认出来（ADR-053，修改稿 3）：可以再说一次，也可以直接打字 */}
-              {!error && speech.error && (
+              {!error && speech.error && speech.canRetry && (
                 <button type="button" className="link" onClick={talk} disabled={busy || watching || left <= 0}>
                   再说一次
                 </button>
@@ -1687,10 +1786,11 @@ export default function Play() {
           >
             <Button
               onClick={talk}
-              disabled={!speech.supported || (busy && !speech.listening) || watching || left <= 0}
+              // speech.supported === null：页面还没准备好（刚打开那一下），先灰着；准备好以后不管支不支持都能点
+              disabled={speech.supported === null || (busy && !speech.listening) || watching || left <= 0}
               title={
-                !speech.supported
-                  ? "这个浏览器不支持语音识别，用 Edge 或 Chrome；照样可以打字"
+                speech.supported === false
+                  ? SPEECH_UNSUPPORTED
                   : speech.listening
                     ? "在听你说：中间停顿也接着听，说完点这里（6 秒没声音也会自己收尾）"
                     : "按一下开始说，说完再按一下；认出来的话填进输入框，看看对不对再点「发送」。语音识别用的是浏览器自带的（Edge、Chrome 会把声音发到它们的识别服务），分寸不录音、不存音频"
@@ -1708,7 +1808,7 @@ export default function Play() {
                     ? "在听你说……说完点「说完了」"
                     : "打一句话发给角色（最多 200 字）"
                   : heldNow && !heldNow.stay && tier < 4
-                    ? "这一层六句说完了，马上进下一层"
+                    ? "这一层六句说完了，过几秒进下一层"
                     : "这一层六句说完了：换一层，或者点「重新开始」"
               }
               maxLength={200}
@@ -1793,9 +1893,7 @@ export default function Play() {
           </div>
         </section>
       </div>
-
       {sheet && <button type="button" className="play-sheet-backdrop" aria-label="收起面板" onClick={closeSheet} />}
-
       {/* 关卡和记录：大屏、平板上是右边一栏；手机上是从底下拉出来的面板，一次只看其中一半（ADR-047） */}
       <section ref={sideRef} id="play-side" className="play-side" aria-label="闯关对话">
         <div className="play-sheet-top">
@@ -1908,7 +2006,7 @@ export default function Play() {
           {/* 历史记录（ADR-053，修改稿 3：原来那句说明改成标题，字号不变、加深）：只放你说的和她说的，自己上下滚；
               这一轮的结果、四层防守、慢放、三层在下面「本轮结果」里 */}
           <p className="play-sec-title px-3 pt-2">历史记录</p>
-          <div ref={logRef} className="play-log" data-testid="play-log">
+          <div ref={logRef} className="play-log" data-testid="play-log" data-held-pause>
             {mine.map((a) => (
               <PlayTurn
                 key={`${a.session}-${a.turn.turn_id}`}
@@ -1938,7 +2036,7 @@ export default function Play() {
         </div>
         {/* 本轮结果（ADR-053，修改稿 3 圈 4）：最近一轮的结论、四层防守、慢放这一句、看三层 */}
         {mine.length > 0 && (
-          <section className="play-result" aria-label="本轮结果" data-testid="play-result">
+          <section className="play-result" aria-label="本轮结果" data-testid="play-result" data-held-pause>
             <p className="play-sec-title">本轮结果</p>
             <PlayTurn
               key={`${mine[mine.length - 1].session}-${mine[mine.length - 1].turn.turn_id}`}

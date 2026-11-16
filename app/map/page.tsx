@@ -78,6 +78,9 @@ export default async function MapPage({ searchParams }: PageProps<"/map">) {
   const href = (o: Partial<Record<"suite" | "variant" | "level" | "layer" | "runs" | "view" | "cell" | "who", string>>) =>
     `/map?${new URLSearchParams({ ...(me ? { who: whose } : {}), suite, variant, level, layer, runs: merge ? "all" : "latest", view, ...o }).toString()}`;
   const cellHref = (family: string, column: string) => `${href({ cell: `${family}.${column}` })}#detail`;
+  // 合并了几次体检：同一道题每次各算一次，卡片和问题列表的单位写「题次」，不写「题」（复查：4 次体检 × 14 题写成了「测试了 56 题」）
+  const merged = merge && runs.length > 1;
+  const unit = merged ? "题次" : "题";
   // 「查看三档对照」：换到三档对照，详细矩阵展开，框出这一格、跳到这一样检查的三行（ADR-053）
   const compareHref = (family: Family, column: string) => `${href({ view: "compare", cell: `${family}.${column}` })}#cmp-${family}`;
   // 点开的那一格：「类别.列」（三档的行列一样，用这一档的图认）
@@ -145,10 +148,12 @@ export default async function MapPage({ searchParams }: PageProps<"/map">) {
             <div className="atk-filters">
               {me && (
                 <Filter label="看谁的">
-                  <Chip href="/map" on={whose === "mine"}>
+                  {/* 带着现在的筛选换（复查：原来写死 /map，一换就把档位、按哪句算、哪批题、合并全丢了）；
+                      那个人没有这批题时 pick() 会自己退回默认的 */}
+                  <Chip href={href({ who: "mine", cell: "" })} on={whose === "mine"}>
                     我的
                   </Chip>
-                  <Chip href="/map?who=all" on={whose === "all"} title="网站上所有账号跑过的体检">
+                  <Chip href={href({ who: "all", cell: "" })} on={whose === "all"} title="网站上所有账号跑过的体检">
                     全站
                   </Chip>
                 </Filter>
@@ -213,7 +218,7 @@ export default async function MapPage({ searchParams }: PageProps<"/map">) {
                   data-unsure={cards.unsure}
                   aria-label={`${TIER_NAME[variant]}这一档的结果`}
                 >
-                  <Cards t={cards} />
+                  <Cards t={cards} unit={unit} />
                   {/* 拿不准、正常题被误拦都单独说，不进上面三个数以外的地方（ADR-053） */}
                   <p className="atk-notes">
                     {cards.unsure > 0 && (
@@ -227,13 +232,26 @@ export default async function MapPage({ searchParams }: PageProps<"/map">) {
                         题（不算在上面）
                       </span>
                     )}
+                    {merged && (
+                      <span data-note="merged">
+                        合并了 <b>{runs.length}</b> 次体检：同一道题每次各算一次，所以单位是题次
+                      </span>
+                    )}
                     {layer === "raw" && <span>按角色原话算：判断不了原话的题不算</span>}
                     {level === "simulation" && <span className="text-warn">模拟数据只能看机制，不是实验结果。</span>}
                   </p>
                 </section>
                 <div className="atk-grid">
                   <CheckList map={map} layer={layer} />
-                  <IssueList map={map} layer={layer} ran={runs.length > 0} hints={hints} cellHref={cellHref} compareHref={compareHref} />
+                  <IssueList
+                    map={map}
+                    layer={layer}
+                    ran={runs.length > 0}
+                    hints={hints}
+                    cellHref={cellHref}
+                    compareHref={compareHref}
+                    unit={unit}
+                  />
                 </div>
               </>
             ) : (

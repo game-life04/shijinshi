@@ -770,11 +770,20 @@ export default function Workbench() {
             <span className="shrink-0 whitespace-nowrap">实验设置</span>
             {!settingsOpen && <span className="truncate">· {settingsShort}</span>}
           </button>
-          {/* 手机上的那份按钮（大屏上的在「对话」标题栏，ADR-053） */}
-          <div className="ml-auto flex flex-wrap items-center justify-end gap-2 lg:hidden">{runButtons("bar")}</div>
+          {/* 手机上的那份按钮（大屏上的在「对话」标题栏，ADR-053）。
+              复查：宽 1024～1279 时「角色设定」抽屉（36rem 宽，盖在三栏上面）会盖住对话标题栏里的「一键演示」——
+              从体检单点「改一处再测」进来一打开就是这样。所以抽屉开着、屏幕又不到 1280 宽时，按钮回到配置条这一份（抽屉盖不到这里） */}
+          <div className={`ml-auto flex flex-wrap items-center justify-end gap-2 ${personaOpen ? "xl:hidden" : "lg:hidden"}`}>
+            {runButtons("bar")}
+          </div>
         </div>
-        {/* 「开始体检」点不了的原因：单独一行，写在按钮下面（配置条排成一行时，挤在按钮旁边放不下）；大屏上跟着按钮去了「对话」标题栏 */}
-        {!running && startBlocked && <p className="text-right text-xs text-bad lg:hidden">{startBlocked}</p>}
+        {/* 「开始体检」点不了的原因：单独一行，写在按钮下面（配置条排成一行时，挤在按钮旁边放不下）；大屏上跟着按钮去了「对话」标题栏。
+            aria-live：按钮灰着的时候键盘走不到它，原因要让读屏自己念出来（复查） */}
+        {!running && startBlocked && (
+          <p aria-live="polite" className={`text-right text-xs text-bad ${personaOpen ? "xl:hidden" : "lg:hidden"}`}>
+            {startBlocked}
+          </p>
+        )}
         {settingsOpen && (
           <div id="run-settings" className="flex flex-wrap items-end gap-2 border-t border-border pt-2">
             <label className="flex flex-col gap-0.5">
@@ -992,9 +1001,16 @@ export default function Workbench() {
             className={`${panelClass("dialog")} min-h-[16rem] lg:min-h-0`}
             actions={
               // 大屏上的那份按钮：标题左、按钮右；点不了的原因写在按钮下面（ADR-053（11-16 队员 B 修改稿 3））
-              <div className="ml-auto hidden max-w-full flex-col items-end gap-1 lg:flex" data-testid="run-actions">
+              <div
+                className={`ml-auto hidden max-w-full flex-col items-end gap-1 ${personaOpen ? "xl:flex" : "lg:flex"}`}
+                data-testid="run-actions"
+              >
                 <div className="flex flex-wrap items-center justify-end gap-2">{runButtons("dialog")}</div>
-                {!running && startBlocked && <p className="text-right text-xs text-bad">{startBlocked}</p>}
+                {!running && startBlocked && (
+                  <p aria-live="polite" className="text-right text-xs text-bad">
+                    {startBlocked}
+                  </p>
+                )}
               </div>
             }
           >

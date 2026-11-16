@@ -106,7 +106,7 @@ export default function Avatar({
       data-testid="avatar-status"
       data-state={fallback ? "fallback" : loaded ? "loaded" : "loading"}
     >
-      <span className="mr-1 rounded-sm bg-foreground px-1 text-surface" title="她的回复和声音由 AI 生成，不是真人">
+      <span className="mr-1 rounded-sm bg-foreground px-1 text-xs text-surface" title="她的回复和声音由 AI 生成，不是真人">
         AI 角色
       </span>
       {/* 常驻的只有「AI 角色」和名字（ADR-051，11-15 队员 B：名字后面的都不需要）：原来还写「VRM 3D 形象」「不是真人」，

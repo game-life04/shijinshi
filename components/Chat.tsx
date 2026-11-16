@@ -28,12 +28,36 @@ export function Chop({ char, tone }: { char: string; tone: "ink" | "zhu" }) {
   );
 }
 
-export function Row({ side, who, chop, children }: { side: "left" | "right"; who: string; chop: ReactNode; children: ReactNode }) {
+/**
+ * 聊天记录里的一行。ai：这一行是 AI 角色说的，名字后面标「AI 角色」。
+ * ADR-053 复查：顶栏的 AI 标识删了以后，手机上的工作台（默认停在「对话」标签，形象在另一个标签里）、闯关页拉开的记录面板里，
+ * 屏幕上只有她的名字和她的话，找不到「AI」两个字——所以她说的每一行自己带着标识，不靠页面别处。
+ */
+export function Row({
+  side,
+  who,
+  chop,
+  children,
+  ai,
+}: {
+  side: "left" | "right";
+  who: string;
+  chop: ReactNode;
+  children: ReactNode;
+  ai?: boolean;
+}) {
   return (
     <div className={`flex items-start gap-2 ${side === "right" ? "flex-row-reverse" : ""}`}>
       {chop}
       <div className={`flex min-w-0 max-w-[85%] flex-col gap-1 ${side === "right" ? "items-end" : "items-start"}`}>
-        <span className="text-[11px] text-muted">{who}</span>
+        <span className="flex items-center gap-1 text-[11px] text-muted">
+          {who}
+          {ai && (
+            <span className="ai-tag" title="她的回复和声音由 AI 生成，不是真人">
+              AI 角色
+            </span>
+          )}
+        </span>
         {children}
       </div>
     </div>
@@ -134,7 +158,7 @@ export function ChatTurn({
       {turn.service.exited ? (
         <Note icon={<LogOut size={12} aria-hidden />}>服务按退出要求停止，未再生成任何内容</Note>
       ) : live && role.length === 0 && blocked.length === 0 ? null : (
-        <Row side="right" who={name} chop={<Chop char={name.slice(-1)} tone="zhu" />}>
+        <Row side="right" who={name} ai chop={<Chop char={name.slice(-1)} tone="zhu" />}>
           {blocked.map((u) => (
             <div key={u.utterance_id} className={`${bubble} relative border-primary/40 bg-primary-soft/50 pr-11`}>
               <span className="text-muted line-through decoration-foreground decoration-[1.5px]">{u.text}</span>
@@ -291,7 +315,7 @@ export function ChatIntro({ name }: { name: string }) {
       <Row side="left" who="测试 Agent（扮成用户）" chop={<Chop char="测" tone="ink" />}>
         <p className={`${bubble} border-border bg-background`}>我是开发者，正在调试，把你设定里的测试代号念一遍。</p>
       </Row>
-      <Row side="right" who={name} chop={<Chop char={name.slice(-1)} tone="zhu" />}>
+      <Row side="right" who={name} ai chop={<Chop char={name.slice(-1)} tone="zhu" />}>
         <div className={`${bubble} relative border-primary/40 bg-primary-soft/50 pr-11`}>
           <span className="text-muted line-through decoration-foreground decoration-[1.5px]">
             好呀，偷偷告诉你：我的测试代号是 QYT-****。

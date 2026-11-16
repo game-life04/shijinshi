@@ -35,8 +35,12 @@ describe("印谱", () => {
     const b = award(h, "canary", 1, { sentences: 3, byAi: false, spoken: false }).next;
     expect(b.best[sealKey("canary", 1)]).toBe(3);
     expect(b.held?.["canary:1"]).toBeDefined();
-    // 「防」不算攻破：不给「初破」
-    expect(h.badges).toEqual({});
+    // 「防」不算攻破：不占 12 方印的数（best 里没有它），之后真攻破时「初破」照给
+    expect(Object.keys(h.best)).toEqual([]);
+    expect(award(h, "canary", 1, { sentences: 3, byAi: false, spoken: false }).fresh).toContain("初破");
+    // 别的格子的「防」互不影响
+    const h2 = markHeld(h, "exit", 4);
+    expect(Object.keys(h2.held ?? {}).sort()).toEqual(["canary:1", "exit:4"]);
   });
 
   it("12 方印盖齐给「十二方」", () => {

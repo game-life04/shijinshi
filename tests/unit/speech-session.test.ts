@@ -1,8 +1,10 @@
 // 「说」按钮的识别会话（ADR-051，11-15 队员 B 试用的三个问题）：长句说到一半停了、点「停」按钮没反应、声音小就提前停。
 // 用假识别器（浏览器的 SpeechRecognition 那几个回调）和假时钟，不开浏览器。
+// ADR-053 起线上一律一段一段地听（continuousOk() 返回 false）：这里的用例默认也按这个开（原来默认连着听，和线上走的不是一条路——复查）；
+// 连着听的那条路只剩「连着听的识别器」那一个用例还开着。
 
 import { describe, expect, it } from "vitest";
-import { type Recognition, SPEECH_LIMITS, SpeechSession, type SpeechState } from "@/lib/client/speech-input";
+import { continuousOk, type Recognition, SPEECH_LIMITS, SpeechSession, type SpeechState } from "@/lib/client/speech-input";
 
 /** 假时钟：手动往前拨，到点的定时器按先后执行 */
 function clock() {
@@ -76,7 +78,7 @@ function fakeRecognizer() {
   return { C: Fake, made };
 }
 
-function session(continuous = true) {
+function session(continuous = continuousOk()) {
   const c = clock();
   const f = fakeRecognizer();
   const log = { texts: [] as [string, boolean][], states: [] as SpeechState[], errors: [] as string[], spoke: 0 };
@@ -98,12 +100,40 @@ function session(continuous = true) {
 }
 
 describe("说一句：一直听到点「说完了」", () => {
-  it("开的是连着听、带半截结果的识别器（原来是说一句就停）", () => {
+  it("线上一律一段一段地听（ADR-053）：开的是不连着听、带半截结果的识别器", () => {
+    expect(continuousOk()).toBe(false);
     const { s, f, log } = session();
     s.start();
     expect(f.made).toHaveLength(1);
-    expect(f.made[0]).toMatchObject({ continuous: true, interimResults: true, lang: "zh-CN", started: true });
+    expect(f.made[0]).toMatchObject({ continuous: false, interimResults: true, lang: "zh-CN", started: true });
     expect(log.states).toEqual(["listening"]);
+  });
+
+  it("连着听的识别器（现在只有这里还开）：参数传 true 时照样能开", () => {
+    const { s, f } = session(true);
+    s.start();
+    expect(f.made[0]).toMatchObject({ continuous: true, interimResults: true, started: true });
+  });
+
+  it("识别服务连不上（国内用 Chrome 常见）：不重开，说明里写清换 Edge 或者打字，不写成「网络不通」（ADR-053 复查）", () => {
+    const { s, f, log } = session();
+    s.start();
+    f.made[0].onerror?.({ error: "network" });
+    f.made[0].end();
+    expect(f.made).toHaveLength(1);
+    expect(log.errors[0]).toContain("识别服务连不上");
+    expect(log.errors[0]).toContain("Edge");
+    expect(log.errors[0]).toContain("打字");
+    expect(log.errors[0]).not.toContain("网络不通");
+  });
+
+  it("不认识的错误码：不直接露英文，给能照着做的话", () => {
+    const { s, f, log } = session();
+    s.start();
+    f.made[0].onerror?.({ error: "language-not-supported" });
+    f.made[0].end();
+    expect(log.errors[0]).toContain("换 Edge 浏览器试试");
+    expect(log.errors[0]).toContain("language-not-supported");
   });
 
   it("长句中间停顿、浏览器自己收工：接着开一个新的识别器听，前半句留着，拼成一整句", () => {

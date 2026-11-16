@@ -47,10 +47,12 @@ function ctor(): RecognitionCtor | undefined {
 
 const ERRORS: Record<string, string> = {
   "not-allowed": "没有麦克风权限：在浏览器地址栏左边的图标里允许使用麦克风",
-  "service-not-allowed": "浏览器不让用语音识别（可能是隐私设置），先打字吧",
+  "service-not-allowed": "这个浏览器不让用语音识别（隐私设置，或者它本来就不带这个功能）：换 Edge 浏览器试试，或者直接打字",
   "no-speech": "没听到声音，再说一遍？",
-  "audio-capture": "找不到麦克风",
-  network: "语音识别要联网（浏览器把声音发到它的识别服务），网络不通",
+  "audio-capture": "找不到麦克风：看看麦克风有没有插好、有没有被别的软件占着",
+  // ADR-053 复查：原来只写「网络不通」。浏览器是把声音发到它自己的识别服务去认的，Chrome 用的是谷歌的服务，国内常连不上，
+  // 这时候网页和别的功能都是通的，用户看到「网络不通」会以为是自己断网了
+  network: "语音识别服务连不上：声音要发到浏览器自己的识别服务，Chrome 用的是谷歌的，国内常连不上。换 Edge 浏览器打开，或者直接打字",
 };
 
 /** 什么时候自动收尾（毫秒） */
@@ -239,7 +241,8 @@ export class SpeechSession {
         this.noSpeech = true;
         return;
       }
-      this.fatal = ERRORS[e.error] ?? `语音识别出错（${e.error}）`;
+      // 不认识的错误码不直接露英文（复查）：给能照着做的话，代码放在括号里方便反馈
+      this.fatal = ERRORS[e.error] ?? `语音识别出错了（${e.error}）：换 Edge 浏览器试试，或者直接打字`;
     };
     r.onend = () => {
       if (this.rec !== r) return;
@@ -292,7 +295,9 @@ export class SpeechSession {
  * listening：在听（按钮写「说完了」）；finishing：点了「说完了」、在等最后几个字（按钮已经变回「说」，可以马上再点）。
  */
 export function useSpeechInput(o: { onFinal: (text: string) => void; onInterim?: (text: string) => void; onSpeechStart?: () => void }) {
-  const [supported, setSupported] = useState(false);
+  // null：页面还没在浏览器里准备好，不知道有没有语音识别（这时候按钮先灰着）；准备好以后是 true / false。
+  // 不能一开始就当成 false：ADR-053 复查后「不支持」时按钮也能点（点了给说明），页面刚打开那一下点上去会误报「不支持」
+  const [supported, setSupported] = useState<boolean | null>(null);
   const [state, setState] = useState<SpeechState>("idle");
   const [error, setError] = useState<string | null>(null);
   const session = useRef<SpeechSession | null>(null);
@@ -346,9 +351,22 @@ export function useSpeechInput(o: { onFinal: (text: string) => void; onInterim?:
     session.current?.cancel();
     session.current = null;
     setState("idle");
+    // 上一次语音出的错也不留着（复查：报过「没听到声音」以后改成打字发送、换关，那行红字一直挂着）
+    setError(null);
   }, []);
 
-  return { supported, listening: state === "listening", finishing: state === "finishing", error, start, stop, flush, cancel };
+  return {
+    supported,
+    listening: state === "listening",
+    finishing: state === "finishing",
+    error,
+    /** 这个错再说一次可能就好（只有「没听到声音」）；麦克风权限、识别服务连不上这些，再点也是一样的错，不给「再说一次」 */
+    canRetry: error === ERRORS["no-speech"],
+    start,
+    stop,
+    flush,
+    cancel,
+  };
 }
 
 /**

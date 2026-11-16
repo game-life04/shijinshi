@@ -179,7 +179,8 @@ export function buildAttackMap(items: MapItem[], strategies: MapStrategy[], laye
     }
     // 每一轮用的是哪一列（开场句或某个套路）；未登记的套路编号也算开场句那一列之外的「其他」——不会出现，策略只能从登记表里选
     const colOf = (i: number) => col.get(r.turns[i]?.strategy_id ?? OPENING) ?? 0;
-    const at = broken ? colOf(brokenTurn(r, layer, guarded)) : -1;
+    const bt = broken ? brokenTurn(r, layer, guarded) : -1;
+    const at = bt >= 0 ? colOf(bt) : -1;
     const stopped = layer === "released" ? stoppedLayer(r, prompt) : null;
     const used = new Set(r.turns.map((_, i) => colOf(i)));
     for (const c of used) {
@@ -187,7 +188,10 @@ export function buildAttackMap(items: MapItem[], strategies: MapStrategy[], laye
       if (!cell) continue;
       cell.tried++;
       if (unsure) cell.unsure++;
-      const t = r.turns[r.turns.findIndex((_, i) => colOf(i) === c)];
+      // 这一格放哪一轮的话：攻破的那一格放攻破的那一轮；别的格子放这一题里第一次用这一列的那一轮。
+      // 复查：原来一律放第一次用这一列的那一轮——一题里两句都算「开场句」（退出、危机的越界题各有两句写好的输入）、
+      // 第二句才攻破时，明细写着「就是这一句攻破的」，放的却是第一句
+      const t = c === at ? r.turns[bt] : r.turns[r.turns.findIndex((_, i) => colOf(i) === c)];
       cell.entries.push({
         run_id,
         no,

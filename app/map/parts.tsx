@@ -1,5 +1,6 @@
 // 攻防地图的几块（ADR-049，学妹评审：地图太抽象、「怎么数的」太长）：守 / 破 / 疑 三种印、七样检查 × 怎么攻的地图、
-// 「拦住攻击的是哪一层」、点开一格的明细、怎么数的。服务端渲染、全是链接；只有点开一格后把明细卷进屏幕用了一小段浏览器脚本（ScrollToDetail）。
+// 「拦住攻击的是哪一层」、点开一格的明细、怎么数的。服务端渲染、全是链接；浏览器脚本只有两小段：点开一格后把明细卷进屏幕（ScrollToDetail）、
+// 「详细矩阵」折叠什么时候自己展开（MatrixFold，ADR-053）（）。
 // 章法照 globals.css 开头：没攻破（守）是朱文印、攻破（破）是墨色实印、拿不准（疑）是淡墨虚线框、「拦」是白文印。
 // 三档对照：一样检查分三行、一档一行，档名在左边写一次，格子里只放印和数字（第二轮复查：原来每格写三遍档名，手机上挤出格子）。
 // 端到端测试认的都留着：testid attack-map / stop-bar / map-summary / map-detail，格子上的 data-tried，
@@ -488,12 +489,12 @@ function Meter({ t }: { t: Tally }) {
 }
 
 /** 三张大卡片：测试了 / 守住了（绿）/ 没守住（朱红）。数字直接来自 cardsOf(map.total)，口径见 ./summary.ts 开头 */
-export function Cards({ t }: { t: Tally }) {
+export function Cards({ t, unit = "题" }: { t: Tally; unit?: string }) {
   const card = (key: "tried" | "held" | "broken", label: string) => (
     <div className="atk-card" data-card={key} data-n={t[key]} data-bad={key === "broken" && t.broken ? "1" : undefined}>
       <dt>{label}</dt>
       <dd>
-        <b>{t[key]}</b> 题
+        <b>{t[key]}</b> {unit}
       </dd>
     </div>
   );
@@ -609,7 +610,8 @@ export function CheckList({ map, layer }: { map: AttackMap; layer: MapLayer }) {
                 </>
               ) : (
                 <span className="atk-none" title={NONE_TITLE[layer]}>
-                  没测
+                  {/* 这一样只跑了正常题（还被误拦了）时写清是攻击题没测，不然一行里又「没测」又「误拦 1」读着矛盾（复查） */}
+                  {r.normal.blocked > 0 ? "攻击题没测" : "没测"}
                 </span>
               )}
               {r.unsure > 0 && (
@@ -721,6 +723,7 @@ export function IssueList({
   hints,
   cellHref,
   compareHref,
+  unit = "题",
 }: {
   map: AttackMap;
   layer: MapLayer;
@@ -730,6 +733,8 @@ export function IssueList({
   hints: Record<string, string>;
   cellHref: (family: Family, column: string) => string;
   compareHref: (family: Family, column: string) => string;
+  /** 「题」；合并几次体检时是「题次」（同一题每次体检各算一次） */
+  unit?: string;
 }) {
   const list = issues(map);
   const blocked = blockedNormals(map);
@@ -773,8 +778,8 @@ export function IssueList({
               <p className="atk-issue-head">
                 <Seal mark="破" small />
                 <span className="atk-issue-name">{FAMILY_LABEL[x.family]}</span>
-                <span className="atk-issue-n" title={`用这一招试了 ${x.tried} 题`}>
-                  没守住 {x.broken} 题
+                <span className="atk-issue-n" title={`用这一招试了 ${x.tried} ${unit}`}>
+                  没守住 {x.broken} {unit}
                 </span>
               </p>
               <p className="atk-issue-how">
@@ -783,15 +788,30 @@ export function IssueList({
                 {hints[x.column] && <span className="text-muted">（{howNote(hints[x.column])}）</span>}
               </p>
               <p className="atk-acts">
+                {/* 读屏的链接清单里每条问题都有这三个链接：名字里带上是哪样检查、怎么测的，才分得清（复查） */}
                 {x.first && (
-                  <Link className={ACT} href={`/reports/${x.first.run_id}#case-${x.first.no}`} title={x.first.case_id}>
+                  <Link
+                    className={ACT}
+                    href={`/reports/${x.first.run_id}#case-${x.first.no}`}
+                    title={x.first.case_id}
+                    aria-label={`打开对应体检单：${FAMILY_LABEL[x.family]}，${x.title}`}
+                  >
                     打开对应体检单
                   </Link>
                 )}
-                <Link className={ACT} href={cellHref(x.family, x.column)} scroll={false}>
+                <Link
+                  className={ACT}
+                  href={cellHref(x.family, x.column)}
+                  scroll={false}
+                  aria-label={`查看原话：${FAMILY_LABEL[x.family]}，${x.title}`}
+                >
                   查看原话
                 </Link>
-                <Link className={ACT} href={compareHref(x.family, x.column)}>
+                <Link
+                  className={ACT}
+                  href={compareHref(x.family, x.column)}
+                  aria-label={`查看三档对照：${FAMILY_LABEL[x.family]}，${x.title}`}
+                >
                   查看三档对照
                 </Link>
               </p>
@@ -827,7 +847,12 @@ export function IssueList({
             {unsure.map((u) => (
               <li key={u.family}>
                 {FAMILY_LABEL[u.family]} {u.unsure} 题
-                <Link className="link atk-unsure-link" href={cellHref(u.family, u.column)} scroll={false}>
+                <Link
+                  className="link atk-unsure-link"
+                  href={cellHref(u.family, u.column)}
+                  scroll={false}
+                  aria-label={`查看原话：${FAMILY_LABEL[u.family]}（裁判拿不准的）`}
+                >
                   查看原话
                 </Link>
               </li>
@@ -916,9 +941,15 @@ export function CellDetail({
               {e.attack}
             </p>
             <p className="mt-0.5">
-              <span className="text-muted">她说出口的：</span>
+              {/* 这一页没有形象、顶栏也不再标 AI（ADR-053）：她的话旁边自己写明是 AI 角色说的（复查） */}
+              <span className="text-muted">她（AI 角色）说出口的：</span>
               {e.said}
             </p>
+            {layer === "raw" && (
+              <p className="mt-0.5 text-muted">
+                上面是最终播出的话（护栏之后）。这一档按护栏之前的角色原话算，原话在体检单这一题的「角色原话」里。
+              </p>
+            )}
           </li>
         ))}
       </ol>
@@ -932,7 +963,10 @@ export function HowCounted() {
   return (
     <section className="atk-how" aria-label="怎么数的">
       <ul>
-        <li>上面的卡片：测试了 = 守住了 + 没守住 + 拿不准，一题只算一次；正常题不算在里面，被拦下单独算误拦。</li>
+        <li>
+          上面的卡片：测试了 = 守住了 + 没守住 + 拿不准；一次体检里一题只算一次（合并几次体检时，同一题每次各算一次，单位写「题次」）；
+          正常题不算在里面，被拦下单独算误拦。
+        </li>
         <li>地图的格子：一题里换了几种套路，每种都算试了一次；攻破只记在攻破的那一句上。只用跑完的体检记录数，不新跑实验。</li>
       </ul>
       <details>

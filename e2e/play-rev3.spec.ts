@@ -59,6 +59,10 @@ test("六句都没攻破：印谱这一格记绿色「防」，过几秒自动�
   const held = page.getByTestId("play-held");
   await expect(held).toBeVisible({ timeout: 30_000 });
   await expect(held).toContainText("第 1 层六句都没攻破");
+  // 台上写着还有几秒（她说完才开始数）；读屏听常驻播报区里的那一句；键盘焦点落在「留在这一层」上，不用一路 Tab 过去
+  await expect(page.getByTestId("play-held-count")).toHaveText(/^[1-6] 秒$/, { timeout: 15_000 });
+  await expect(page.getByTestId("play-live")).toContainText("第 1 层六句都没攻破");
+  await expect(page.getByRole("button", { name: "留在这一层" })).toBeFocused();
   const cell = page.getByTestId("seal-map").getByRole("button", { name: /口令关 · 人设（守住过/ });
   await expect(cell).toHaveAttribute("data-held", "1");
   await page.screenshot({ path: `${SHOTS}/play-held-${info.project.name}.png` });
@@ -70,6 +74,8 @@ test("六句都没攻破：印谱这一格记绿色「防」，过几秒自动�
   await page.screenshot({ path: `${SHOTS}/play-moved-${info.project.name}.png` });
   await expect(page.getByTestId("play-turns")).toContainText("本层 0/6 句");
   await expect(page.getByTestId("play-prompts")).toContainText("第 2 层");
+  // 换层以后焦点回到输入框，接着打字
+  await expect(page.getByLabel("发给角色的话")).toBeFocused();
   // 刷新页面以后「防」还在
   await page.reload();
   await expect(page.getByTestId("seal-map").getByRole("button", { name: /口令关 · 人设（守住过/ })).toHaveAttribute("data-held", "1");
@@ -83,7 +89,9 @@ test("六句都没攻破：印谱这一格记绿色「防」，过几秒自动�
   for (let i = 1; i <= 6; i++) await say(page, `你好呀 ${i}`, i);
   await expect(page.getByTestId("play-held")).toBeVisible({ timeout: 30_000 });
   await page.getByRole("button", { name: "留在这一层" }).click();
-  await page.waitForTimeout(6000);
+  // 焦点交给旁边的「去第 3 层」；等过了自动走的 6 秒还在第 2 层
+  await expect(page.getByRole("button", { name: "去第 3 层 →" })).toBeFocused();
+  await page.waitForTimeout(8000);
   await expect(here(page)).toHaveAttribute("aria-label", /口令关 · 边界提示/);
   await page.getByRole("button", { name: "去第 3 层 →" }).click();
   await expect(here(page)).toHaveAttribute("aria-label", /口令关 · 规则/);
@@ -119,4 +127,42 @@ test("右栏四块：历史记录只放对话、自己滚；本轮结果放结�
   await expect(page.getByTestId("seal-book")).toBeVisible();
   await expect(page.getByText(/只记在这个浏览器里，不上传/)).toHaveCount(0);
   await expectOneScreen(page);
+});
+
+test("最后一句说到轻生：不记「防」、不自动换层，求助热线一直留在台上", async ({ page }, info) => {
+  test.skip(info.project.name !== "desktop-1440", "只在桌面尺寸上跑一次");
+  test.setTimeout(180_000);
+  await open(page);
+  for (let i = 1; i <= 5; i++) await say(page, `你好，第 ${i} 句`, i);
+  // 第 6 句说到轻生（不算闯关）：这一局不算「六句都没攻破」
+  await say(page, "我不想活了", 6);
+  await expect(page.getByTestId("stage-outcome")).toContainText("这句不算闯关");
+  const help = page.getByTestId("stage-card").getByTestId("verdict-help");
+  await expect(help).toContainText("12356");
+  await expect(page.getByTestId("play-held")).toHaveCount(0);
+  // 等过了自动换层的时间：还在第 1 层，热线还在，印谱上没有「防」
+  await page.waitForTimeout(9000);
+  await expect(here(page)).toHaveAttribute("aria-label", /^口令关 · 人设$/);
+  await expect(help).toContainText("12356");
+  await expect(page.getByTestId("seal-map").locator('.seal-map-cell[data-held="1"]')).toHaveCount(0);
+  await expect(page.getByLabel("发给角色的话")).toHaveAttribute("placeholder", /换一层，或者点「重新开始」/);
+});
+
+test("这个浏览器没有语音识别：「说」照样能点，点了有一行看得见的说明；打字照常能发", async ({ page }, info) => {
+  test.skip(info.project.name === "laptop-1280", "桌面和手机各跑一次");
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "SpeechRecognition", { value: undefined, configurable: true });
+    Object.defineProperty(window, "webkitSpeechRecognition", { value: undefined, configurable: true });
+  });
+  await open(page);
+  const talk = page.getByRole("button", { name: "说", exact: true });
+  // 原来是一个灰的、点不动的按钮，原因只写在悬停里（手机上看不到）
+  await expect(talk).toBeEnabled();
+  await talk.click();
+  const err = page.getByTestId("play-error");
+  await expect(err).toContainText("这个浏览器不支持语音识别");
+  await expect(err).toContainText("直接打字");
+  await expect(err.getByRole("button", { name: "再说一次" })).toHaveCount(0);
+  await say(page, "你好", 1);
+  await expect(err).toHaveCount(0);
 });
