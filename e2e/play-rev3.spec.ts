@@ -65,6 +65,9 @@ test("六句都没攻破：印谱这一格记绿色「防」，过几秒自动�
   // 自动进第 2 层：新一层重新数六句，顶上说一声
   await expect(here(page)).toHaveAttribute("aria-label", /口令关 · 边界提示/, { timeout: 20_000 });
   await expect(page.getByTestId("play-moved")).toContainText("第 1 层六句都没攻破");
+  // 这一行要整个看得见（11-16 线上实测：原来排在卡片最底下被裁掉，只露出一个「防」字）
+  await expect(page.getByTestId("play-moved")).toBeInViewport({ ratio: 1 });
+  await page.screenshot({ path: `${SHOTS}/play-moved-${info.project.name}.png` });
   await expect(page.getByTestId("play-turns")).toContainText("本层 0/6 句");
   await expect(page.getByTestId("play-prompts")).toContainText("第 2 层");
   // 刷新页面以后「防」还在

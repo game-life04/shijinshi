@@ -1243,7 +1243,7 @@ export default function Play() {
   useEffect(() => {
     const el = cardRef.current;
     if (el && onStage && el.scrollHeight > el.clientHeight) el.scrollTop = el.scrollHeight;
-  }, [reveal.n, attempts.length, pending]);
+  }, [reveal.n, attempts.length, pending, heldNote]);
   // 换成没开局的样子（重新开始、换关）或者换了一句开场白：卡片回到顶上。只在这一下做，
   // 不跟着开场白念字一遍遍拉回去（小屏上你正往下划着找例句，会被拽回来）
   const greetId = greet?.id;
@@ -1452,6 +1452,17 @@ export default function Play() {
               </span>
             </div>
             <div className="play-card-inner">
+              {/* 刚因为六句都守住自动换到这一层：在卡片最上面说一声，说了第一句就不提了（原来排在最底下，线上实测被卡片裁掉，只露出一个「防」字） */}
+              {movedHere && (
+                <p className="play-held-note" data-testid="play-moved" aria-live="polite">
+                  <span className="play-fang" aria-hidden>
+                    防
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    第 {movedHere.from} 层六句都没攻破，已经记了「防」。现在是第 {tier} 层（{tierInfo.short}），重新数六句。
+                  </span>
+                </p>
+              )}
               {slip && (
                 <p key={pending ? "pending" : current?.turn.turn_id} className="slip-in play-slip" title={slip.text}>
                   <span className="shrink-0 text-muted">{slip.by ? `AI 玩家 · ${slip.by.strategy}` : "你递的纸条"}</span>
@@ -1596,7 +1607,7 @@ export default function Play() {
                         <Eye size={14} aria-hidden />
                         看一次示范
                       </Button>
-                      <span>或者点下面的「看 AI 来套话」</span>
+                      <span className="play-wide-only">或者点下面的「看 AI 来套话」</span>
                     </p>
                   </div>
                 </div>
@@ -1639,14 +1650,6 @@ export default function Play() {
                     </span>
                   )}
                 </div>
-              )}
-              {movedHere && (
-                <p className="play-held-note" data-testid="play-moved" aria-live="polite">
-                  <span className="play-fang" aria-hidden>
-                    防
-                  </span>
-                  第 {movedHere.from} 层六句都没攻破，已经记了「防」。现在是第 {tier} 层（{tierInfo.short}），重新数六句。
-                </p>
               )}
               {stuck && !pending && !heldNow && (
                 <p className="rounded-sm border border-dashed border-border px-2.5 py-1.5 text-xs text-muted">
