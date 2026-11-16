@@ -100,8 +100,9 @@ test("打字闯关：每一轮摊开三层，给出结果；换关卡重新开�
   await expect(page.getByTestId("stage-card")).toBeInViewport({ ratio: 1 });
   await expect(page.getByLabel("发给角色的话")).toBeInViewport({ ratio: 1 });
   await expectOneScreen(page);
-  // 八点墨（ADR-046）：说了一句，点了一颗
-  await expect(page.getByTestId("ink-dots")).toHaveAttribute("title", "本局还能说 7 句");
+  // 墨点（ADR-046）：说了一句，点了一颗；每层 6 句（ADR-053）
+  await expect(page.getByTestId("ink-dots")).toHaveAttribute("title", "这一层还能说 5 句");
+  await expect(page.getByTestId("play-turns")).toContainText("本层 1/6 句");
   await expect(page.getByTestId("ink-dots").locator('i[data-used="1"]')).toHaveCount(1);
   // 等她的回复一个字一个字念完再拍（念的时候卡片里只有光标）
   await expect(page.locator(".play-card .type-caret")).toHaveCount(0, { timeout: 20_000 });

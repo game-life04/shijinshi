@@ -51,9 +51,10 @@ export async function expectLevel(page: Page, title: string) {
   else await expect(page.getByRole("heading", { name: title })).toBeVisible();
 }
 
-/** 「换成故意出错的角色」：在关卡那一块里，手机上先拉出面板；勾完重新开局，面板自己收起 */
+/** 「故意出错」：ADR-053 起在输入框下面那一行里，手机上也一直看得见（面板开着时台上点不到，先收起）；勾完重新开局 */
 export async function setFault(page: Page, on: boolean) {
-  await openPanel(page, "levels");
+  await ready(page);
+  await closePanel(page);
   const box = page.getByLabel(/故意出错/);
   if (on) await box.check();
   else await box.uncheck();

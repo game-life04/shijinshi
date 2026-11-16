@@ -1,15 +1,20 @@
-// 攻防地图的说法（ADR-049，学妹评审：地图太抽象、说明太长）：页面上那一句结论、格子盖什么印、「谁拦住的」分几行。
-// 只管怎么说，数字一个不改：全部直接取 lib/domain/attack-map.ts 数出来的 AttackMap。另外只算地图上一眼数得出的两样：
-// 比率（和原来页面一样四舍五入）、破了很多格时「破在……等 n 样检查」的 n（有「破」印的行数）。
+// 攻防地图的说法和数法（ADR-049 起；ADR-053（11-16 队员 B 修改稿 3）改成「三张卡片 + 七项检查结果 + 本次要看的问题」）。
+// 只管怎么说、怎么摆，数字一个不编：全部直接取 lib/domain/attack-map.ts 数出来的 AttackMap。
 // 纯函数，服务端页面和单元测试（tests/unit/map-summary.test.ts）共用。
+//
+// 卡片和七项的口径（ADR-053）：
+// - 测试了 = 攻击题（越界题 + 含糊题，跑完的；看角色原话时只算判得了原话的）= AttackMap.total.tried；
+// - 没守住 = 被攻破的 = total.broken；
+// - 拿不准 = 裁判拿不准的（只在看最终播出时有）= total.unsure，不算守住也不算没守住，单独标；
+// - 守住了 = 测试了 − 没守住 − 拿不准。所以 守住了 + 没守住 + 拿不准 = 测试了，三张卡片对得上。
+// - 正常题不是攻击，不进上面任何一个数；被误拦单独说（normalTotals、blockedNormals）。
+// - 七项一样一行，用 MapRow.total（一题只算一次，和合计同一处加）：七行加起来就是卡片上的数。
 
-import { type AttackMap, type MapCell, type MapLayer, OPENING, type StopTally } from "@/lib/domain/attack-map";
-import { FAMILIES, FAMILY_LABEL, type Family, type SubjectVariant } from "@/lib/domain/types";
+import type { AttackMap, MapCaseRef, MapCell, MapEntry, MapTotal, StopTally } from "@/lib/domain/attack-map";
+import { FAMILIES, type Family, type SubjectVariant } from "@/lib/domain/types";
 
-/** 三档的叫法（三档对照、档位按钮、结论句共用；悬停写全名 VARIANT_SHORT） */
+/** 三档的叫法（三档对照、档位按钮共用；悬停写全名 VARIANT_SHORT） */
 export const TIER_NAME: Record<string, string> = { B0: "只有人设", B1: "加边界提示", B2: "再加护栏" };
-
-export const pct = (k: number, n: number) => (n ? `${Math.round((k / n) * 100)}%` : "—");
 
 /** 一格盖什么印：攻破过盖墨色「破」；没攻破盖朱文「守」；全是「不确定」的盖淡墨虚线「疑」；没测过不盖 */
 export type Mark = "破" | "守" | "疑";
@@ -19,6 +24,38 @@ export function markOf(cell: MapCell | null | undefined): Mark | null {
   if (cell.unsure >= cell.tried) return "疑";
   return "守";
 }
+
+// ---------- 三张卡片、七项检查结果（ADR-053） ----------
+
+/** 测试了 / 守住了 / 没守住 / 拿不准：守住了 = 测试了 − 没守住 − 拿不准（见文件开头） */
+export interface Tally {
+  tried: number;
+  held: number;
+  broken: number;
+  unsure: number;
+}
+export function cardsOf(t: MapTotal): Tally {
+  return { tried: t.tried, held: t.tried - t.broken - t.unsure, broken: t.broken, unsure: t.unsure };
+}
+
+/** 七项检查结果的一行：这一样检查的攻击题（一题只算一次）和它的正常题 */
+export interface CheckRow extends Tally {
+  family: Family;
+  normal: { tried: number; blocked: number };
+}
+export function checkRows(map: AttackMap): CheckRow[] {
+  return FAMILIES.flatMap((family) => {
+    const r = map.rows.find((x) => x.family === family);
+    return r ? [{ family, ...cardsOf(r.total), normal: { tried: r.normal.tried, blocked: r.normal.blocked } }] : [];
+  });
+}
+
+/** 正常题合计：试了几题、被误拦几题（和地图上「正常题被误拦 x / y」那一列加起来同一个数） */
+export function normalTotals(map: AttackMap): { tried: number; blocked: number } {
+  return map.rows.reduce((s, r) => ({ tried: s.tried + r.normal.tried, blocked: s.blocked + r.normal.blocked }), { tried: 0, blocked: 0 });
+}
+
+// ---------- 本次要看的问题（ADR-053） ----------
 
 /** 被攻破的格子：攻破次数多的在前，同样多的按检查、套路的顺序 */
 export interface BrokenSpot {
@@ -45,124 +82,50 @@ export function brokenSpots(map: AttackMap): BrokenSpot[] {
   return out.sort((a, b) => b.broken - a.broken || a.order - b.order).map(({ order: _, ...s }) => s);
 }
 
-/** 正常题合计：试了几题、被误拦几题（和原来页面上的「正常题被误拦 x / y」同一个数） */
-export function normalTotals(map: AttackMap): { tried: number; blocked: number } {
-  return map.rows.reduce((s, r) => ({ tried: s.tried + r.normal.tried, blocked: s.blocked + r.normal.blocked }), { tried: 0, blocked: 0 });
-}
-
-/** 一段字：b = 加粗（数字）；n = 不在中间折行（「检查名」「套路名」） */
-export interface Seg {
-  t: string;
-  b?: boolean;
-  n?: boolean;
-}
-export const plain = (segs: Seg[] | null | undefined) => (segs ?? []).map((s) => s.t).join("");
-
-const q = (s: string): Seg => ({ t: `「${s}」`, n: true });
-const list = (names: string[], max = 3) => names.slice(0, max).map(q);
-
-/** 「开场句」第一次出现时补一句它是什么（只写在列头的悬停说明里，手机上看不到） */
-export const OPENING_NOTE = "（用例里写好的句子）";
-
 /**
- * 「哪里被攻破」：一两格就说哪样被哪个套路攻破；多了只说哪几样检查（地图上看得到每一格）。
- * 「被攻破」前面主句已经说过，多样检查时改说「破在……」，不重复。
+ * 没守住的问题：一个「检查 × 怎么攻」的格子一条（就是地图上盖「破」的格子），
+ * 带上这一格试了几题、第一道被攻破的题（「打开对应体检单」链到它；合并几次时是最近那次的）。
+ * 每条的「没守住几题」加起来就是卡片上的「没守住」：一题被攻破只记在攻破那一句的格子上。
  */
-export function whereBroken(spots: BrokenSpot[]): Seg[] | null {
-  if (!spots.length) return null;
-  let noted = false;
-  const col = (s: BrokenSpot): Seg[] => {
-    if (s.column !== OPENING || noted) return [q(s.title)];
-    noted = true;
-    return [q(s.title), { t: OPENING_NOTE }];
-  };
-  if (spots.length <= 2) {
-    return [...spots.flatMap((s, i) => [...(i ? [{ t: "、" }] : []), q(FAMILY_LABEL[s.family]), { t: "被" }, ...col(s)]), { t: "攻破" }];
-  }
-  const families = [...new Set(spots.map((s) => s.family))];
-  if (families.length === 1) {
-    return [q(FAMILY_LABEL[families[0]]), { t: "被" }, ...spots.slice(0, 3).flatMap(col), { t: `${spots.length > 3 ? "等" : ""}攻破` }];
-  }
-  // 按每样检查被攻破的次数排（同样多的按检查的顺序）
-  const sum = (f: Family) => spots.filter((s) => s.family === f).reduce((n, s) => n + s.broken, 0);
-  const ranked = families.sort((a, b) => sum(b) - sum(a) || FAMILIES.indexOf(a) - FAMILIES.indexOf(b));
-  const names = ranked.map((f) => FAMILY_LABEL[f]);
-  return [{ t: "破在" }, ...list(names), ...(names.length > 3 ? [{ t: `等 ${names.length} 样检查` }] : [])];
+export interface Issue extends BrokenSpot {
+  tried: number;
+  first: MapEntry | null;
 }
-
-export interface Headline {
-  /** 主句：这一档攻了几题、被攻破几题，后面接「哪里被攻破」 */
-  lead: Seg[];
-  /** 只有一格被攻破时：那一格（结论句后面链到明细） */
-  spot: BrokenSpot | null;
-  /** 正常题被误拦（有正常题才说） */
-  normal: Seg[] | null;
-  /** 有「不确定」的题（只在看最终播出时有） */
-  unsure: boolean;
-  /** 拿不准的题数（主句没说到时，页面在下面补一句带数的） */
-  unsureCount: number;
-}
-
-/** 一档一张图的结论句 */
-export function headline(map: AttackMap, variant: SubjectVariant, layer: MapLayer): Headline {
-  const raw = layer === "raw";
-  const who = `${TIER_NAME[variant] ?? variant}这一档${raw ? "，看角色原话" : ""}：`;
-  const { tried, broken } = map.total;
-  const spots = brokenSpots(map);
-  const lead: Seg[] = [{ t: who }];
-  if (!tried) {
-    lead.push({ t: raw ? "没有能判原话的攻击题。" : "还没有判出结论的攻击题。" });
-  } else {
-    lead.push({ t: "攻了 " }, { t: String(tried), b: true }, { t: " 题，" });
-    // 有拿不准的题时不说「一题都没被攻破」：大字会让人以为全守住了（ADR-049 深度测试：13 题里 7 题是「疑」）
-    if (!broken && map.total.unsure)
-      lead.push({ t: "没有被攻破的，其中 " }, { t: String(map.total.unsure), b: true }, { t: " 题裁判拿不准。" });
-    else if (!broken) lead.push({ t: raw ? "原话一题都没被攻破。" : "一题都没被攻破。" });
-    else {
-      lead.push({ t: raw ? "原话被攻破 " : "被攻破 " }, { t: String(broken), b: true }, { t: ` 题（${pct(broken, tried)}）` });
-      const where = whereBroken(spots);
-      lead.push(...(where ? [{ t: "——" }, ...where, { t: "。" }] : [{ t: "。" }]));
-    }
-  }
-  const n = normalTotals(map);
-  const normal: Seg[] | null = n.tried
-    ? [
-        { t: "正常题 " },
-        { t: String(n.tried), b: true },
-        { t: " 题，被误拦 " },
-        { t: String(n.blocked), b: true },
-        { t: ` 题（${pct(n.blocked, n.tried)}）。` },
-      ]
-    : null;
-  const unsure = !raw && map.rows.some((r) => r.cells.some((c) => (c?.unsure ?? 0) > 0));
-  return { lead, spot: broken && spots.length === 1 ? spots[0] : null, normal, unsure, unsureCount: raw ? 0 : map.total.unsure };
-}
-
-/** 三档对照的结论句 */
-export function compareHeadline(maps: { v: SubjectVariant; map: AttackMap }[], layer: MapLayer): { lead: Seg[]; normal: Seg[] | null } {
-  const raw = layer === "raw";
-  const lead: Seg[] = [{ t: `三档对照${raw ? "，看角色原话" : ""}：` }];
-  maps.forEach((x, i) => {
-    const name = TIER_NAME[x.v] ?? x.v;
-    lead.push(
-      { t: `${i ? "，" : ""}${name}${i ? " " : raw ? "原话被攻破 " : "被攻破 "}` },
-      { t: `${x.map.total.broken}/${x.map.total.tried}`, b: true },
-    );
-    if (!i) lead.push({ t: " 题" });
+export function issues(map: AttackMap): Issue[] {
+  return brokenSpots(map).map((s) => {
+    const cell = map.rows.find((r) => r.family === s.family)?.cells[map.columns.findIndex((c) => c.id === s.column)];
+    return { ...s, tried: cell?.tried ?? 0, first: cell?.entries.find((e) => e.broken) ?? null };
   });
-  lead.push({ t: "。" });
-  const ns = maps.map((x) => ({ v: x.v, n: normalTotals(x.map) }));
-  const normal: Seg[] | null = ns.some((x) => x.n.tried)
-    ? [
-        { t: "正常题被误拦：" },
-        ...ns.flatMap((x, i) => [
-          { t: `${i ? "，" : ""}${TIER_NAME[x.v] ?? x.v} ` },
-          { t: x.n.tried ? `${x.n.blocked}/${x.n.tried}` : "没测", b: x.n.tried > 0 },
-        ]),
-        { t: "。" },
-      ]
-    : null;
-  return { lead, normal };
+}
+
+/** 拿不准的题：按检查数（一题只算一次），「查看原话」点开这一样第一个有拿不准的格子 */
+export interface UnsureCheck {
+  family: Family;
+  unsure: number;
+  column: string;
+}
+export function unsureChecks(map: AttackMap): UnsureCheck[] {
+  return FAMILIES.flatMap((family) => {
+    const r = map.rows.find((x) => x.family === family);
+    const i = r ? r.cells.findIndex((c) => (c?.unsure ?? 0) > 0) : -1;
+    return r && r.total.unsure > 0 && i >= 0 ? [{ family, unsure: r.total.unsure, column: map.columns[i].id }] : [];
+  });
+}
+
+/** 正常题被误拦：按检查一条，「打开对应体检单」链到第一道被误拦的题 */
+export interface BlockedNormal {
+  family: Family;
+  tried: number;
+  blocked: number;
+  first: MapCaseRef | null;
+}
+export function blockedNormals(map: AttackMap): BlockedNormal[] {
+  return FAMILIES.flatMap((family) => {
+    const r = map.rows.find((x) => x.family === family);
+    return r && r.normal.blocked > 0
+      ? [{ family, tried: r.normal.tried, blocked: r.normal.blocked, first: r.normal.blocked_cases[0] ?? null }]
+      : [];
+  });
 }
 
 // ---------- 拦住攻击的是哪一层 ----------

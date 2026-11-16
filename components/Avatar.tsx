@@ -106,9 +106,11 @@ export default function Avatar({
       data-testid="avatar-status"
       data-state={fallback ? "fallback" : loaded ? "loaded" : "loading"}
     >
-      <span className="mr-1 rounded-sm bg-foreground px-1 text-surface">AI 角色</span>
+      <span className="mr-1 rounded-sm bg-foreground px-1 text-surface" title="她的回复和声音由 AI 生成，不是真人">
+        AI 角色
+      </span>
       {/* 常驻的只有「AI 角色」和名字（ADR-051，11-15 队员 B：名字后面的都不需要）：原来还写「VRM 3D 形象」「不是真人」，
-          AI 标识顶栏一直挂着。形象还在下载、没加载出来时，名字后面临时写一句，出来了就没有。
+          ADR-053 起顶栏不再挂 AI 标识（队员 B 修改稿 3），「不是真人」放进这里的悬停；闯关台词卡片上她名字旁边另有一处。形象还在下载、没加载出来时，名字后面临时写一句，出来了就没有。
           舞台很矮时（小屏手机）样式表把这一句收起来；再窄，名字也收起来，只留「AI 角色」（globals.css 里 .play-avatar 的 @container） */}
       <span className="avatar-status-name">
         {subjectName && subjectName !== "琪叶桃" ? `形象：琪叶桃（示意）· 被测角色：${subjectName}` : "琪叶桃"}

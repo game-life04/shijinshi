@@ -6,6 +6,9 @@
 // 评审第二批（ADR-035）：顶上一行说清这是干什么的、对照哪部法规，加「改了再测」四步路标；配置条只留主要几项，其余收进「实验设置」。
 // ADR-049（学妹试用：「信息太繁杂」「对话才是重点」）：顶上那行说明和四步路标收进「怎么用」；七样、耗时的长说明收起来；
 // 中间的对话最宽、框最重，两边窄一点、淡一点；底部计量压成一行，没开始体检时不显示。
+// ADR-053（11-16 队员 B 修改稿 3）：最上面一行换成测试 Agent 的五种套路（原来那句「给 AI 陪聊……出体检单」删了）；
+// 「一键演示」「开始体检」（跑起来后的「暂停」「继续」「终止」）挪到「对话」标题那一行右头，手机上照旧在配置条里；
+// 右栏「这次查七样」改「七样测试」，七样编号 1～7、不写条款号。
 // 运行过程通过事件流实时更新；每完成一例就取一次最新结果（含结论与证据）。
 // 语音运行：事件流驱动播放器——句子放行就取音频播放，护栏截断或终止就按代际丢弃旧音频；
 // 服务端开始等本轮播放结果时，把渲染区间和计时上报回去（漏出时长由服务端算）。
@@ -42,8 +45,8 @@ import {
   VARIANTS,
 } from "@/lib/domain/types";
 import Avatar from "./Avatar";
-import { CaseCard, ChatIntro, ChatTurn, ChatTyping } from "./Chat";
-import CheckList from "./CheckList";
+import { CaseCard, ChatIntro, ChatTurn, ChatTyping, StrategyChips } from "./Chat";
+import CheckList, { ExplainToggle } from "./CheckList";
 import LatencyWaterfall, { latestTiming } from "./LatencyWaterfall";
 import { LayerStrip } from "./Layers";
 import type { Phase } from "./StatusRing";
@@ -52,7 +55,6 @@ import { Badge, Button, CaseBadge, VerdictBadge } from "./ui";
 import {
   duration,
   LAW_EFFECTIVE,
-  LAW_FULL,
   LAW_SHORT,
   leakHow,
   modelName,
@@ -153,6 +155,8 @@ export default function Workbench() {
     setHelpOpen(false);
     if (refocus) helpButtonRef.current?.focus();
   }, []);
+  /** 右栏「七样测试」每样的说明展开没有（「了解详情」，ADR-053：按钮挪到面板标题那一行，状态放在这里） */
+  const [checkExplain, setCheckExplain] = useState(false);
   /** 底部题数对账里「平台拒答」是什么：点这四个字展开一行说明（手机上没有鼠标悬停） */
   const [tallyHelp, setTallyHelp] = useState(false);
   /** 上一次跑完的运行：这次跑完后可以和它做前后对比 */
@@ -521,9 +525,12 @@ export default function Workbench() {
   const lastStarted = [...events].reverse().find((e) => e.type === "case_started")?.case_id;
   const lastFamily = lastStarted ? cases0(lastStarted) : undefined;
   const currentFamily = lastFamily ? FAMILY_LABEL[lastFamily as Family] : undefined;
-  // 点「开始体检」后这个按钮会消失，焦点掉到页面最外层；改落到「终止」上，键盘用户能接着操作
+  // 点「开始体检」后这个按钮会消失，焦点掉到页面最外层；改落到「终止」上，键盘用户能接着操作。
+  // 「终止」有两份（大屏在「对话」标题栏、手机在配置条，ADR-053），只有一份看得见：落到看得见的那份上
   useEffect(() => {
-    if (running && document.activeElement === document.body) document.getElementById("stop-run")?.focus();
+    if (!running || document.activeElement !== document.body) return;
+    const stop = ["stop-run", "stop-run-bar"].map((id) => document.getElementById(id)).find((el) => el?.offsetParent);
+    stop?.focus();
   }, [running]);
   const cases = suiteInfo?.cases ?? [];
   /** 设定哪里不合格（和服务端同一套检查，评审 R46） */
@@ -599,18 +606,70 @@ export default function Workbench() {
 
   // 「和上一次比」「对比上一次」两个入口用同一条规矩：这一次是一键演示（只跑指定几题）就不给（ADR-049 深度测试）
   const compareWith = prevRunId && manifest && prevRunId !== manifest.run_id && !picked(manifest) ? prevRunId : null;
+
+  /**
+   * 一键演示、开始体检；跑起来以后换成暂停、继续、终止（逻辑和原来一样）。
+   * ADR-053（11-16 队员 B 修改稿 3）：大屏上放在「对话」标题那一行右头（where = "dialog"）；手机上「对话」只是三个标签之一，
+   * 切到别的标签就看不见了，所以照旧放在配置条里（where = "bar"）。两份靠 lg 断点各显示一份，同一时刻只有一份看得见。
+   */
+  const runButtons = (where: "dialog" | "bar") => (
+    <>
+      {!running && (
+        <Button
+          size="sm"
+          onClick={() => void start(true)}
+          disabled={busy || Boolean(personaProblem)}
+          title="演示用的是「故意出错」的角色：故意设成会越界（说口令、自称真人、挽留），用来看护栏怎么拦；开语音，只跑四道题，约一分钟"
+        >
+          <Clapperboard size={14} aria-hidden />
+          一键演示（约一分钟）
+        </Button>
+      )}
+      {!running && (
+        <Button
+          size="sm"
+          variant="primary"
+          onClick={() => void start()}
+          disabled={busy || !suiteInfo || suiteInfo.errors.length > 0 || Boolean(personaProblem) || plannedCount === 0}
+          title={startBlocked ?? undefined}
+        >
+          <Play size={14} aria-hidden />
+          开始体检
+        </Button>
+      )}
+      {manifest?.state === "running" && (
+        <Button size="sm" onClick={() => act("pause")} title="当前用例跑完后暂停，不再派发新用例">
+          <Pause size={14} aria-hidden />
+          暂停
+        </Button>
+      )}
+      {(manifest?.state === "paused" || manifest?.state === "pausing") && (
+        <Button size="sm" onClick={() => act("resume")}>
+          <Play size={14} aria-hidden />
+          继续
+        </Button>
+      )}
+      {running && (
+        <Button
+          size="sm"
+          id={where === "dialog" ? "stop-run" : "stop-run-bar"}
+          variant="danger"
+          onClick={() => act("cancel")}
+          title="立即中止当前用例，不可恢复"
+        >
+          <Square size={14} aria-hidden />
+          终止
+        </Button>
+      )}
+    </>
+  );
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2 p-2 lg:gap-2.5 lg:px-3">
-      {/* 顶上一行（R05；ADR-049 改短成一句）：给谁用、做什么、对照哪部法规。右边是这次的结果算不算数（草稿题、模拟数据）和「怎么用」；
+      {/* 顶上一行：测试 Agent 会用的几种套路（ADR-053（11-16 队员 B 修改稿 3）：原来是一句「给 AI 陪聊……对照《办法》出体检单」，
+          换成原来写在「对话」示例下面的套路那一行）。右边是这次的结果算不算数（草稿题、模拟数据）和「怎么用」；
           「改了再测」四步路标（R22）和三栏各看什么收在「怎么用」里。「怎么用」的卡片紧跟在按钮后面（键盘按 Tab 直接进卡片），浮在下面 */}
       <div className="relative flex flex-wrap items-center gap-x-3 gap-y-1.5 px-1">
-        <p className="min-w-0 flex-1 basis-[20rem] text-[11px] leading-relaxed text-muted sm:text-xs">
-          给 AI 陪聊、AI 玩具这类会说话的角色做上线前的安全体检，对照
-          <span className="text-foreground" title={LAW_EFFECTIVE}>
-            {LAW_FULL}
-          </span>
-          出体检单。
-        </p>
+        <StrategyChips strategies={status.strategies ?? []} className="min-w-0 flex-1 basis-[20rem]" />
         <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
           {allDraft && includeDrafts && (
             <Badge tone="warn" title={DRAFT_NOTE}>
@@ -653,7 +712,8 @@ export default function Workbench() {
         )}
       </div>
 
-      {/* 配置条：被测配置、被测角色、语音播放、一键演示、开始体检，其余收进「实验设置」（R06）。
+      {/* 配置条：被测配置、被测角色、语音播放，其余收进「实验设置」（R06）。
+          一键演示、开始体检（暂停、继续、终止）大屏上挪到「对话」标题那一行（ADR-053（11-16 队员 B 修改稿 3））；手机上照旧在这里，
           放不下就折到下一行，不会把按钮挤出屏幕（ADR-049 复查：排成一行不许折时，长角色名把「开始体检」挤出去了） */}
       <div className="space-y-1.5 rounded-sm border border-border bg-surface px-2.5 py-1.5 text-[13px]">
         <div className="flex flex-wrap items-end gap-x-2.5 gap-y-1.5 sm:items-center">
@@ -710,52 +770,11 @@ export default function Workbench() {
             <span className="shrink-0 whitespace-nowrap">实验设置</span>
             {!settingsOpen && <span className="truncate">· {settingsShort}</span>}
           </button>
-          <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-            {!running && (
-              <Button
-                size="sm"
-                onClick={() => void start(true)}
-                disabled={busy || Boolean(personaProblem)}
-                title="演示用的是「故意出错」的角色：故意设成会越界（说口令、自称真人、挽留），用来看护栏怎么拦；开语音，只跑四道题，约一分钟"
-              >
-                <Clapperboard size={14} aria-hidden />
-                一键演示（约一分钟）
-              </Button>
-            )}
-            {!running && (
-              <Button
-                size="sm"
-                variant="primary"
-                onClick={() => void start()}
-                disabled={busy || !suiteInfo || suiteInfo.errors.length > 0 || Boolean(personaProblem) || plannedCount === 0}
-                title={startBlocked ?? undefined}
-              >
-                <Play size={14} aria-hidden />
-                开始体检
-              </Button>
-            )}
-            {manifest?.state === "running" && (
-              <Button size="sm" onClick={() => act("pause")} title="当前用例跑完后暂停，不再派发新用例">
-                <Pause size={14} aria-hidden />
-                暂停
-              </Button>
-            )}
-            {(manifest?.state === "paused" || manifest?.state === "pausing") && (
-              <Button size="sm" onClick={() => act("resume")}>
-                <Play size={14} aria-hidden />
-                继续
-              </Button>
-            )}
-            {running && (
-              <Button size="sm" id="stop-run" variant="danger" onClick={() => act("cancel")} title="立即中止当前用例，不可恢复">
-                <Square size={14} aria-hidden />
-                终止
-              </Button>
-            )}
-          </div>
+          {/* 手机上的那份按钮（大屏上的在「对话」标题栏，ADR-053） */}
+          <div className="ml-auto flex flex-wrap items-center justify-end gap-2 lg:hidden">{runButtons("bar")}</div>
         </div>
-        {/* 「开始体检」点不了的原因：单独一行，写在按钮下面（配置条排成一行时，挤在按钮旁边放不下） */}
-        {!running && startBlocked && <p className="text-right text-xs text-bad">{startBlocked}</p>}
+        {/* 「开始体检」点不了的原因：单独一行，写在按钮下面（配置条排成一行时，挤在按钮旁边放不下）；大屏上跟着按钮去了「对话」标题栏 */}
+        {!running && startBlocked && <p className="text-right text-xs text-bad lg:hidden">{startBlocked}</p>}
         {settingsOpen && (
           <div id="run-settings" className="flex flex-wrap items-end gap-2 border-t border-border pt-2">
             <label className="flex flex-col gap-0.5">
@@ -971,8 +990,15 @@ export default function Workbench() {
               )
             }
             className={`${panelClass("dialog")} min-h-[16rem] lg:min-h-0`}
+            actions={
+              // 大屏上的那份按钮：标题左、按钮右；点不了的原因写在按钮下面（ADR-053（11-16 队员 B 修改稿 3））
+              <div className="ml-auto hidden max-w-full flex-col items-end gap-1 lg:flex" data-testid="run-actions">
+                <div className="flex flex-wrap items-center justify-end gap-2">{runButtons("dialog")}</div>
+                {!running && startBlocked && <p className="text-right text-xs text-bad">{startBlocked}</p>}
+              </div>
+            }
           >
-            {!manifest && <ChatIntro name={persona.name} strategies={status.strategies} />}
+            {!manifest && <ChatIntro name={persona.name} />}
             {manifest && !selected && <ChatTyping phase="listen" name={persona.name} />}
             {selected && (
               <>
@@ -1022,12 +1048,14 @@ export default function Workbench() {
           </DialogPanel>
 
           {/* 右：七样、结论、证据、工具调用（淡一点、窄一点） */}
+          {/* 标题「七样测试」（ADR-053（11-16 队员 B 修改稿 3），原来叫「这次查七样」）；「了解详情」在标题这一行右头。
+              看某一道题时七样压成一样一行、不写说明，那时不给「了解详情」 */}
           <SidePanel
-            title={manifest ? "结论与证据" : "这次查七样"}
+            title={manifest ? "结论与证据" : "七样测试"}
             className={`${panelClass("evidence")} min-h-[16rem] lg:min-h-0`}
             actions={
               manifest && FINAL.has(manifest.state) ? (
-                <span className="flex flex-wrap gap-2">
+                <span className="flex flex-wrap items-center gap-2">
                   <Link className="text-xs link" href={`/reports/${manifest.run_id}`}>
                     打开体检单
                   </Link>
@@ -1036,7 +1064,10 @@ export default function Workbench() {
                       和上一次比
                     </Link>
                   )}
+                  {!selectedResult && <ExplainToggle open={checkExplain} onToggle={() => setCheckExplain((o) => !o)} />}
                 </span>
+              ) : !selectedResult ? (
+                <ExplainToggle open={checkExplain} onToggle={() => setCheckExplain((o) => !o)} />
               ) : null
             }
           >
@@ -1047,6 +1078,7 @@ export default function Workbench() {
               started={Boolean(manifest)}
               selected={selected}
               compact={Boolean(selectedResult)}
+              explain={checkExplain}
               onPick={pick}
             />
             {selectedResult?.status === "completed" && manifest && (
@@ -1142,17 +1174,31 @@ export default function Workbench() {
 /** 两边栏和底部计量的框：比中间的对话淡一层 */
 const SIDE_FRAME = "rounded-sm border border-border/80 bg-surface/60";
 
-/** 中间的对话：这一页的主角。框最重（深一点的边、一层浅影子），标题最大；正文限宽，宽屏上一行不会拉得太长 */
-function DialogPanel({ title, className = "", children }: { title: ReactNode; className?: string; children: ReactNode }) {
+/**
+ * 中间的对话：这一页的主角。框最重（深一点的边、一层浅影子），标题最大；正文限宽，宽屏上一行不会拉得太长。
+ * actions：标题那一行右头的东西（ADR-053（11-16 队员 B 修改稿 3）：一键演示、开始体检挪到这里）；放不下就折到下一行
+ */
+function DialogPanel({
+  title,
+  actions,
+  className = "",
+  children,
+}: {
+  title: ReactNode;
+  actions?: ReactNode;
+  className?: string;
+  children: ReactNode;
+}) {
   return (
     <section
       className={`flex min-h-0 flex-col rounded-sm border border-foreground/25 bg-surface shadow-[0_12px_32px_-20px_rgba(0,0,0,0.45)] ${className}`}
       data-testid="dialog-panel"
     >
-      <header className="flex items-center gap-2 border-b border-border px-4 py-2.5">
-        <h2 className="text-base font-semibold tracking-wide" style={{ fontFamily: "var(--font-serif)" }}>
+      <header className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-border px-4 py-2.5">
+        <h2 className="min-w-0 text-base font-semibold tracking-wide" style={{ fontFamily: "var(--font-serif)" }}>
           {title}
         </h2>
+        {actions}
       </header>
       <div className="min-h-0 flex-1 overflow-auto px-4 py-3">
         <div className="mx-auto w-full max-w-[46rem] 2xl:max-w-[52rem]">{children}</div>
@@ -1439,7 +1485,7 @@ function ToolStep({ turn, step, strategyTitle }: { turn: number; step: RunEvent;
 
 /**
  * 「怎么用」（ADR-049）：怎么出题、怎么拦一句话，三栏各看什么，「改了再测」四步（R22，原来常驻在顶上一行）。
- * 这一页做什么、对照哪部法规（R05）还写在顶上那一行里。卡片在 DOM 里紧跟着按钮（键盘按 Tab 直接进来），浮在按钮下面，
+ * 对照哪部法规（R05）写在卡片的第一句里（ADR-053 起顶上那一行换成了五种套路）。卡片在 DOM 里紧跟着按钮（键盘按 Tab 直接进来），浮在按钮下面，
  * 不把三栏往下挤；按 Esc、点「收起」或点别处就收起。
  */
 function HelpCard({ onClose, children }: { onClose: (refocus: boolean) => void; children: ReactNode }) {
@@ -1499,7 +1545,7 @@ function HelpCard({ onClose, children }: { onClose: (refocus: boolean) => void; 
         <dt className="text-muted">{where("中间", "「对话」")}</dt>
         <dd>测试 Agent 怎么问、她怎么答；被护栏拦下的原话划掉摆出来</dd>
         <dt className="text-muted">{where("右边", "「证据」")}</dt>
-        <dd>这次查七样：一格一道题，跑完盖章；点格子看那道题的结论和证据</dd>
+        <dd>七样测试：一格一道题，跑完盖章；点格子看那道题的结论和证据</dd>
       </dl>
       <div className="border-t border-border pt-2">{children}</div>
       <div className="flex items-center justify-between gap-2">

@@ -112,5 +112,8 @@ export interface PlaySensitive {
   reason: string;
 }
 
-/** 每局最多说几句（防止被刷调用量） */
-export const PLAY_MAX_TURNS = 8;
+/**
+ * 每局（一关的一层）最多说几句（防止被刷调用量）。ADR-053（11-16 队员 B 修改稿 3）从 8 改成 6：
+ * 六句都没攻破，这一层记一枚绿色「防」，自动进下一层（components/Play.tsx）。
+ */
+export const PLAY_MAX_TURNS = 6;

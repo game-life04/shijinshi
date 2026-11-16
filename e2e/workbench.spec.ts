@@ -13,25 +13,68 @@ async function startRun(page: Page, variant?: string) {
   await page.getByRole("button", { name: "开始体检" }).click();
 }
 
-test("还没开始体检：去闯关、去小实验是最后一行两个按钮，「怎么出题、怎么拦」删了；顶栏 AI 标识不再写「回复和声音由 AI 生成」（ADR-051）", async ({
+test("还没开始体检：最上面一行是五种套路；一键演示、开始体检在「对话」标题栏（手机上在配置条）；右栏「七样测试」编号 1～7、不写条款号；顶栏没有 AI 标识（ADR-053）", async ({
   page,
 }, info) => {
   test.skip(info.project.name === "laptop-1280", "桌面和手机各看一次");
+  const phone = info.project.name === "phone-390";
   await page.goto("/workbench");
   await expect(page.getByText("模拟数据（非真实模型）")).toBeVisible();
-  if (info.project.name === "phone-390") await page.getByRole("tab", { name: "对话" }).click();
+  // 最上面一行：原来那句「给 AI 陪聊……出体检单」换成测试 Agent 的五种套路；「对话」里的示例下面不再重复
+  await expect(page.getByText(/给 AI 陪聊/)).toHaveCount(0);
+  const chips = page.getByTestId("strategy-chips");
+  await expect(chips).toHaveCount(1);
+  await expect(chips).toBeVisible();
+  await expect(chips).toContainText("测试 Agent 会用的 5 种套路");
+  await expect(page.getByTestId("dialog-panel").getByText(/种套路/)).toHaveCount(0);
+  // 顶栏不再有 AI 标识（ADR-053）：AI 标识只留形象旁边的「AI 角色」
+  await expect(page.getByRole("banner").getByText(/不是真人/)).toHaveCount(0);
+  await expect(page.getByRole("banner").getByTitle(/由 AI 生成/)).toHaveCount(0);
+  // 一键演示、开始体检：桌面上在「对话」标题那一行右头；手机上照旧在配置条里（「对话」只是三个标签之一）
+  const start = page.getByRole("button", { name: "开始体检" });
+  const demo = page.getByRole("button", { name: /^一键演示/ });
+  await expect(start).toHaveCount(1);
+  await expect(demo).toHaveCount(1);
+  await expect(start).toBeEnabled();
+  const actions = page.getByTestId("dialog-panel").getByTestId("run-actions");
+  if (phone) {
+    await expect(actions).toBeHidden();
+  } else {
+    await expect(actions.getByRole("button", { name: "开始体检" })).toBeVisible();
+    await expect(actions.getByRole("button", { name: /^一键演示/ })).toBeVisible();
+    // 标题左、按钮右，在同一行
+    const title = await page.getByTestId("dialog-panel").getByRole("heading", { level: 2 }).boundingBox();
+    const btn = await start.boundingBox();
+    expect(title && btn && btn.x > title.x + title.width && Math.abs(btn.y + btn.height / 2 - (title.y + title.height / 2)) < 8).toBe(true);
+  }
+
+  if (phone) await page.getByRole("tab", { name: "对话" }).click();
   const links = page.getByTestId("intro-links");
   await expect(links.getByRole("link", { name: "自己来试试：打字闯关" })).toHaveAttribute("href", "/play");
   await expect(links.getByRole("link", { name: /^小实验：/ })).toHaveAttribute("href", "/fates");
   await expect(page.getByText("怎么出题、怎么拦")).toHaveCount(0);
   // 两个按钮在同一行、一样高（像按钮，不是下划线链接）
   const [a, b] = await links.getByRole("link").evaluateAll((els) => els.map((e) => e.getBoundingClientRect()));
-  expect(Math.abs(a.top - b.top) < 2 || info.project.name === "phone-390").toBe(true);
+  expect(Math.abs(a.top - b.top) < 2 || phone).toBe(true);
   expect(a.height).toBeGreaterThanOrEqual(30);
-  // 顶栏的 AI 标识还在（法规要求显著提示），只是不再写「回复和声音由 AI 生成」（悬停里有）
-  const chip = page.getByRole("banner").getByTitle(/回复和声音由 AI 生成/);
-  await expect(chip).toBeVisible();
-  await expect(chip).not.toContainText("回复和声音由 AI 生成");
+
+  // 右栏「七样测试」：七样编号 1～7 排一列，没有分组小标题、条款号和底下那行说明；「了解详情」点开是每样的大白话
+  if (phone) await page.getByRole("tab", { name: "证据" }).click();
+  await expect(page.getByRole("heading", { level: 2, name: "七样测试" })).toBeVisible();
+  const checks = page.getByTestId("check-list");
+  await expect(checks.getByRole("listitem")).toHaveCount(7);
+  await expect(checks.getByRole("listitem").first()).toHaveText(/^1\.\s*无害口令不外泄/);
+  await expect(checks.getByRole("listitem").last()).toHaveText(/^7\.\s*不与未成年人建立亲密关系/);
+  await expect(checks).not.toContainText(/第[一二三四五六七八九十]+条/);
+  await expect(page.getByText(/我们加的稳定性测试|一格一道题|每样查什么/)).toHaveCount(0);
+  const more = page.getByRole("button", { name: "了解详情" });
+  await expect(more).toHaveAttribute("aria-expanded", "false");
+  await more.click();
+  await expect(more).toHaveAttribute("aria-expanded", "true");
+  await expect(checks.locator("li p")).toHaveCount(7);
+  // 手机上不能横着滑
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(overflow).toBeLessThanOrEqual(0);
 });
 
 test("完整体检：从开始到报告，分母对得上，证据可见", async ({ page }, info) => {

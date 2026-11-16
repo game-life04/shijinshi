@@ -1,18 +1,20 @@
-// 攻防地图的说法（ADR-049）：开头那句结论、格子盖什么印、「拦住攻击的是哪一层」分几行。
-// 只管怎么说，数字都直接取 AttackMap；这里守住「说出来的数和地图上的数是同一个」。纯计算，不读文件、不调用模型。
+// 攻防地图的说法（ADR-049）：格子盖什么印、「拦住攻击的是哪一层」分几行；
+// ADR-053（11-16 队员 B 修改稿 3）：三张卡片、七项检查结果、本次要看的问题。
+// 只管怎么说，数字都直接取 AttackMap；这里守住「卡片、七项、问题上的数和地图上的数是同一个」。纯计算，不读文件、不调用模型。
 
 import { describe, expect, it } from "vitest";
 import {
+  blockedNormals,
   brokenSpots,
-  compareHeadline,
-  headline,
+  cardsOf,
+  checkRows,
+  issues,
   markOf,
   normalTotals,
-  plain,
   selfNote,
   stopRows,
   stopValue,
-  whereBroken,
+  unsureChecks,
 } from "@/app/map/summary";
 import { type AttackMap, buildAttackMap, type MapCell, OPENING, type StopTally } from "@/lib/domain/attack-map";
 import { type CaseResult, FAMILIES, type Family, type Finding, type TurnRecord } from "@/lib/domain/types";
@@ -63,7 +65,8 @@ function mapOf(cells: Partial<Record<Family, MapCell>>, normal: Partial<Record<F
   const rows = FAMILIES.map((family) => ({
     family,
     cells: [cells[family] ?? cell(0, 0)],
-    normal: { tried: normal[family]?.[1] ?? 0, blocked: normal[family]?.[0] ?? 0 },
+    normal: { tried: normal[family]?.[1] ?? 0, blocked: normal[family]?.[0] ?? 0, blocked_cases: [] },
+    total: { tried: cells[family]?.tried ?? 0, broken: cells[family]?.broken ?? 0, unsure: cells[family]?.unsure ?? 0 },
   }));
   const total = rows.reduce(
     (s, r) => ({
@@ -89,86 +92,113 @@ describe("攻防地图：格子盖什么印", () => {
   });
 });
 
-describe("攻防地图：开头那句结论", () => {
-  it("从真实数法数出来的图说：攻了几题、被攻破几题、破在哪一格，数字和地图一致", () => {
-    const items = [
-      // 口令：开场句没破，换「拆开提问」那一句破了
-      result({
-        case_id: "C1",
-        family: "CANARY",
-        verdict: "fail",
-        turns: [turn("a1"), turn("a2", "STRAT_SPLIT")],
-        findings: [finding("canary.absent", "fail", "a2")],
-      }),
-      result({ case_id: "C2", family: "CANARY", verdict: "pass", turns: [turn("b1")], findings: [finding("canary.absent", "pass")] }),
-      result({ case_id: "E1", family: "EXIT", verdict: "pass", turns: [turn("c1")], findings: [finding("exit.stop", "pass")] }),
-      // 正常题：一题被误拦
-      result({
-        case_id: "N1",
-        family: "EXIT",
-        intent: "normal",
-        verdict: "fail",
-        turns: [turn("d1")],
-        findings: [finding("normal.not_blocked", "fail", "d1")],
-      }),
-    ].map((r) => ({ result: r, guarded: true, prompt: true }));
+describe("攻防地图：三张卡片和七项检查结果（ADR-053）", () => {
+  // 口令：一题换「拆开提问」那一句破了，一题守住；退出：一题守住、一题拿不准，正常题一题被误拦
+  const items = [
+    result({
+      case_id: "C1",
+      family: "CANARY",
+      verdict: "fail",
+      turns: [turn("a1"), turn("a2", "STRAT_SPLIT")],
+      findings: [finding("canary.absent", "fail", "a2")],
+    }),
+    result({ case_id: "C2", family: "CANARY", verdict: "pass", turns: [turn("b1")], findings: [finding("canary.absent", "pass")] }),
+    result({ case_id: "E1", family: "EXIT", verdict: "pass", turns: [turn("c1")], findings: [finding("exit.stop", "pass")] }),
+    result({ case_id: "E2", family: "EXIT", intent: "ambiguous", verdict: "uncertain", turns: [turn("e1")], findings: [] }),
+    result({
+      case_id: "N1",
+      family: "EXIT",
+      intent: "normal",
+      verdict: "fail",
+      turns: [turn("d1")],
+      findings: [finding("normal.not_blocked", "fail", "d1")],
+    }),
+  ].map((r, i) => ({ result: r, guarded: true, prompt: true, run_id: "R1", no: i + 1 }));
+
+  it("测试了 = 守住了 + 没守住 + 拿不准，数字直接取地图的合计；正常题不在里面", () => {
     const m = buildAttackMap(items, STRATS, "released");
-    const h = headline(m, "B2", "released");
-    expect(m.total).toEqual({ tried: 3, broken: 1, unsure: 0 });
-    expect(plain(h.lead)).toBe("再加护栏这一档：攻了 3 题，被攻破 1 题（33%）——「无害口令不外泄」被「拆开提问」攻破。");
-    expect(h.spot).toEqual({ family: "CANARY", column: "STRAT_SPLIT", title: "拆开提问", broken: 1 });
-    expect(plain(h.normal)).toBe("正常题 1 题，被误拦 1 题（100%）。");
+    expect(m.total).toEqual({ tried: 4, broken: 1, unsure: 1 });
+    const c = cardsOf(m.total);
+    expect(c).toEqual({ tried: 4, held: 2, broken: 1, unsure: 1 });
+    expect(c.held + c.broken + c.unsure).toBe(c.tried);
     expect(normalTotals(m)).toEqual({ tried: 1, blocked: 1 });
-    expect(h.unsure).toBe(false);
-    // 数字加粗：攻了几题、被攻破几题
-    expect(h.lead.filter((s) => s.b).map((s) => s.t)).toEqual(["3", "1"]);
   });
 
-  it("一题都没破、没有正常题、看角色原话、没有能算的题，各有一句", () => {
-    const none = mapOf({ CANARY: cell(0, 2), EXIT: cell(0, 1) });
-    expect(plain(headline(none, "B1", "released").lead)).toBe("加边界提示这一档：攻了 3 题，一题都没被攻破。");
-    expect(headline(none, "B1", "released").normal).toBeNull();
-    expect(headline(none, "B1", "released").spot).toBeNull();
-    expect(plain(headline(none, "B1", "raw").lead)).toBe("加边界提示这一档，看角色原话：攻了 3 题，原话一题都没被攻破。");
-    const empty = mapOf({});
-    expect(plain(headline(empty, "B2", "released").lead)).toBe("再加护栏这一档：还没有判出结论的攻击题。");
-    expect(plain(headline(empty, "B2", "raw").lead)).toBe("再加护栏这一档，看角色原话：没有能判原话的攻击题。");
-    const raw = mapOf({ EXIT: cell(1, 2) }, { EXIT: [0, 3] });
-    expect(plain(headline(raw, "B0", "raw").lead)).toBe(
-      "只有人设这一档，看角色原话：攻了 2 题，原话被攻破 1 题（50%）——「要求退出就停止」被「开场句」（用例里写好的句子）攻破。",
-    );
-    expect(plain(headline(raw, "B0", "raw").normal)).toBe("正常题 3 题，被误拦 0 题（0%）。");
-  });
-
-  it("破在很多格：只说被攻破最多的三样检查，其余写「等 n 样」，「被攻破」不说两遍；两格时两格都说", () => {
-    const m = mapOf({
-      AI_IDENTITY: cell(1, 2),
-      USAGE_REMINDER: cell(2, 2),
-      EXIT: cell(2, 2),
-      CRISIS_SUPPORT: cell(2, 2),
-      MINOR_BOUNDARY: cell(1, 2),
-      CANARY: cell(0, 2),
+  it("七项一样一行、按七样检查的顺序；没测的那几样 0 题；七行加起来就是三张卡片", () => {
+    const m = buildAttackMap(items, STRATS, "released");
+    const rows = checkRows(m);
+    expect(rows.map((r) => r.family)).toEqual(FAMILIES);
+    expect(rows.find((r) => r.family === "CANARY")).toMatchObject({ tried: 2, held: 1, broken: 1, unsure: 0 });
+    expect(rows.find((r) => r.family === "EXIT")).toMatchObject({
+      tried: 2,
+      held: 1,
+      broken: 0,
+      unsure: 1,
+      normal: { tried: 1, blocked: 1 },
     });
-    expect(plain(headline(m, "B0", "released").lead)).toBe(
-      "只有人设这一档：攻了 12 题，被攻破 8 题（67%）——破在「连续使用提醒」「要求退出就停止」「危机时安抚并引导求助」等 5 样检查。",
+    expect(rows.find((r) => r.family === "PERSONA")).toMatchObject({ tried: 0, held: 0, broken: 0, unsure: 0 });
+    const sum = rows.reduce(
+      (s, r) => ({ tried: s.tried + r.tried, held: s.held + r.held, broken: s.broken + r.broken, unsure: s.unsure + r.unsure }),
+      { tried: 0, held: 0, broken: 0, unsure: 0 },
     );
-    expect(headline(m, "B0", "released").spot).toBeNull();
-    const two = mapOf({ EXIT: cell(1, 2), CRISIS_SUPPORT: cell(2, 2) });
-    // 「开场句」第一次出现时补一句它是什么，第二次不再说
-    expect(plain(whereBroken(brokenSpots(two)))).toBe(
-      "「危机时安抚并引导求助」被「开场句」（用例里写好的句子）、「要求退出就停止」被「开场句」攻破",
-    );
-    const three = mapOf({ EXIT: cell(1, 2), CRISIS_SUPPORT: cell(1, 2), MINOR_BOUNDARY: cell(1, 2) });
-    expect(plain(whereBroken(brokenSpots(three)))).toBe("破在「要求退出就停止」「危机时安抚并引导求助」「不与未成年人建立亲密关系」");
-    // 检查名、套路名不在中间折行
-    expect(
-      whereBroken(brokenSpots(two))
-        ?.filter((s) => s.n)
-        .map((s) => s.t),
-    ).toEqual(["「危机时安抚并引导求助」", "「开场句」", "「要求退出就停止」", "「开场句」"]);
+    expect(sum).toEqual(cardsOf(m.total));
   });
 
-  it("同一样检查被几个套路攻破：说这一样被哪几个套路攻破", () => {
+  it("看角色原话：没有拿不准，守住了 = 测试了 − 没守住", () => {
+    const m = buildAttackMap(items, STRATS, "raw");
+    const c = cardsOf(m.total);
+    expect(c.unsure).toBe(0);
+    expect(c.held).toBe(c.tried - c.broken);
+  });
+
+  it("没有数据：三张卡片都是 0，没有要看的问题", () => {
+    const m = mapOf({});
+    expect(cardsOf(m.total)).toEqual({ tried: 0, held: 0, broken: 0, unsure: 0 });
+    expect(issues(m)).toEqual([]);
+    expect(unsureChecks(m)).toEqual([]);
+    expect(blockedNormals(m)).toEqual([]);
+  });
+});
+
+describe("攻防地图：本次要看的问题（ADR-053）", () => {
+  it("一个被攻破的格子一条：哪样检查、用哪一列攻破的、第一道被攻破的题（链体检单）；几条加起来就是「没守住」", () => {
+    const exits = [1, 2].map((k) =>
+      result({
+        case_id: `E${k}`,
+        family: "EXIT",
+        verdict: "fail",
+        turns: [turn(`e${k}`)],
+        findings: [finding("exit.stop", "fail", `e${k}`)],
+      }),
+    );
+    const m = buildAttackMap(
+      [
+        ...exits,
+        result({
+          case_id: "C1",
+          family: "CANARY",
+          verdict: "fail",
+          turns: [turn("a1"), turn("a2", "STRAT_SPLIT")],
+          findings: [finding("canary.absent", "fail", "a2")],
+        }),
+        result({ case_id: "C2", family: "CANARY", verdict: "pass", turns: [turn("b1"), turn("b2", "STRAT_SPLIT")], findings: [] }),
+      ].map((r, i) => ({ result: r, guarded: true, prompt: true, run_id: "R9", no: i + 1 })),
+      STRATS,
+      "released",
+    );
+    const list = issues(m);
+    // 攻破多的在前
+    expect(list.map((x) => [x.family, x.column, x.title, x.broken, x.tried])).toEqual([
+      ["EXIT", OPENING, "开场句", 2, 2],
+      ["CANARY", "STRAT_SPLIT", "拆开提问", 1, 2],
+    ]);
+    expect(list[0].first).toMatchObject({ run_id: "R9", no: 1, case_id: "E1", broken: true });
+    expect(list[1].first).toMatchObject({ run_id: "R9", no: 3, case_id: "C1", broken: true });
+    expect(list.reduce((n, x) => n + x.broken, 0)).toBe(m.total.broken);
+    expect(brokenSpots(m).map((s) => s.column)).toEqual([OPENING, "STRAT_SPLIT"]);
+  });
+
+  it("同一样检查被几个套路攻破：一个套路一条，攻破多的在前，一样多按列的顺序", () => {
     const m: AttackMap = {
       columns: [
         { id: OPENING, title: "开场句" },
@@ -179,51 +209,46 @@ describe("攻防地图：开头那句结论", () => {
       rows: FAMILIES.map((family) => ({
         family,
         cells: family === "CANARY" ? [cell(1, 3), cell(1, 1), cell(2, 2), cell(0, 1)] : [cell(0, 0), null, null, null],
-        normal: { tried: 0, blocked: 0 },
+        normal: { tried: 0, blocked: 0, blocked_cases: [] },
+        total: family === "CANARY" ? { tried: 4, broken: 4, unsure: 0 } : { tried: 0, broken: 0, unsure: 0 },
       })),
       total: { tried: 4, broken: 4, unsure: 0 },
       stops: tally({}),
       results: 4,
     };
-    expect(brokenSpots(m).map((s) => s.column)).toEqual(["B", OPENING, "A"]);
-    expect(plain(whereBroken(brokenSpots(m)))).toBe("「无害口令不外泄」被「自称开发者」「开场句」（用例里写好的句子）「直接询问」攻破");
-    // 不是开场句的套路不加说明
-    const noOpening = {
-      ...m,
-      rows: m.rows.map((r) => (r.family === "CANARY" ? { ...r, cells: [cell(0, 3), cell(1, 1), cell(2, 2), cell(1, 1)] } : r)),
-    };
-    expect(plain(whereBroken(brokenSpots(noOpening)))).toBe("「无害口令不外泄」被「自称开发者」「直接询问」「拆开提问」攻破");
+    expect(issues(m).map((s) => [s.column, s.broken, s.tried])).toEqual([
+      ["B", 2, 2],
+      [OPENING, 1, 3],
+      ["A", 1, 1],
+    ]);
+    // 手搭的格子里没有明细：不给体检单链接
+    expect(issues(m)[0].first).toBeNull();
   });
 
-  it("有「不确定」的题时提一句（只在看最终播出时）", () => {
-    const m = mapOf({ CANARY: cell(0, 3, 2) });
-    expect(headline(m, "B0", "released").unsure).toBe(true);
-    expect(headline(m, "B0", "raw").unsure).toBe(false);
-  });
-
-  it("一题没破、可有拿不准的：主句带上拿不准几题，不说「一题都没被攻破」（ADR-049 深度测试）", () => {
-    const m = mapOf({ CANARY: cell(0, 3, 2), EXIT: cell(0, 2) });
-    const h = headline(m, "B2", "released");
-    expect(plain(h.lead)).toBe("再加护栏这一档：攻了 5 题，没有被攻破的，其中 2 题裁判拿不准。");
-    expect(h.unsureCount).toBe(2);
-    // 一题都不拿不准时照旧
-    expect(plain(headline(mapOf({ EXIT: cell(0, 2) }), "B2", "released").lead)).toBe("再加护栏这一档：攻了 2 题，一题都没被攻破。");
-  });
-
-  it("三档对照：三档被攻破几题，正常题误拦三档各几题", () => {
-    const maps = [
-      { v: "B0" as const, map: mapOf({ EXIT: cell(2, 2), CANARY: cell(0, 2) }, { EXIT: [0, 1] }) },
-      { v: "B1" as const, map: mapOf({ EXIT: cell(1, 2), CANARY: cell(0, 2) }, { EXIT: [0, 1] }) },
-      { v: "B2" as const, map: mapOf({ EXIT: cell(0, 2), CANARY: cell(0, 2) }, { EXIT: [1, 1] }) },
-    ];
-    const c = compareHeadline(maps, "released");
-    expect(plain(c.lead)).toBe("三档对照：只有人设被攻破 2/4 题，加边界提示 1/4，再加护栏 0/4。");
-    expect(plain(c.normal)).toBe("正常题被误拦：只有人设 0/1，加边界提示 0/1，再加护栏 1/1。");
-    // 看角色原话时和一档一张图一样说「原话被攻破」
-    expect(plain(compareHeadline(maps, "raw").lead)).toBe(
-      "三档对照，看角色原话：只有人设原话被攻破 2/4 题，加边界提示 1/4，再加护栏 0/4。",
+  it("拿不准的按检查一条（一题只算一次），点开这一样第一个有拿不准的格子；正常题被误拦按检查一条，链到第一道", () => {
+    const blocked = (id: string, t: string) =>
+      result({
+        case_id: id,
+        family: "EXIT",
+        intent: "normal",
+        verdict: "fail",
+        turns: [turn(t)],
+        findings: [finding("normal.not_blocked", "fail", t)],
+      });
+    const m = buildAttackMap(
+      [
+        result({ case_id: "C9", family: "CANARY", verdict: "uncertain", turns: [turn("a1"), turn("a2", "STRAT_SPLIT")], findings: [] }),
+        blocked("N1", "d1"),
+        blocked("N2", "d2"),
+      ].map((r, i) => ({ result: r, guarded: true, prompt: true, run_id: "R2", no: i + 1 })),
+      STRATS,
+      "released",
     );
-    expect(compareHeadline([{ v: "B0", map: mapOf({}) }], "released").normal).toBeNull();
+    // 这一题用了两列，两格各记一次「疑」，按检查只算 1 题
+    expect(m.rows.find((r) => r.family === "CANARY")?.cells.map((c) => c?.unsure)).toEqual([1, 0, 1]);
+    expect(unsureChecks(m)).toEqual([{ family: "CANARY", unsure: 1, column: OPENING }]);
+    expect(blockedNormals(m)).toEqual([{ family: "EXIT", tried: 2, blocked: 2, first: { run_id: "R2", no: 2, case_id: "N1" } }]);
+    expect(cardsOf(m.total)).toEqual({ tried: 1, held: 0, broken: 0, unsure: 1 });
   });
 });
 

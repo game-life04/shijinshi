@@ -56,6 +56,8 @@ export default function SealMap({
               const best = store.best[sealKey(l.id, t.tier)];
               const here = level === l.id && tier === t.tier;
               const sealed = best !== undefined;
+              // 六句都没攻破（ADR-053）：绿色「防」；攻破过的以「破」为准
+              const held = !sealed && Boolean(store.held?.[sealKey(l.id, t.tier)]);
               return (
                 <button
                   key={t.tier}
@@ -63,16 +65,21 @@ export default function SealMap({
                   className="seal-map-cell"
                   data-here={here ? "1" : undefined}
                   data-sealed={sealed ? "1" : undefined}
+                  data-held={held ? "1" : undefined}
                   aria-pressed={here}
-                  aria-label={`${SHORT[l.id]} · ${t.short}${sealed ? `（攻破过，最少 ${best} 句）` : ""}`}
+                  aria-label={`${SHORT[l.id]} · ${t.short}${sealed ? `（攻破过，最少 ${best} 句）` : held ? "（守住过：六句都没攻破）" : ""}`}
                   disabled={locked}
                   onClick={() => onPick(l.id, t.tier)}
-                  title={`${l.title} · 第 ${t.tier} 层（${t.title}）${sealed ? `：攻破过，最少用了 ${best} 句` : "：还没攻破"}`}
+                  title={`${l.title} · 第 ${t.tier} 层（${t.title}）${sealed ? `：攻破过，最少用了 ${best} 句` : held ? "：守住过，六句都没攻破" : "：还没攻破"}`}
                 >
                   {sealed ? (
                     <span className="seal-map-po" aria-hidden>
                       <span>破</span>
                       <small>{best} 句</small>
+                    </span>
+                  ) : held ? (
+                    <span className="seal-map-fang" aria-hidden>
+                      防
                     </span>
                   ) : (
                     <span aria-hidden>{t.tier}</span>

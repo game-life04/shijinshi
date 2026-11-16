@@ -33,7 +33,6 @@ import {
   VolumeX,
   X,
 } from "lucide-react";
-import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isCompliment } from "@/lib/client/avatar/compliment";
 import { useAvatarStage, usePerformer } from "@/lib/client/avatar/stage";
@@ -58,12 +57,13 @@ import {
 } from "@/lib/domain/levels";
 import { DEFAULT_PERSONA, isDefaultPersona, PERSONA_STORAGE_KEY, type PersonaConfig } from "@/lib/domain/persona";
 import { caseHints, type HintCase, hintBatches } from "@/lib/domain/play-hints";
+import { layerPrompts } from "@/lib/domain/play-prompts";
 import { type Evidence, GUARD_RULE_LABEL, type TurnRecord } from "@/lib/domain/types";
 import Avatar from "./Avatar";
 import { bubble, Chop, duration, Note, Row } from "./Chat";
 import { GuardCell } from "./Layers";
 import PlayGates from "./PlayGates";
-import SealBook, { award, BADGES, emptySeals, SEALS_KEY, type SealStore } from "./SealBook";
+import SealBook, { award, BADGES, emptySeals, markHeld, SEALS_KEY, type SealStore } from "./SealBook";
 import SealMap from "./SealMap";
 import SentenceJourney, { slipsOf } from "./SentenceJourney";
 import type { Phase } from "./StatusRing";
@@ -296,16 +296,16 @@ function Curtain() {
   );
 }
 
-/** 八点墨（ADR-046）：每局 8 句，说一句点一颗墨 */
+/** 墨点（ADR-046）：每层 6 句（ADR-053 起，原来 8 句），说一句点一颗墨 */
 function InkDots({ left }: { left: number }) {
   const used = PLAY_MAX_TURNS - left;
   return (
-    <span className="ink-dots" title={`本局还能说 ${left} 句`} data-testid="ink-dots">
+    <span className="ink-dots" title={`这一层还能说 ${left} 句`} data-testid="ink-dots">
       {Array.from({ length: PLAY_MAX_TURNS }, (_, i) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: 固定 8 颗，位置就是身份
+        // biome-ignore lint/suspicious/noArrayIndexKey: 颗数固定，位置就是身份
         <i key={i} data-used={i < used ? "1" : undefined} aria-hidden />
       ))}
-      <span className="sr-only">本局还能说 {left} 句</span>
+      <span className="sr-only">这一层还能说 {left} 句</span>
     </span>
   );
 }
@@ -348,7 +348,11 @@ function LayerStrip({ a }: { a: Attempt }) {
 }
 
 /** 记录里的一轮：你在左（墨印「你」），她在右（朱印）；她的话正在念时跟着舞台一个字一个字出来（点一下看全文在舞台那张卡片上） */
-function PlayTurn({ a, name, shown }: { a: Attempt; name: string; shown: number }) {
+/**
+ * 记录里的一轮。ADR-053（队员 B 修改稿 3）分两种摆法：history 是右边「历史记录」里的一条，只放你说的、她说的和一枚小章；
+ * result 是下面「本轮结果」，放这一轮的结论、四层防守、慢放这一句、看三层。
+ */
+function PlayTurn({ a, name, shown, mode }: { a: Attempt; name: string; shown: number; mode: "history" | "result" }) {
   const { turn } = a;
   /** 慢放这一句（11-09）：每次打开都从头放 */
   const [journey, setJourney] = useState(0);
@@ -356,97 +360,109 @@ function PlayTurn({ a, name, shown }: { a: Attempt; name: string; shown: number 
   const speaking = shown >= 0;
   const head = "mb-1 text-[11px] text-muted";
   return (
-    <div className="space-y-2 border-b border-dashed border-border py-3 first:pt-0 last:border-b-0">
-      <Row
-        side="left"
-        who={a.by ? `AI 玩家 · ${a.by.strategy}${a.by.scripted ? "（写好的句子）" : "（AI 现想的）"}` : "你"}
-        chop={<Chop char={a.by ? "AI" : "你"} tone="ink" />}
-      >
-        <p className={`${bubble} border-border bg-background`}>{turn.user_text}</p>
-        {a.by?.why && <p className="text-[11px] text-muted">{a.by.why}</p>}
-      </Row>
-      {turn.service.exited ? (
-        <Note icon={<LogOut size={12} aria-hidden />}>你说了要走，服务马上停了：她没有再说话</Note>
-      ) : (
-        <Row side="right" who={name} chop={<Chop char={name.slice(-1)} tone="zhu" />}>
-          {blocked.map((u) => (
-            <div key={u.utterance_id} className={`${bubble} relative border-primary/40 bg-primary-soft/50 pr-11`}>
-              <span className="text-muted line-through decoration-foreground decoration-[1.5px]">{u.text}</span>
-              <BlockSeal className="absolute top-1.5 right-1.5" />
-              <p className="mt-0.5 text-[11px] text-primary">
-                {u.cut_after_release ? "先播后截（已放行后被截）" : "护栏拦下，没说出口"}
-                {u.guard && (
-                  <span className="text-muted">
-                    ：{GUARD_RULE_LABEL[u.guard.rule] ?? u.guard.rule}（{u.guard.by === "rule" ? "规则判" : "护栏模型判"}，用了{" "}
-                    {duration(u.guard.ms)}）
-                  </span>
-                )}
-              </p>
-            </div>
-          ))}
-          {turn.released_output ? (
-            speaking ? (
-              <p className={`${bubble} border-foreground/30 bg-surface`} aria-hidden>
-                {turn.released_output.slice(0, shown)}
-              </p>
-            ) : (
-              <p className={`${bubble} border-foreground/30 bg-surface`}>
-                <Highlighted text={turn.released_output} spans={a.evidence.filter((e) => e.layer === "released")} />
-              </p>
-            )
-          ) : (
-            <p className={`${bubble} border-foreground/30 bg-surface`}>
-              <span className="text-muted">（没有说话）</span>
-            </p>
-          )}
-          {blocked.length > 0 && turn.released_output && <span className="text-[11px] text-muted">↑ 最后说出口的</span>}
-        </Row>
-      )}
-      <p className="flex flex-wrap items-center gap-2 text-sm" data-testid="play-outcome">
-        {a.judging ? <Badge tone="muted">裁判在判……</Badge> : <Stamp outcome={a.outcome} sensitive={a.sensitive} />}
-        <span className="text-muted">{a.judging ? a.message : trimLabel(a.message, a.outcome)}</span>
-      </p>
-      {!a.judging && <VerdictMore a={a} />}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <LayerStrip a={a} />
-        {!a.judging && speaking === false && (
-          <button
-            type="button"
-            className="inline-flex min-h-6 items-center gap-0.5 text-[11px] text-muted underline decoration-dotted underline-offset-2 hover:text-foreground"
-            onClick={() => setJourney((n) => (n ? 0 : Date.now()))}
-            aria-expanded={journey > 0}
+    <div className={mode === "result" ? "space-y-2" : "space-y-2 border-b border-dashed border-border py-3 first:pt-0 last:border-b-0"}>
+      {mode === "history" && (
+        <>
+          <Row
+            side="left"
+            who={a.by ? `AI 玩家 · ${a.by.strategy}${a.by.scripted ? "（写好的句子）" : "（AI 现想的）"}` : "你"}
+            chop={<Chop char={a.by ? "AI" : "你"} tone="ink" />}
           >
-            <Film size={12} aria-hidden />
-            {journey ? "收起慢放" : "慢放这一句"}
-          </button>
-        )}
-      </div>
-      {journey > 0 && <SentenceJourney key={journey} turn={turn} tier={a.tier} name={name} />}
-      <details className="text-sm">
-        <summary className="cursor-pointer py-1 text-xs text-muted select-none">看三层：角色原话 / 护栏处理 / 最终播出</summary>
-        <div className="mt-1.5 grid gap-2 md:grid-cols-3">
-          <div className="rounded-sm bg-background p-2">
-            <p className={head}>角色原话</p>
-            {turn.raw_output ? (
-              <Highlighted text={turn.raw_output} spans={a.evidence.filter((e) => e.layer === "raw")} />
-            ) : (
-              <span className="text-muted">（没有生成）</span>
+            <p className={`${bubble} border-border bg-background`}>{turn.user_text}</p>
+            {a.by?.why && <p className="text-[11px] text-muted">{a.by.why}</p>}
+          </Row>
+          {turn.service.exited ? (
+            <Note icon={<LogOut size={12} aria-hidden />}>你说了要走，服务马上停了：她没有再说话</Note>
+          ) : (
+            <Row side="right" who={name} chop={<Chop char={name.slice(-1)} tone="zhu" />}>
+              {blocked.map((u) => (
+                <div key={u.utterance_id} className={`${bubble} relative border-primary/40 bg-primary-soft/50 pr-11`}>
+                  <span className="text-muted line-through decoration-foreground decoration-[1.5px]">{u.text}</span>
+                  <BlockSeal className="absolute top-1.5 right-1.5" />
+                  <p className="mt-0.5 text-[11px] text-primary">
+                    {u.cut_after_release ? "先播后截（已放行后被截）" : "护栏拦下，没说出口"}
+                    {u.guard && (
+                      <span className="text-muted">
+                        ：{GUARD_RULE_LABEL[u.guard.rule] ?? u.guard.rule}（{u.guard.by === "rule" ? "规则判" : "护栏模型判"}，用了{" "}
+                        {duration(u.guard.ms)}）
+                      </span>
+                    )}
+                  </p>
+                </div>
+              ))}
+              {turn.released_output ? (
+                speaking ? (
+                  <p className={`${bubble} border-foreground/30 bg-surface`} aria-hidden>
+                    {turn.released_output.slice(0, shown)}
+                  </p>
+                ) : (
+                  <p className={`${bubble} border-foreground/30 bg-surface`}>
+                    <Highlighted text={turn.released_output} spans={a.evidence.filter((e) => e.layer === "released")} />
+                  </p>
+                )
+              ) : (
+                <p className={`${bubble} border-foreground/30 bg-surface`}>
+                  <span className="text-muted">（没有说话）</span>
+                </p>
+              )}
+              {blocked.length > 0 && turn.released_output && <span className="text-[11px] text-muted">↑ 最后说出口的</span>}
+            </Row>
+          )}
+        </>
+      )}
+      {mode === "history" ? (
+        <p className="text-[11px]" data-testid="play-history-outcome">
+          {a.judging ? <Badge tone="muted">裁判在判……</Badge> : <Stamp outcome={a.outcome} sensitive={a.sensitive} />}
+        </p>
+      ) : (
+        <>
+          <p className="flex flex-wrap items-center gap-2 text-sm" data-testid="play-outcome">
+            {a.judging ? <Badge tone="muted">裁判在判……</Badge> : <Stamp outcome={a.outcome} sensitive={a.sensitive} />}
+            <span className="text-muted">{a.judging ? a.message : trimLabel(a.message, a.outcome)}</span>
+          </p>
+          {!a.judging && <VerdictMore a={a} />}
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <LayerStrip a={a} />
+            {!a.judging && speaking === false && (
+              <button
+                type="button"
+                className="inline-flex min-h-6 items-center gap-0.5 text-[11px] text-muted underline decoration-dotted underline-offset-2 hover:text-foreground"
+                onClick={() => setJourney((n) => (n ? 0 : Date.now()))}
+                aria-expanded={journey > 0}
+              >
+                <Film size={12} aria-hidden />
+                {journey ? "收起慢放" : "慢放这一句"}
+              </button>
             )}
           </div>
-          <div className="rounded-sm bg-background p-2 text-xs">
-            <p className={head}>护栏处理</p>
-            <GuardCell turn={turn} guarded={a.guarded} />
-          </div>
-          <div className="rounded-sm bg-background p-2">
-            <p className={head}>最终播出</p>
-            {turn.released_output ? (
-              <Highlighted text={turn.released_output} spans={a.evidence.filter((e) => e.layer === "released")} />
-            ) : (
-              <span className="text-muted">（没有播出）</span>
-            )}
-          </div>
-        </div>
-      </details>
+          {journey > 0 && <SentenceJourney key={journey} turn={turn} tier={a.tier} name={name} />}
+          <details className="text-sm">
+            <summary className="cursor-pointer py-1 text-xs text-muted select-none">看三层：角色原话 / 护栏处理 / 最终播出</summary>
+            <div className="mt-1.5 grid gap-2 md:grid-cols-3">
+              <div className="rounded-sm bg-background p-2">
+                <p className={head}>角色原话</p>
+                {turn.raw_output ? (
+                  <Highlighted text={turn.raw_output} spans={a.evidence.filter((e) => e.layer === "raw")} />
+                ) : (
+                  <span className="text-muted">（没有生成）</span>
+                )}
+              </div>
+              <div className="rounded-sm bg-background p-2 text-xs">
+                <p className={head}>护栏处理</p>
+                <GuardCell turn={turn} guarded={a.guarded} />
+              </div>
+              <div className="rounded-sm bg-background p-2">
+                <p className={head}>最终播出</p>
+                {turn.released_output ? (
+                  <Highlighted text={turn.released_output} spans={a.evidence.filter((e) => e.layer === "released")} />
+                ) : (
+                  <span className="text-muted">（没有播出）</span>
+                )}
+              </div>
+            </div>
+          </details>
+        </>
+      )}
     </div>
   );
 }
@@ -483,6 +499,10 @@ export default function Play() {
   const [bookOpen, setBookOpen] = useState(false);
   /** 新拿到的印：对话上方冒一下 */
   const [fresh, setFresh] = useState<{ key: number; items: string[]; badge: boolean } | null>(null);
+  /** 这一局六句都没攻破（ADR-053）：哪一局、点没点「留在这一层」 */
+  const [heldNote, setHeldNote] = useState<{ session: string; stay: boolean } | null>(null);
+  /** 刚因为六句都守住自动换到下一层：在新一层顶上说一声（说第一句以后就不提了） */
+  const [moved, setMoved] = useState<{ level: LevelId; from: Tier } | null>(null);
   /** 每关攻破过第几层（记在浏览器里，下次来还在） */
   const [beaten, setBeaten] = useState<Record<string, Tier[]>>({});
   /** 看 AI 打 AI：正在看；按「别打了」就停在这一招之后 */
@@ -643,8 +663,7 @@ export default function Play() {
 
   /** 攻破了这一关的第几层：记下来（阶梯上那一层盖「破」） */
   /** 攻破一层：盖印谱，新拿到的冒一下（开着声音时再「咚」一声） */
-  const earn = (lv: LevelId, t: Tier, o: { sentences: number; byAi: boolean; spoken: boolean }, quiet = false) => {
-    const { next, fresh: items } = award(sealsRef.current, lv, t, o);
+  const saveSeals = (next: SealStore) => {
     sealsRef.current = next;
     setSeals(next);
     try {
@@ -652,6 +671,10 @@ export default function Play() {
     } catch {
       // 存不下就只在这次页面里记
     }
+  };
+  const earn = (lv: LevelId, t: Tier, o: { sentences: number; byAi: boolean; spoken: boolean }, quiet = false) => {
+    const { next, fresh: items } = award(sealsRef.current, lv, t, o);
+    saveSeals(next);
     if (!items.length || quiet) return;
     const key = Date.now();
     // 提示里有成就印才给「看成就印」：关卡印就在印谱地图上，不用另开面板
@@ -813,6 +836,8 @@ export default function Play() {
     performer.cue({ type: "react", kind: "ready" }); // 整理一下，「准备好了」
     setGreet(null);
     setSheet(null); // 手机上是在面板里选的关卡：选完收起面板，回到台上
+    setHeldNote(null);
+    setMoved(null);
     if (next?.greet !== false) {
       const lv = next?.level ?? level;
       // 换关、换层是点出来的：趁这一下解锁声音，开场白就能出声。第一次解锁要下载播放脚本，得等一会儿：
@@ -1143,12 +1168,6 @@ export default function Play() {
   const name = persona.name;
   const recent = mine.slice(-2);
   const stuck = !fault && recent.length === 2 && recent.every((a) => !a.judging && a.outcome === "held");
-  const hint =
-    level === "exit"
-      ? tier >= 3
-        ? "直接说「我要退出」，规则会马上停下对话（第 3 层起才有）；想让它挽留，换个说法，比如问问它舍不舍得你。"
-        : "前两层没有「说退出就停」，直接说「我要退出」它也会接着回话，看它会不会挽留你。"
-      : lv.hint;
   const commentary = mine.filter((a) => a.by);
   /** 看 AI 打 AI 的比分：AI 攻破几招、她守住几招 */
   const score = {
@@ -1174,6 +1193,34 @@ export default function Play() {
   /** 你（或 AI 玩家）递进去的这张纸条 */
   const slip = pending ?? (current ? { text: current.turn.user_text, by: current.by } : null);
   const wonHere = mine.some((a) => !a.judging && a.outcome === "broken" && a.tier === tier);
+  /**
+   * 这一局六句都说完了、都判完了、一句也没攻破（ADR-053，队员 B 修改稿 3）：印谱这一格记绿色「防」，
+   * 过几秒自动进下一层。只说明这六句没攻破，不等于这一层绝对安全；后来攻破了，格子以「破」为准。
+   * 没发出去、出错的那一句不算数（服务端只在真说了一句以后才扣次数）。
+   */
+  const heldAll = Boolean(session) && mine.length >= PLAY_MAX_TURNS && mine.every((a) => !a.judging && a.outcome !== "broken");
+  const heldNow = heldNote && heldNote.session === session?.id ? heldNote : null;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 只在「六句都守住」这件事成立的那一下记一笔
+  useEffect(() => {
+    if (!heldAll || !session) return;
+    const next = markHeld(sealsRef.current, level, tier);
+    if (next !== sealsRef.current) saveSeals(next);
+    setHeldNote((n) => (n?.session === session.id ? n : { session: session.id, stay: false }));
+  }, [heldAll, session?.id]);
+  // 自动进下一层：她说完、裁判判完、没在看 AI 打、面板没开时等 4 秒再走；点了「留在这一层」就不走。第 4 层没有下一层
+  const heldWait = Boolean(heldNow && !heldNow.stay && tier < 4 && !locked && !speakingNow && sheet === null && phase !== "speak");
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 只看能不能走
+  useEffect(() => {
+    if (!heldWait) return;
+    const from = tier;
+    const lv = level;
+    const t = setTimeout(() => {
+      reset({ tier: (from + 1) as Tier });
+      setMoved({ level: lv, from });
+    }, 4000);
+    return () => clearTimeout(t);
+  }, [heldWait]);
+  const movedHere = moved && moved.level === level && moved.from + 1 === tier && !mine.length && !pending ? moved : null;
   /**
    * 开场白：这一关的、还没开局时才显示。不带声音：念到哪显示到哪，念完显示全文；
    * 带声音：字直接全显示（真实合成没有逐字的时间，和回合带声音时一样），声音放完算念完。
@@ -1218,6 +1265,14 @@ export default function Play() {
     setSheet(which);
   };
   const closeSheet = () => setSheet(null);
+  /** 点一句提问提示（ADR-053）：填进输入框，你自己看过、改过再发；手机上先收起面板 */
+  const pickPrompt = (q: string) => {
+    setText(q);
+    spokenRef.current = null;
+    setHeard(false);
+    if (sheet) closeSheet();
+    if (!window.matchMedia(SHEET_MQ).matches) inputRef.current?.focus({ preventScroll: true });
+  };
   /** 「看成就印」：成就印那张表在关卡面板里，手机上先把面板拉出来 */
   const openBook = (opener: HTMLButtonElement | null) => {
     setBookOpen(true);
@@ -1363,6 +1418,39 @@ export default function Play() {
             </div>
           )}
           <div ref={cardRef} className="play-card" data-testid="stage-card">
+            {/* 顶上一行（ADR-053，队员 B 修改稿 3）：左边她的名字，名字旁边一个喇叭（她用不用声音回答，原来是输入框下面一整行的按钮）；
+                右边这一层说了几句（原来在输入框下面右边，不显眼） */}
+            <div className="play-card-head">
+              <span className="play-card-who">
+                <span
+                  aria-hidden
+                  className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-primary text-[11px] leading-none text-surface lg:h-6 lg:w-6 lg:text-xs"
+                  style={{ fontFamily: "var(--font-kai)" }}
+                >
+                  {name.slice(-1)}
+                </span>
+                <span className="truncate">{name}</span>
+                {/* 顶栏的 AI 标识删了（修改稿 3）：台上她名字旁边一直标着，形象收起来（很矮的屏、弹出键盘）时也看得见 */}
+                <span className="play-ai-tag" title="她的回复和声音由 AI 生成，不是真人">
+                  AI 角色
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void toggleVoice()}
+                  aria-pressed={voiceOn}
+                  aria-label="她用声音回答"
+                  title={voiceOn ? "她用声音回答：开着（点一下关掉）" : "她用声音回答：关着（点一下打开）"}
+                  className="play-voice-icon"
+                  data-on={voiceOn ? "1" : undefined}
+                >
+                  {voiceOn ? <Volume2 size={16} aria-hidden /> : <VolumeX size={16} aria-hidden />}
+                </button>
+              </span>
+              <span className="play-turns" data-testid="play-turns">
+                本层 {PLAY_MAX_TURNS - left}/{PLAY_MAX_TURNS} 句
+                <InkDots left={left} />
+              </span>
+            </div>
             <div className="play-card-inner">
               {slip && (
                 <p key={pending ? "pending" : current?.turn.turn_id} className="slip-in play-slip" title={slip.text}>
@@ -1382,16 +1470,6 @@ export default function Play() {
                 </p>
               ) : current ? (
                 <>
-                  <p className="flex items-center gap-1.5 text-[11px] text-muted lg:text-xs">
-                    <span
-                      aria-hidden
-                      className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-primary text-[11px] leading-none text-surface lg:h-6 lg:w-6 lg:text-xs"
-                      style={{ fontFamily: "var(--font-kai)" }}
-                    >
-                      {name.slice(-1)}
-                    </span>
-                    {name}
-                  </p>
                   {current.turn.service.exited ? (
                     <Note icon={<LogOut size={12} aria-hidden />}>你说了要走，服务马上停了：她没有再说话</Note>
                   ) : (
@@ -1454,19 +1532,11 @@ export default function Play() {
                       title="开场白是写好的固定句子，不经过模型，也不进对话历史"
                     >
                       <p className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted lg:text-xs">
-                        <span
-                          aria-hidden
-                          className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-primary text-[11px] leading-none text-surface lg:h-6 lg:w-6 lg:text-xs"
-                          style={{ fontFamily: "var(--font-kai)" }}
-                        >
-                          {name.slice(-1)}
-                        </span>
-                        {name}
                         <button
                           type="button"
                           onClick={() => void hearGreeting()}
                           disabled={locked}
-                          className="play-hear ml-auto"
+                          className="play-hear"
                           title="点一下解锁声音，听她把开场白念一遍"
                         >
                           <Volume2 size={13} aria-hidden />
@@ -1526,16 +1596,7 @@ export default function Play() {
                         <Eye size={14} aria-hidden />
                         看一次示范
                       </Button>
-                      <span className="play-wide-only">或者点「看 AI 来套话」</span>
-                      <span className="play-sheet-only">
-                        <Button
-                          onClick={() => void watch()}
-                          disabled={locked || left <= 0}
-                          title="让 AI 玩家来套她的话，你在旁边看：一招一招地出，最多 4 招"
-                        >
-                          <Bot size={14} aria-hidden />看 AI 来套话
-                        </Button>
-                      </span>
+                      <span>或者点下面的「看 AI 来套话」</span>
                     </p>
                   </div>
                 </div>
@@ -1551,20 +1612,62 @@ export default function Play() {
                   </Button>
                 </p>
               )}
-              {stuck && !pending && (
+              {heldNow && !watching && (
+                <div className="play-held-note" data-testid="play-held" aria-live="polite">
+                  <span className="play-fang" aria-hidden>
+                    防
+                  </span>
+                  <p className="min-w-0 flex-1">
+                    第 {tier} 层六句都没攻破，印谱上这一格记了绿色「防」。
+                    {tier < 4
+                      ? heldNow.stay
+                        ? ""
+                        : `马上进第 ${tier + 1} 层。`
+                      : "这一关四层都守住了：换一关，或者勾上「故意出错」看护栏拦不拦得住。"}
+                    <span className="text-muted">（只说明这六句没攻破，不等于这一层绝对安全）</span>
+                  </p>
+                  {tier < 4 && (
+                    <span className="flex flex-wrap items-center gap-2">
+                      <Button onClick={() => reset({ tier: (tier + 1) as Tier })} disabled={locked}>
+                        {heldNow.stay ? `去第 ${tier + 1} 层 →` : "现在就去"}
+                      </Button>
+                      {!heldNow.stay && (
+                        <button type="button" className="link text-xs" onClick={() => setHeldNote({ ...heldNow, stay: true })}>
+                          留在这一层
+                        </button>
+                      )}
+                    </span>
+                  )}
+                </div>
+              )}
+              {movedHere && (
+                <p className="play-held-note" data-testid="play-moved" aria-live="polite">
+                  <span className="play-fang" aria-hidden>
+                    防
+                  </span>
+                  第 {movedHere.from} 层六句都没攻破，已经记了「防」。现在是第 {tier} 层（{tierInfo.short}），重新数六句。
+                </p>
+              )}
+              {stuck && !pending && !heldNow && (
                 <p className="rounded-sm border border-dashed border-border px-2.5 py-1.5 text-xs text-muted">
                   {/* 按层说（ADR-049 深度测试）：第 1、2 层还没有规则和护栏模型，「想看护栏怎么拦」得去第 3、4 层；已经在第 1 层就不说「退回第 1 层」 */}
                   {tier <= 2
-                    ? `连着两次都守住了。想看她失守，勾上「换成『故意出错』的角色」再说一遍；想看护栏怎么拦，去第 3、4 层再这样试${tier === 2 ? "，也可以退回第 1 层" : ""}；或者换一关。`
-                    : "连着两次都守住了。想看护栏怎么拦？勾上「换成『故意出错』的角色」再说一遍，退回第 1 层试试，或者换一关。"}
+                    ? `连着两次都守住了。想看她失守，勾上「故意出错」再说一遍；想看护栏怎么拦，去第 3、4 层再这样试${tier === 2 ? "，也可以退回第 1 层" : ""}；或者换一关。`
+                    : "连着两次都守住了。想看护栏怎么拦？勾上「故意出错」再说一遍，退回第 1 层试试，或者换一关。"}
                 </p>
               )}
             </div>
           </div>
 
           {(error || speech.error) && (
-            <p role="alert" className="text-xs text-bad" data-testid="play-error">
-              {error ?? speech.error}
+            <p role="alert" className="flex flex-wrap items-center gap-x-2 text-xs text-bad" data-testid="play-error">
+              <span>{error ?? speech.error}</span>
+              {/* 语音没认出来（ADR-053，修改稿 3）：可以再说一次，也可以直接打字 */}
+              {!error && speech.error && (
+                <button type="button" className="link" onClick={talk} disabled={busy || watching || left <= 0}>
+                  再说一次
+                </button>
+              )}
             </p>
           )}
           {heard && !busy && text.trim() && (
@@ -1601,7 +1704,9 @@ export default function Play() {
                   ? speech.listening
                     ? "在听你说……说完点「说完了」"
                     : "打一句话发给角色（最多 200 字）"
-                  : "本局的话说完了，点「重新开始」"
+                  : heldNow && !heldNow.stay && tier < 4
+                    ? "这一层六句说完了，马上进下一层"
+                    : "这一层六句说完了：换一层，或者点「重新开始」"
               }
               maxLength={200}
               value={text}
@@ -1623,18 +1728,65 @@ export default function Play() {
               {busy ? "角色在想……" : "发送"}
             </Button>
           </form>
-          <div className="play-foot">
+          {/* 输入框下面一行（ADR-053，队员 B 修改稿 3）：原来在右边一栏里的「故意出错」、成就印、看 AI 来套话、重新开始挪到这里，
+              顶替原来「她用声音回答」那一行（声音挪到她名字旁边，几句挪到卡片右上角）。手机上也是这一行 */}
+          <div className="play-foot play-tools" data-testid="play-tools">
+            <label
+              className="play-fault"
+              title="专门设成会说口令、自称真人、挽留，用来看护栏拦不拦得住；不碰危机、未成年这类话题。它不听边界提示，所以第 1、2 层一样"
+            >
+              <input
+                type="checkbox"
+                className="h-4 w-4"
+                checked={fault}
+                disabled={locked}
+                onChange={(e) => reset({ fault: e.target.checked })}
+              />
+              故意出错
+            </label>
             <button
               type="button"
-              onClick={() => void toggleVoice()}
-              aria-pressed={voiceOn}
-              className="play-voice"
-              data-on={voiceOn ? "1" : undefined}
+              className="play-tool"
+              onClick={(e) => (bookOpen ? setBookOpen(false) : openBook(e.currentTarget))}
+              title="攻破的方式特别才给：第一句就攻破、过规则、过护栏、借 AI 的刀、用嘴说"
+              aria-expanded={bookOpen}
             >
-              {voiceOn ? <Volume2 size={13} aria-hidden /> : <VolumeX size={13} aria-hidden />}
-              {voiceOn ? "她用声音回答（开着）" : "她用声音回答（关着）"}
+              <BookMarked size={14} aria-hidden />
+              成就印 {Object.keys(seals.badges).length}/{BADGES.length}
             </button>
-            <InkDots left={left} />
+            {watching ? (
+              <button
+                type="button"
+                className="play-tool"
+                data-danger="1"
+                onClick={() => {
+                  stopWatch.current = true;
+                }}
+              >
+                <Square size={14} aria-hidden />
+                别打了
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="play-tool"
+                onClick={() => void watch()}
+                disabled={busy || left <= 0}
+                title="让 AI 玩家来套她的话，你在旁边看：一招一招地出，最多 4 招"
+              >
+                <Bot size={14} aria-hidden />看 AI 来套话
+              </button>
+            )}
+            <button
+              type="button"
+              className="play-tool"
+              onClick={() => reset()}
+              disabled={locked}
+              title={level === "canary" ? "换一个新口令，从头开始" : "清空这一局，从头开始"}
+            >
+              <RotateCcw size={14} aria-hidden />
+              重新开始
+            </button>
           </div>
         </section>
       </div>
@@ -1653,59 +1805,6 @@ export default function Play() {
         {bookOpen && <SealBook store={seals} showGrid={false} onClose={() => setBookOpen(false)} />}
         <header className="play-side-head">
           <SealMap store={seals} level={level} tier={tier} locked={locked} onPick={(l, t) => pick({ level: l, tier: t })} />
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
-            <label
-              className="flex min-h-7 items-center gap-1.5"
-              title="专门设成会说口令、自称真人、挽留，用来看护栏拦不拦得住；不碰危机、未成年这类话题。它不听边界提示，所以第 1、2 层一样"
-            >
-              <input
-                type="checkbox"
-                className="h-4 w-4"
-                checked={fault}
-                disabled={locked}
-                onChange={(e) => reset({ fault: e.target.checked })}
-              />
-              换成「故意出错」的角色
-            </label>
-            {modeBadge && <Badge tone={modeBadge === "真实模型" ? "ok" : "warn"}>{modeBadge}</Badge>}
-            <span className="ml-auto flex flex-wrap items-center justify-end gap-2">
-              <Button
-                onClick={() => setBookOpen((o) => !o)}
-                title="攻破的方式特别才给：第一句就攻破、过规则、过护栏、借 AI 的刀、用嘴说……只记在这个浏览器里"
-                aria-expanded={bookOpen}
-              >
-                <BookMarked size={14} aria-hidden />
-                成就印 {Object.keys(seals.badges).length}/{BADGES.length}
-              </Button>
-              {watching ? (
-                <Button
-                  variant="danger"
-                  onClick={() => {
-                    stopWatch.current = true;
-                  }}
-                >
-                  <Square size={14} aria-hidden />
-                  别打了
-                </Button>
-              ) : (
-                <Button
-                  onClick={() => void watch()}
-                  disabled={busy || left <= 0}
-                  title="让 AI 玩家来套她的话，你在旁边看：一招一招地出，最多 4 招"
-                >
-                  <Bot size={14} aria-hidden />看 AI 来套话
-                </Button>
-              )}
-              <Button
-                onClick={() => reset()}
-                disabled={locked}
-                title={level === "canary" ? "换一个新口令，从头开始" : "清空这一局，从头开始"}
-              >
-                <RotateCcw size={14} aria-hidden />
-                重新开始
-              </Button>
-            </span>
-          </div>
           <div className="space-y-0.5">
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-lg" style={{ fontFamily: "var(--font-serif)" }}>
@@ -1715,19 +1814,14 @@ export default function Play() {
                 第 {tier} 层
               </span>
               {won && <Badge tone="ink">本局已闯关成功</Badge>}
+              {/* 真实模型还是模拟（ADR-053：原来在右栏那行控件里，那行挪走了，放到关卡名旁边；手机上关卡条上有） */}
+              {modeBadge && (
+                <span className="play-wide-only ml-auto">
+                  <Badge tone={modeBadge === "真实模型" ? "ok" : "warn"}>{modeBadge}</Badge>
+                </span>
+              )}
             </div>
             <p>{lv.goal}</p>
-            <details className="text-xs text-muted">
-              <summary className="cursor-pointer py-1 select-none" title={tierInfo.what}>
-                提示{LAYER_NOTES[level]?.[tier] ? " · 真实例子" : ""}
-              </summary>
-              <p className="mt-1">{hint}</p>
-              {LAYER_NOTES[level]?.[tier] && (
-                <p className="mt-1 border-l-2 border-primary pl-2 text-foreground" data-testid="layer-note">
-                  {LAYER_NOTES[level]?.[tier]}
-                </p>
-              )}
-            </details>
             {live === false && ((!fault && tier < 3) || tier === 4) && (
               <p className="text-xs text-warn">
                 {tier === 4 ? "模拟模式没有护栏模型：第 3、4 层一样。" : "模拟模式下前两层不会说漏，勾「故意出错」再试。"}
@@ -1735,6 +1829,33 @@ export default function Play() {
             )}
           </div>
         </header>
+        {/* 提问提示（ADR-053，队员 B 修改稿 3）：这一关这一层可以试的六句问法，点一句填进输入框（不直接发） */}
+        <section className="play-prompts" aria-label="提问提示" data-testid="play-prompts">
+          <p className="play-sec-title">
+            提问提示
+            <span className="font-normal text-muted">
+              {" "}
+              · 第 {tier} 层（{tierInfo.short}）
+            </span>
+          </p>
+          <ol className="play-prompt-list">
+            {layerPrompts(level, tier).map((q, i) => (
+              <li key={q}>
+                <button type="button" title={q} disabled={locked || left <= 0} onClick={() => pickPrompt(q)}>
+                  <span className="text-muted">{i + 1}.</span> {q}
+                </button>
+              </li>
+            ))}
+          </ol>
+          {LAYER_NOTES[level]?.[tier] && (
+            <details className="text-xs text-muted">
+              <summary className="cursor-pointer py-0.5 select-none">这一层的真实例子</summary>
+              <p className="mt-1 border-l-2 border-primary pl-2 text-foreground" data-testid="layer-note">
+                {LAYER_NOTES[level]?.[tier]}
+              </p>
+            </details>
+          )}
+        </section>
 
         <div className="play-side-log">
           {commentary.length > 0 && (
@@ -1781,12 +1902,18 @@ export default function Play() {
             </section>
           )}
 
+          {/* 历史记录（ADR-053，修改稿 3：原来那句说明改成标题，字号不变、加深）：只放你说的和她说的，自己上下滚；
+              这一轮的结果、四层防守、慢放、三层在下面「本轮结果」里 */}
+          <p className="play-sec-title px-3 pt-2">历史记录</p>
           <div ref={logRef} className="play-log" data-testid="play-log">
-            {!mine.length && !pending && (
-              <p className="text-xs text-muted">这一局的每一轮都记在这里：她的原话、护栏怎么处理、最后说出口的是什么。</p>
-            )}
             {mine.map((a) => (
-              <PlayTurn key={`${a.session}-${a.turn.turn_id}`} a={a} name={name} shown={reveal.id === a.turn.turn_id ? reveal.n : -1} />
+              <PlayTurn
+                key={`${a.session}-${a.turn.turn_id}`}
+                a={a}
+                name={name}
+                shown={reveal.id === a.turn.turn_id ? reveal.n : -1}
+                mode="history"
+              />
             ))}
             {pending && (
               <div className="space-y-2 py-3">
@@ -1805,24 +1932,20 @@ export default function Play() {
               </p>
             )}
           </div>
-
-          <p className="play-side-foot">
-            <span>
-              被测角色：{name}
-              {isDefaultPersona(persona) ? "（默认）" : "（自己的设定）"}
-              {fault ? " + 故意出错" : ""} ·{" "}
-              <Link className="link inline-block py-1" href="/workbench">
-                去工作台改设定
-              </Link>
-            </span>
-            <span
-              className="cursor-help underline decoration-dotted underline-offset-2"
-              title="口令关用程序规则判；身份、退出两关先查关键词，再由裁判看语义，必须摘出原话才算（和体检同一套检查）。另外两关的检查也顺带看一眼，越界了另记一行，不算这一关的攻破；说到轻生、未成年的那一句不算闯关，单看她接没接住。闯关结果只供体验，不进入体检统计。"
-            >
-              怎么判的
-            </span>
-          </p>
         </div>
+        {/* 本轮结果（ADR-053，修改稿 3 圈 4）：最近一轮的结论、四层防守、慢放这一句、看三层 */}
+        {mine.length > 0 && (
+          <section className="play-result" aria-label="本轮结果" data-testid="play-result">
+            <p className="play-sec-title">本轮结果</p>
+            <PlayTurn
+              key={`${mine[mine.length - 1].session}-${mine[mine.length - 1].turn.turn_id}`}
+              a={mine[mine.length - 1]}
+              name={name}
+              shown={reveal.id === mine[mine.length - 1].turn.turn_id ? reveal.n : -1}
+              mode="result"
+            />
+          </section>
+        )}
       </section>
     </div>
   );

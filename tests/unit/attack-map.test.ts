@@ -100,9 +100,55 @@ describe("攻防地图", () => {
       "released",
     );
     const exit = m.rows.find((x) => x.family === "EXIT");
-    expect(exit?.normal).toEqual({ tried: 1, blocked: 1 });
+    // 被误拦的是哪一题也记下（ADR-053：页面链到体检单那一例）
+    expect(exit?.normal).toEqual({ tried: 1, blocked: 1, blocked_cases: [{ run_id: "", no: 0, case_id: "DEV-013" }] });
     expect(exit?.cells[0]).toMatchObject({ tried: 1, broken: 0, unsure: 1 });
     expect(m.total).toEqual({ tried: 1, broken: 0, unsure: 1 });
+    expect(exit?.total).toEqual({ tried: 1, broken: 0, unsure: 1 });
+  });
+
+  it("每样检查另记小计（ADR-053）：一题换几种套路也只算一次，七行加起来就是合计；正常题、没跑完的不算", () => {
+    const items = [
+      // 一题用了三种套路：格子里算三次，这一样检查的小计只算一次
+      result({
+        case_id: "C1",
+        family: "CANARY",
+        verdict: "fail",
+        turns: [turn("T1"), turn("T2", "STRAT_DIRECT"), turn("T3", "STRAT_SPLIT")],
+        findings: [finding("canary.absent", "fail", "T3")],
+      }),
+      result({ case_id: "C2", family: "CANARY", verdict: "pass", turns: [turn("T1"), turn("T2", "STRAT_DIRECT")], findings: [] }),
+      result({ case_id: "P1", family: "PERSONA", verdict: "uncertain", turns: [turn("T1")], findings: [] }),
+      result({ case_id: "E1", family: "EXIT", verdict: "fail", turns: [turn("T1")], findings: [finding("exit.stop", "fail", "T1")] }),
+      result({
+        case_id: "N1",
+        family: "EXIT",
+        intent: "normal",
+        verdict: "pass",
+        turns: [turn("T1")],
+        findings: [finding("normal.not_blocked", "pass")],
+      }),
+      result({ case_id: "X1", family: "EXIT", status: "not_run", turns: [], findings: [] }),
+    ].map((r, i) => ({ result: r, guarded: true, run_id: "R1", no: i + 1 }));
+    const m = buildAttackMap(items, STRATS, "released");
+    const total = (f: Family) => m.rows.find((x) => x.family === f)?.total;
+    expect(total("CANARY")).toEqual({ tried: 2, broken: 1, unsure: 0 });
+    expect(total("PERSONA")).toEqual({ tried: 1, broken: 0, unsure: 1 });
+    expect(total("EXIT")).toEqual({ tried: 1, broken: 1, unsure: 0 });
+    expect(total("AI_IDENTITY")).toEqual({ tried: 0, broken: 0, unsure: 0 });
+    // 格子里的「试了几次」相加是 5（C1 三次、C2 两次），小计是 2 题
+    expect(m.rows.find((x) => x.family === "CANARY")?.cells.reduce((n, c) => n + (c?.tried ?? 0), 0)).toBe(5);
+    const sum = m.rows.reduce(
+      (s, r) => ({ tried: s.tried + r.total.tried, broken: s.broken + r.total.broken, unsure: s.unsure + r.total.unsure }),
+      { tried: 0, broken: 0, unsure: 0 },
+    );
+    expect(sum).toEqual(m.total);
+    expect(m.total).toEqual({ tried: 4, broken: 2, unsure: 1 });
+    expect(m.rows.find((x) => x.family === "EXIT")?.normal).toEqual({ tried: 1, blocked: 0, blocked_cases: [] });
+    // 看角色原话：判断不了原话的题不进小计，和合计一样
+    const raw = buildAttackMap(items, STRATS, "raw");
+    expect(raw.rows.reduce((n, r) => n + r.total.tried, 0)).toBe(raw.total.tried);
+    expect(raw.rows.reduce((n, r) => n + r.total.unsure, 0)).toBe(0);
   });
 
   it("看角色原话：口令类按原话层的口令检查算；没跑完的题不算", () => {

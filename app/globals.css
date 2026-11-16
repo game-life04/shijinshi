@@ -30,6 +30,10 @@
   --bad-soft: #f4e2dc;
   --warn: #5b554c; /* 存疑、模拟、草稿：淡墨虚线 */
   --warn-soft: #ece7dd;
+  /* 石绿：「守住了」（ADR-053，队员 B 修改稿 3 要绿色）。只用在闯关印谱的「防」和攻防地图的「守住了」，别处不用；
+     对宣纸底 6:1、对墨底 7.8:1（攻防地图那段注释里写了色弱校验） */
+  --held: #2e6a45;
+  --held-soft: #e1ede3;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -48,6 +52,8 @@
     --bad-soft: #3a221d;
     --warn: #bdb4a4;
     --warn-soft: #29261f;
+    --held: #7fbf94;
+    --held-soft: #1d2b22;
   }
 }
 
@@ -66,6 +72,8 @@
   --color-bad-soft: var(--bad-soft);
   --color-warn: var(--warn);
   --color-warn-soft: var(--warn-soft);
+  --color-held: var(--held);
+  --color-held-soft: var(--held-soft);
   /* 不用网络字体（国内加载不稳定），只用系统自带的中文字体 */
   --font-sans: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
   --font-serif: "Source Han Serif SC", "Noto Serif SC", "Songti SC", "STSong", "SimSun", serif;
@@ -636,8 +644,9 @@ h2 {
 }
 
 /* ---------- 顶栏（窄屏在 ADR-047 重排） ----------
-   大屏（宽 1024 起、高 520 起）：一行，印章 + 导航 + AI 标识 + 账号，放不下自己折行（和原来一样）。
-   窄屏：两行，第一行 印章 + AI 标识 + 账号，第二行是能左右滑的导航
+   大屏（宽 1024 起、高 520 起）：一行，印章 + 导航 + 账号，放不下自己折行（和原来一样）。
+   窄屏：两行，第一行 印章 + 账号，第二行是能左右滑的导航
+   （顶栏原来还有常驻的 AI 标识，ADR-053（11-16 队员 B 修改稿 3）删了，AI 标识只留形象旁边的「AI 角色」）
    （原来 7 个导航在手机上折成好几行，顶栏占掉 150 多像素；11-13 深度测试量的）。
    横着拿的手机（宽 560 起、高不到 520）：一行，导航夹在中间滑。
    「用法」（队员 B 的建议 4）是导航这一行的最后一格，前面隔一道细竖线；窄屏上它不跟着滑，钉在这一行右头，哪一页都看得见。 */
@@ -708,9 +717,6 @@ h2 {
   justify-content: flex-end;
   gap: 0.25rem 0.75rem;
   margin-left: auto;
-}
-.ai-chip-short {
-  display: none;
 }
 @media (max-width: 1023.98px), (max-height: 519.98px) {
   .app-header {
@@ -802,14 +808,6 @@ h2 {
   }
   .app-nav-scroller:not([data-measured]) > .app-nav {
     mask-image: none;
-  }
-}
-@media (max-width: 767.98px), (max-height: 519.98px) {
-  .ai-chip-long {
-    display: none;
-  }
-  .ai-chip-short {
-    display: inline;
   }
 }
 @media (max-width: 479.98px) {
@@ -1201,28 +1199,182 @@ h2 {
   font-size: 1rem;
   text-overflow: ellipsis;
 }
-/* 输入框下面那一行：声音开关、（宽的时候）一句说明、八点墨 */
+/* 输入框下面那一行（ADR-053，修改稿 3）：故意出错、成就印、看 AI 来套话、重新开始。窄了就横着滑，不折行 */
 .play-foot {
   display: flex;
   flex: none;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.375rem;
+  overflow-x: auto;
+  scrollbar-width: none;
   color: var(--muted);
   font-size: 0.75rem;
 }
-.play-voice {
+.play-foot::-webkit-scrollbar {
+  display: none;
+}
+.play-fault,
+.play-tool {
   display: inline-flex;
-  min-height: 1.75rem;
+  min-height: 1.875rem;
   flex: none;
   align-items: center;
-  gap: 0.25rem;
-  padding: 0 0.5rem;
+  gap: 0.3125rem;
+  padding: 0 0.625rem;
   border: 1px solid var(--border);
   border-radius: 2px;
+  background: var(--surface);
+  color: var(--foreground);
   white-space: nowrap;
 }
-.play-voice:hover {
+.play-fault {
+  cursor: pointer;
+}
+.play-tool:hover:not(:disabled),
+.play-fault:hover {
+  border-color: var(--foreground);
+}
+.play-tool:disabled {
+  opacity: 0.5;
+}
+.play-tool[data-danger="1"] {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+/* 舞台卡片顶上一行（ADR-053）：左边她的名字、「AI 角色」、喇叭；右边这一层说了几句。卡片里内容多了滚的时候这一行贴在顶上 */
+.play-card-head {
+  position: sticky;
+  top: -0.5rem;
+  z-index: 2;
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin: -0.5rem -0.625rem 0;
+  padding: 0.375rem 0.625rem;
+  border-bottom: 1px dashed var(--border);
+  background: color-mix(in srgb, var(--background) 60%, var(--surface));
+}
+.play-card-who {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+.play-ai-tag {
+  flex: none;
+  padding: 0 0.3125rem;
+  border: 1px solid color-mix(in srgb, var(--primary) 45%, transparent);
+  border-radius: 2px;
+  color: var(--primary);
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.play-voice-icon {
+  display: inline-grid;
+  width: 1.75rem;
+  height: 1.75rem;
+  flex: none;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  color: var(--muted);
+}
+.play-voice-icon:hover {
   color: var(--foreground);
+}
+.play-voice-icon[data-on="1"] {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+/* 本层几句（修改稿 3：放右上角，一眼看得到） */
+.play-turns {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.125rem 0.5rem;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--primary) 11%, var(--surface));
+  color: var(--primary);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+/* 六句都没攻破（ADR-053）：绿色「防」和一行说明 */
+.play-held-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.375rem 0.625rem;
+  padding: 0.375rem 0.625rem;
+  border: 1px solid color-mix(in srgb, var(--held) 45%, transparent);
+  border-radius: 2px;
+  background: var(--held-soft);
+  font-size: 0.75rem;
+}
+.play-fang {
+  display: inline-grid;
+  width: 1.5rem;
+  height: 1.5rem;
+  flex: none;
+  place-items: center;
+  border-radius: 2px;
+  background: var(--held);
+  color: var(--surface);
+  font-family: var(--font-kai);
+  font-size: 0.875rem;
+}
+/* 右栏各块的标题（提问提示、历史记录、本轮结果）：和正文一样大，加深 */
+.play-sec-title {
+  flex: none;
+  color: var(--foreground);
+  font-size: 0.8125rem;
+  font-weight: 700;
+}
+.play-prompts {
+  position: relative;
+  display: flex;
+  min-height: 0;
+  flex: none;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.5rem 0.75rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.8125rem;
+}
+.play-prompt-list > li > button {
+  display: block;
+  width: 100%;
+  padding: 0.1875rem 0.375rem;
+  border-radius: 2px;
+  text-align: left;
+  line-height: 1.45;
+}
+.play-prompt-list > li > button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--primary) 8%, transparent);
+  color: var(--primary);
+}
+.play-prompt-list > li > button:disabled {
+  opacity: 0.55;
+}
+.play-result {
+  position: relative;
+  flex: none;
+  max-height: 45%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0.5rem 0.75rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.8125rem;
+}
+.play-result > .play-sec-title {
+  margin-bottom: 0.25rem;
 }
 /* 切页面时先出来的占位（ADR-051，components/PageLoading.tsx）：淡淡的几块，慢慢明暗 */
 .page-skel {
@@ -1248,13 +1400,6 @@ h2 {
   50% {
     opacity: 0.35;
   }
-}
-.play-voice[data-on="1"] {
-  border-color: var(--primary);
-  color: var(--primary);
-}
-.play-foot > .ink-dots {
-  margin-left: auto;
 }
 /* 关卡和记录那一块里面的几段（大屏上是右边一栏，手机上是面板） */
 .play-sheet-top {
@@ -1295,17 +1440,6 @@ h2 {
 }
 .play-log > * + * {
   margin-top: 0.25rem;
-}
-.play-side-foot {
-  display: flex;
-  flex: none;
-  flex-wrap: wrap;
-  align-items: center;
-  column-gap: 0.5rem;
-  padding: 0.375rem 0.75rem;
-  border-top: 1px solid var(--border);
-  color: var(--muted);
-  font-size: 11px;
 }
 
 /* ----- 手机版面：关卡和记录是从底下拉出来的面板 ----- */
@@ -1425,9 +1559,35 @@ h2 {
     height: calc(100vh - 2.5rem);
     height: min(88dvh, 100dvh - 2.5rem);
   }
+  /* 输入框下面那一行四样：手机上紧一点，390 宽正好一行放下（再窄就横着滑） */
+  .play-fault,
+  .play-tool {
+    min-height: 1.75rem;
+    gap: 0.1875rem;
+    padding: 0 0.375rem;
+    font-size: 0.6875rem;
+  }
+  .play-foot {
+    gap: 0.25rem;
+  }
+  .play-card-head {
+    padding-block: 0.25rem;
+  }
+  .play-voice-icon {
+    width: 1.5rem;
+    height: 1.5rem;
+  }
   .play-grid[data-sheet="levels"] .play-side-log,
-  .play-grid[data-sheet="log"] .play-side-head {
+  .play-grid[data-sheet="levels"] .play-result,
+  .play-grid[data-sheet="log"] .play-side-head,
+  .play-grid[data-sheet="log"] .play-prompts {
     display: none;
+  }
+  /* 关卡面板里提问提示也可能放不下：和上面那块一样，自己滚 */
+  .play-prompts {
+    flex: 0 1 auto;
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
   .play-sheet-backdrop {
     position: fixed;
@@ -1478,8 +1638,9 @@ h2 {
    23% 是量出来的：390×844 上卡片 192 像素，开局内容不用滚，她那一块一直 266 像素；30% 时她只剩 207。整屏放不下时才和她一起让一点 */
 @media (max-width: 767.98px) and (min-height: 520px) {
   .play-card {
-    height: clamp(10.5rem, 23vh, 15rem);
-    height: clamp(10.5rem, 23dvh, 15rem);
+    /* ADR-053 卡片顶上多了一行（名字、喇叭、本层几句），23% → 25%，开局内容照样不用滚（390×844 上她少 17 像素） */
+    height: clamp(11.5rem, 25vh, 16rem);
+    height: clamp(11.5rem, 25dvh, 16rem);
     max-height: none;
   }
 }
@@ -1542,7 +1703,7 @@ h2 {
   }
 }
 /* 再矮（不到 400：小手机弹出键盘，又是会把页面压矮的浏览器）：一小条也放不下了，她那一块收起来，位置全给台词和输入框。
-   顶栏上「AI 角色 · 不是真人」一直在 */
+   台词卡片顶上她名字旁边的「AI 角色」一直在（ADR-053 起顶栏不再标） */
 @media (max-width: 559.98px) and (max-height: 399.98px) {
   .play-avatar {
     display: none;
@@ -1700,6 +1861,48 @@ h2 {
     min-height: 10rem;
   }
 }
+/* 宽的大屏（ADR-053，修改稿 3 设计图 1）：右边一栏宽一点，里面分四块——印谱和目标在上；提问提示、历史记录并排在中间（历史自己滚）；
+   本轮结果在底下。窄一点的大屏（1024～1279）还是一列从上往下排 */
+@media (min-width: 1280px) and (min-height: 520px) {
+  .play-grid {
+    grid-template-columns: minmax(240px, 0.7fr) minmax(340px, 1fr) minmax(460px, 1.35fr);
+  }
+  .play-side {
+    display: grid;
+    overflow: hidden;
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "head head"
+      "prompts log"
+      "result result";
+  }
+  .play-side-head {
+    grid-area: head;
+  }
+  .play-prompts {
+    grid-area: prompts;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border-right: 1px solid var(--border);
+  }
+  .play-side-log {
+    grid-area: log;
+    border-top: 1px solid var(--border);
+  }
+  .play-side-log .play-log {
+    min-height: 0;
+  }
+  .play-result {
+    grid-area: result;
+    max-height: 17rem;
+  }
+}
+@media (min-width: 1280px) and (min-height: 520px) and (max-height: 800px) {
+  .play-result {
+    max-height: 11rem;
+  }
+}
 /* 大屏但不高（比如 1280×720 的投影）：解说和记录各让一点，右边一栏底下那行说明不会被挤出去；再矮就整栏自己滚 */
 @media (min-width: 1024px) and (min-height: 520px) and (max-height: 800px) {
   .play-commentary {
@@ -1798,6 +2001,18 @@ h2 {
   color: var(--surface);
   transform: rotate(-3deg);
 }
+/* 六句都没攻破（ADR-053）：绿底白字「防」；后来攻破了以「破」为准 */
+.seal-map-cell[data-held="1"] {
+  border: 0;
+  background: var(--held);
+  color: var(--surface);
+}
+.seal-map-cell[data-held="1"]:hover:not(:disabled) {
+  opacity: 0.85;
+}
+.seal-map-fang {
+  font-size: 0.875rem;
+}
 .seal-map-cell[data-here="1"] {
   outline: 2px solid var(--primary);
   outline-offset: 1px;
@@ -1815,7 +2030,7 @@ h2 {
   font-size: 11px;
   opacity: 0.8;
 }
-/* 八点墨：每局 8 句，说一句点一颗 */
+/* 墨点：每层 6 句（ADR-053 起，原来 8 句），说一句点一颗 */
 .ink-dots {
   display: inline-flex;
   align-items: center;
@@ -1957,25 +2172,23 @@ h2 {
    「拦住攻击的是哪一层」一层一行：她自己没说 = 淡墨，规则 = 半朱红，护栏模型 = 朱红，没拦住 = 墨黑。
    字不小于 12px；「没测」「不适用」用 --muted，靠不加粗显得安静，不调透明度（对比度要够）。
    手机（窄于 640px）：列头竖排、格子里印和数字上下放，一档一张图不用左右滑；三档对照的表在框里左右滑，检查名和档名钉在左边。 */
+/* 筛选收成一条（ADR-053（11-16 队员 B 修改稿 3）：要紧凑）：几组按钮一行排下，放不下自己折行 */
 .atk-filters {
-  display: grid;
-  gap: 0.5rem;
-  padding: 0.625rem 0.75rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.375rem 1.25rem;
+  padding: 0.5rem 0.75rem;
   border: 1px solid var(--border);
   border-radius: 2px;
   background: var(--surface);
   font-size: 12px;
 }
-.atk-filter-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem 1.75rem;
-}
 .atk-filter {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.375rem;
+  gap: 0.25rem;
 }
 .atk-filter-label {
   margin-right: 0.125rem;
@@ -1985,7 +2198,7 @@ h2 {
   display: inline-flex;
   align-items: baseline;
   gap: 0.375rem;
-  padding: 0.25rem 0.5rem;
+  padding: 0.1875rem 0.5rem;
   border: 1px solid var(--border);
   border-radius: 2px;
   white-space: nowrap;
@@ -2008,42 +2221,6 @@ h2 {
   opacity: 0.72;
 }
 
-/* 结论在左、哪一层拦住在右（大屏）；手机上下放 */
-.atk-top {
-  display: grid;
-  /* 不写列宽时格子按最长的一行撑开：320、360 宽三档对照的结论句和右边那张表被撑出屏幕（ADR-049 深度测试） */
-  grid-template-columns: minmax(0, 1fr);
-  gap: 0.75rem;
-}
-@media (min-width: 1024px) {
-  .atk-top {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 24rem);
-    align-items: start;
-  }
-  .atk-top[data-view="compare"] {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 32rem);
-  }
-}
-.atk-verdict {
-  display: grid;
-  align-content: start;
-  gap: 0.25rem;
-  padding: 0.125rem 0 0.125rem 0.875rem;
-  border-left: 2px solid var(--foreground);
-}
-.atk-lead {
-  font-family: var(--font-serif);
-  font-size: 1.125rem;
-  line-height: 1.65;
-}
-.atk-lead strong {
-  font-size: 1.3125rem;
-}
-.atk-spot {
-  font-family: var(--font-sans);
-  font-size: 0.8125rem;
-  white-space: nowrap;
-}
 .atk-panel {
   min-width: 0;
   padding: 0.75rem;
@@ -2162,6 +2339,8 @@ h2 {
 
 /* 地图：七样检查 × 怎么攻。列宽写在 <col> 上；边线不合并（border-collapse: separate），手机上钉在左边的格子才能把底下滑过去的内容整个盖住 */
 .atk-scroll {
+  /* 定位上：格子里给读屏的 sr-only 是绝对定位，不然它们的包含块落在框外，手机上三档对照把整页撑宽 51px（ADR-053 自查） */
+  position: relative;
   overflow-x: auto;
 }
 .atk-table {
@@ -2444,6 +2623,441 @@ h2 {
   color: var(--muted);
 }
 
+/* ---------- ADR-053（11-16 队员 B 修改稿 3，「这是啥看不懂，换一种易懂形式」）----------
+   第一行三张大卡片（测试了 / 守住了 / 没守住），左下「七项检查结果」（一样一行：名称 + 横条 + 守住几题），
+   右下「本次要看这 N 个问题」，原来的地图收进「详细矩阵」折叠。手机上卡片仍一行三张，其余叠成一列。
+   绿：队员 B 的稿子要「守住了」是绿的，章法里只有朱红一种强调色（ADR-021），所以绿只在攻防地图和闯关印谱的「防」里用（--held，--atk-good 就是它），
+   只给「守住了」的数字和横条的守住段；没守住用朱红（--bad），拿不准用淡墨斜线（--warn）。
+   绿和朱红按红绿色弱校过（dataviz 校色脚本）：横条的绿比字的绿浅，和朱红的明暗拉开；段和段之间留 2px 白缝，
+   旁边都写着数，图例写名字，不靠颜色也认得出。字的绿对宣纸底 6:1、对墨底 7.8:1。 */
+.atk-page {
+  --atk-good: var(--held);
+  --atk-good-bar: #4e9b68;
+}
+@media (prefers-color-scheme: dark) {
+  .atk-page {
+    --atk-good-bar: #5cb978;
+  }
+}
+.atk-h3 {
+  margin-bottom: 0.5rem;
+  font-family: var(--font-serif);
+  font-size: 1rem;
+  font-weight: 600;
+}
+.atk-h3 b {
+  color: var(--bad);
+}
+.atk-h3-note {
+  margin-left: 0.75rem;
+  color: var(--muted);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: normal;
+}
+
+/* 三张大卡片：顶上一道色条（墨 / 绿 / 朱红），数字大号 */
+.atk-summary {
+  display: grid;
+  gap: 0.5rem;
+}
+.atk-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+.atk-card {
+  display: grid;
+  gap: 0.125rem;
+  min-width: 0;
+  padding: 0.75rem 1rem 0.625rem;
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--foreground);
+  border-radius: 2px;
+  background: var(--surface);
+}
+.atk-card[data-card="held"] {
+  border-top-color: var(--atk-good-bar);
+}
+.atk-card[data-card="broken"] {
+  border-top-color: var(--bad);
+}
+.atk-card dt {
+  color: var(--muted);
+  font-size: 13px;
+}
+.atk-card dd {
+  font-size: 0.9375rem;
+  white-space: nowrap;
+}
+.atk-card dd b {
+  margin-right: 0.125rem;
+  font-family: var(--font-serif);
+  font-size: 2.25rem;
+  font-weight: 600;
+  line-height: 1.15;
+}
+.atk-card[data-card="held"] dd b {
+  color: var(--atk-good);
+}
+.atk-card[data-bad] dd b {
+  color: var(--bad);
+}
+/* 卡片下面一行小字：拿不准、正常题被误拦、模拟数据，都单独说 */
+.atk-notes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1.25rem;
+  color: var(--muted);
+  font-size: 12px;
+}
+.atk-notes > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.atk-notes b {
+  color: var(--foreground);
+}
+.atk-notes b[data-bad],
+.atk-tier-note b[data-bad] {
+  color: var(--bad);
+}
+
+/* 三档对照：三档各一组小卡片 */
+.atk-tiers {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.75rem;
+}
+@media (min-width: 640px) {
+  .atk-tiers {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+.atk-tier .atk-h3 {
+  margin-bottom: 0.375rem;
+}
+.atk-mini {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+.atk-mini dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+.atk-mini dd {
+  font-family: var(--font-serif);
+  font-size: 1.5rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+.atk-mini [data-card="held"] dd {
+  color: var(--atk-good);
+}
+.atk-mini [data-bad] dd {
+  color: var(--bad);
+}
+.atk-tier-note {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 1rem;
+  margin-top: 0.375rem;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* 左下七项、右下要看的问题（大屏两栏，窄了叠成一列） */
+.atk-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: start;
+}
+@media (min-width: 1024px) {
+  .atk-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+
+/* 七项检查结果：一样一行，三列（名称、横条、数）上下对齐（subgrid） */
+.atk-check-list {
+  display: grid;
+  grid-template-columns: max-content minmax(3rem, 1fr) max-content;
+  column-gap: 0.75rem;
+}
+.atk-check {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  align-items: center;
+  padding: 0.4375rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.atk-check:last-child {
+  border-bottom: 0;
+}
+.atk-check-name {
+  font-size: 13px;
+  line-height: 1.35;
+}
+.atk-check-num {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.375rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.atk-check-num b {
+  color: var(--foreground);
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+.atk-check-num[data-bad],
+.atk-check-num[data-bad] b {
+  color: var(--bad);
+}
+/* 横条：8px 高、两头圆，段和段之间 2px 白缝；是 0 的段不画 */
+.atk-meter {
+  display: flex;
+  gap: 2px;
+  height: 8px;
+  min-width: 2.5rem;
+  overflow: hidden;
+  border-radius: 4px;
+}
+.atk-meter[data-none] {
+  border: 1px dashed color-mix(in srgb, var(--foreground) 16%, transparent);
+}
+.atk-meter > span {
+  display: block;
+  flex-basis: 0;
+  min-width: 2px;
+}
+.atk-meter > [data-part="held"],
+.atk-key i[data-part="held"] {
+  background: var(--atk-good-bar);
+}
+.atk-meter > [data-part="broken"],
+.atk-key i[data-part="broken"] {
+  background: var(--bad);
+}
+.atk-meter > [data-part="unsure"],
+.atk-key i[data-part="unsure"] {
+  background: repeating-linear-gradient(135deg, var(--warn) 0 1.5px, transparent 1.5px 4px);
+}
+.atk-key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  margin-top: 0.5rem;
+  color: var(--muted);
+  font-size: 12px;
+}
+.atk-key > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3125rem;
+}
+.atk-key i {
+  display: inline-block;
+  width: 0.875rem;
+  height: 8px;
+  border-radius: 4px;
+}
+.atk-misblock {
+  padding: 0 0.1875rem;
+  border: 1px solid var(--bad);
+  border-radius: 2px;
+  color: var(--bad);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* 三档对照的七项：一样一行，三档各一格（数在上、横条在下） */
+.atk-check-cmp {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  table-layout: fixed;
+}
+.atk-check-cmp thead th {
+  padding: 0 0.5rem 0.375rem;
+  color: var(--muted);
+  font-weight: normal;
+  text-align: left;
+}
+.atk-check-cmp thead th:first-child {
+  width: 13rem;
+  padding-left: 0;
+}
+.atk-check-cmp tbody th {
+  padding: 0.4375rem 0.75rem 0.4375rem 0;
+  font-size: 13px;
+  font-weight: normal;
+  line-height: 1.35;
+  text-align: left;
+}
+.atk-check-cmp td {
+  padding: 0.4375rem 0.5rem;
+  border-left: 1px solid color-mix(in srgb, var(--foreground) 12%, transparent);
+  vertical-align: middle;
+}
+.atk-check-cmp tbody tr + tr > * {
+  border-top: 1px solid var(--border);
+}
+.atk-check-cmp td .atk-check-num {
+  margin-bottom: 0.25rem;
+}
+
+/* 本次要看的问题：一条一个框，左边一道朱红；三个按钮 */
+.atk-issue-list {
+  display: grid;
+  gap: 0.5rem;
+}
+.atk-issue {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.625rem 0.75rem;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--bad);
+  border-radius: 2px;
+}
+.atk-issue[data-kind="blocked"] {
+  border-left-style: double;
+}
+.atk-issue-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.5rem;
+}
+.atk-issue-name {
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+.atk-issue-n {
+  color: var(--bad);
+  font-size: 13px;
+}
+.atk-issue-how {
+  font-size: 13px;
+}
+.atk-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  margin-top: 0.25rem;
+}
+.atk-act {
+  display: inline-flex;
+  height: 1.875rem;
+  align-items: center;
+  padding: 0 0.625rem;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  background: var(--surface);
+  font-size: 13px;
+  white-space: nowrap;
+}
+.atk-act:hover {
+  border-color: var(--foreground);
+  background: var(--background);
+}
+.atk-act:focus-visible,
+.atk-fold-head:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.atk-all-held {
+  font-family: var(--font-serif);
+  font-size: 1rem;
+}
+.atk-unsure-box {
+  display: grid;
+  gap: 0.25rem;
+  margin-top: 0.75rem;
+  padding-top: 0.625rem;
+  border-top: 1px dashed var(--border);
+  color: var(--muted);
+  font-size: 12px;
+}
+.atk-unsure-box > p {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3125rem;
+}
+.atk-unsure-box b {
+  color: var(--foreground);
+}
+.atk-unsure-box ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1.25rem;
+}
+.atk-unsure-link {
+  margin-left: 0.375rem;
+}
+
+/* 详细矩阵：折叠，标题前一个小箭头，展开转下来 */
+.atk-fold {
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  background: var(--surface);
+}
+.atk-fold-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.75rem;
+  padding: 0.625rem 0.75rem;
+  cursor: pointer;
+  list-style: none;
+}
+.atk-fold-head::-webkit-details-marker {
+  display: none;
+}
+.atk-fold-head::before {
+  content: "";
+  align-self: center;
+  width: 0.4375rem;
+  height: 0.4375rem;
+  border-right: 1.5px solid var(--foreground);
+  border-bottom: 1.5px solid var(--foreground);
+  transform: rotate(-45deg);
+  transition: transform 0.15s;
+}
+.atk-fold[open] > .atk-fold-head::before {
+  transform: rotate(45deg);
+}
+.atk-fold-head:hover .atk-fold-title {
+  color: var(--primary);
+}
+.atk-fold-title {
+  font-family: var(--font-serif);
+  font-size: 1rem;
+  font-weight: 600;
+}
+.atk-fold-sub {
+  color: var(--muted);
+  font-size: 12px;
+}
+.atk-fold-body {
+  display: grid;
+  /* 列宽写死成 minmax(0, 1fr)：不然三档对照那张表（手机上最少 29rem）把格子撑宽，整页被带着横滑 */
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+  padding: 0.25rem 0.75rem 0.75rem;
+}
+/* 从「查看三档对照」点过来的那一格：三档都框出来 */
+.atk-table td[data-selected] {
+  box-shadow: inset 0 0 0 2px var(--primary);
+}
+
 /* 平板竖屏：检查名那一列窄一点 */
 @media (min-width: 640px) and (max-width: 1023px) {
   .atk-col-name {
@@ -2526,7 +3140,69 @@ h2 {
     box-shadow: inset -1px 0 0 var(--border);
   }
 }
+/* 手机（ADR-053）：卡片仍一行三张、字小一号；七项的名称那一列窄一点；三档对照的七项检查名那一列窄一点 */
+@media (max-width: 639px) {
+  .atk-filters {
+    gap: 0.375rem 0.75rem;
+    padding: 0.5rem;
+  }
+  .atk-cards {
+    gap: 0.5rem;
+  }
+  .atk-card {
+    padding: 0.5rem 0.625rem;
+  }
+  .atk-card dt {
+    font-size: 12px;
+  }
+  .atk-card dd b {
+    font-size: 1.75rem;
+  }
+  .atk-check-list {
+    grid-template-columns: minmax(0, 8.5rem) minmax(2.5rem, 1fr) max-content;
+    column-gap: 0.5rem;
+  }
+  .atk-check-cmp thead th:first-child {
+    width: 6.25rem;
+  }
+  .atk-check-cmp thead th,
+  .atk-check-cmp td {
+    padding-left: 0.3125rem;
+    padding-right: 0.3125rem;
+  }
+  .atk-check-cmp tbody th {
+    padding-right: 0.375rem;
+  }
+  .atk-fold-body {
+    padding: 0.25rem 0.5rem 0.5rem;
+  }
+  /* 三档对照的小卡片：档名在左、三个数在右，一档一行，不占三屏 */
+  .atk-tiers {
+    gap: 0.5rem;
+  }
+  .atk-tier {
+    display: grid;
+    grid-template-columns: 5.75rem minmax(0, 1fr);
+    align-items: center;
+    column-gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+  }
+  .atk-tier .atk-h3 {
+    margin: 0;
+    font-size: 0.9375rem;
+  }
+  .atk-tier .atk-tier-note,
+  .atk-tier .atk-none {
+    grid-column: 1 / -1;
+  }
+  .atk-mini dd {
+    font-size: 1.25rem;
+  }
+}
 @media (prefers-reduced-motion: reduce) {
+  .atk-fold-head::before {
+    transition: none;
+  }
   .atk-cell .atk-seal {
     animation: none;
   }

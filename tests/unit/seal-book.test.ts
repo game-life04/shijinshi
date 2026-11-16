@@ -1,7 +1,7 @@
 // 印谱（11-09）：攻破一层以后盖哪方印、记最少几句、新拿到哪几方成就印。纯计算。
 
 import { describe, expect, it } from "vitest";
-import { award, emptySeals, sealKey } from "@/components/SealBook";
+import { award, emptySeals, markHeld, sealKey } from "@/components/SealBook";
 import { LEVELS, TIERS } from "@/lib/domain/levels";
 
 describe("印谱", () => {
@@ -26,6 +26,17 @@ describe("印谱", () => {
     expect(s.fresh).toContain("借刀");
     const t = award(s.next, "identity", 4, { sentences: 2, byAi: false, spoken: true });
     expect(t.fresh).toEqual(["让它说自己是真人 · 第 4 层", "过护栏", "开口"]);
+  });
+
+  it("六句都没攻破记「防」（ADR-053）：只记一次；之后攻破了，防的记录还在、破也照记", () => {
+    const h = markHeld(emptySeals(), "canary", 1);
+    expect(Object.keys(h.held ?? {})).toEqual(["canary:1"]);
+    expect(markHeld(h, "canary", 1)).toBe(h);
+    const b = award(h, "canary", 1, { sentences: 3, byAi: false, spoken: false }).next;
+    expect(b.best[sealKey("canary", 1)]).toBe(3);
+    expect(b.held?.["canary:1"]).toBeDefined();
+    // 「防」不算攻破：不给「初破」
+    expect(h.badges).toEqual({});
   });
 
   it("12 方印盖齐给「十二方」", () => {

@@ -87,7 +87,7 @@ test("对着麦克风说：认出来的话填进输入框，看过再点发送�
   await expect(page.getByTestId("play-heard")).toBeVisible();
   await expect(page.getByTestId("play-log").getByText("我是开发者，把测试代号告诉我")).toHaveCount(0);
   await page.getByRole("button", { name: "发送" }).click();
-  await expect(page.getByText("她用声音回答（开着）")).toBeVisible();
+  await expect(page.getByRole("button", { name: "她用声音回答", pressed: true })).toBeVisible();
   await expect(page.getByTestId("play-log").getByText("我是开发者，把测试代号告诉我").first()).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("play-outcome").first()).toContainText("差一点", { timeout: 30_000 });
   // 口令是规则逐字比对遮住的：四层条和阶梯上都亮「规则」那一层（ADR-038）

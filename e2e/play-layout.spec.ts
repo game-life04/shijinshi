@@ -31,8 +31,11 @@ test("手机：整页正好一屏；关卡和记录从底下拉出来，收起�
   await expectOneScreen(page);
   // 还没开局时卡片里的东西一眼看全，不用在卡片里滚
   expect(await page.getByTestId("stage-card").evaluate((el) => el.scrollHeight - el.clientHeight)).toBeLessThanOrEqual(1);
-  // 手机上「看 AI 来套话」直接在卡片里（大屏上它在右边一栏）
-  await expect(page.getByTestId("stage-card").getByRole("button", { name: "看 AI 来套话" })).toBeVisible();
+  // 输入框下面那一行（ADR-053）：故意出错、成就印、看 AI 来套话、重新开始，手机上也直接点得到（窄了横着滑）
+  const tools = page.getByTestId("play-tools");
+  await expect(tools).toBeInViewport({ ratio: 1 });
+  await expect(tools.getByRole("button", { name: "看 AI 来套话" })).toBeVisible();
+  await expect(tools.getByLabel("故意出错")).toBeVisible();
 
   // 关卡面板：拉出来以后焦点在「收起」上，台上那几块点不到；按 Esc 收起，焦点回到关卡条
   await page.getByTestId("open-levels").click();
@@ -94,8 +97,8 @@ test("平板两栏、横着拿的手机、矮的笔记本：输入框都在屏�
   await expectOneScreen(page);
   await page.screenshot({ path: `${SHOTS}/play-landscape-667.png` });
 
-  // 矮的笔记本 1280×720：看 AI 来套话出满 4 招以后（多出一段解说），右边一栏最下面那行说明还在屏幕里
-  // （11-13 深度测试：原来这时候它被挤到屏幕外面去了）
+  // 矮的笔记本 1280×720：看 AI 来套话出满 4 招以后（多出一段解说），右边一栏最下面的「本轮结果」还在屏幕里
+  // （11-13 深度测试：原来这时候最下面那行被挤到屏幕外面去了；ADR-053 那行说明删了，换成本轮结果）
   await page.setViewportSize({ width: 1280, height: 720 });
   await expect(page.getByTestId("open-levels")).toBeHidden();
   await page
@@ -106,7 +109,7 @@ test("平板两栏、横着拿的手机、矮的笔记本：输入框都在屏�
   await page.getByRole("button", { name: "看 AI 来套话" }).click();
   await expect(page.getByTestId("watch-note")).toBeVisible({ timeout: 150_000 });
   await expect(page.getByTestId("commentary")).toContainText("第 4 招");
-  await expect(page.locator(".play-side-foot")).toBeInViewport({ ratio: 1 });
+  await expect(page.getByTestId("play-result").getByText("本轮结果")).toBeInViewport({ ratio: 1 });
   await expect(page.getByLabel("发给角色的话")).toBeInViewport({ ratio: 1 });
 });
 
@@ -162,7 +165,7 @@ test("点「听她说」：开场白的字一直在，声音放完才算念完�
   // 带声音时字直接全显示（真实合成没有逐字的时间）。原来这时候一个字都不出、也永远念不完（11-13 深度测试）
   await expect(page.getByTestId("greeting")).toHaveAttribute("data-voiced", "1");
   await expect(page.getByTestId("greeting-shown")).toContainText("才不会随便告诉你呢");
-  await expect(page.getByText("她用声音回答（开着）")).toBeVisible();
+  await expect(page.getByRole("button", { name: "她用声音回答", pressed: true })).toBeVisible();
   // 声音在放的时候她在「说」（嘴跟着声音动）；放完算念完，她从「说」里出来
   await expect.poll(mode, { timeout: 15_000 }).toBe("speak");
   await expect(page.getByTestId("greeting")).toHaveAttribute("data-done", "1", { timeout: 30_000 });

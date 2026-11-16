@@ -68,12 +68,13 @@ export const SPEECH_LIMITS = {
 };
 
 /**
- * 能不能用「连着听」：安卓上的 Chrome 连着听时，后一段结果会带上前面的全文（老毛病，复查提醒），拼出来会重复。
- * 安卓上改成一段一段地听（continuous = false），靠 SpeechSession 里「浏览器停了就重开」接着听，用起来一样。
+ * 能不能用「连着听」：安卓上的 Chrome 连着听时，后一段结果会带上前面的全文（老毛病，复查提醒），拼出来会重复；
+ * 11-16 队员 B 说电脑上也「识别不了了」（换成连着听以后），所以现在哪里都不用连着听。
  */
 export function continuousOk(): boolean {
-  if (typeof navigator === "undefined") return true;
-  return !/Android/i.test(navigator.userAgent);
+  // ADR-053（11-16 队员 B 修改稿 3：「语音识别不了了」）：一律一段一段地听（每段是原来那种「说一句就停」，ADR-051 以前她用着是好的），
+  // 靠「浏览器停了就重开」接着听，长句、停顿照样不断；连着听只在单元测试里还会用到（SpeechSession 的参数）
+  return false;
 }
 
 export type SpeechState = "listening" | "finishing" | "idle";

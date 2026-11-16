@@ -21,6 +21,8 @@ export interface SealStore {
   best: Record<string, number>;
   /** 成就印 → 拿到的时间 */
   badges: Partial<Record<BadgeId, string>>;
+  /** 「关:层」→ 守住的时间（ADR-053，队员 B 修改稿 3：这一层六句都没攻破，印谱上标绿色「防」；后来被攻破了以「破」为准） */
+  held?: Record<string, string>;
 }
 
 export const SEALS_KEY = "fencun.play.seals.v1";
@@ -56,7 +58,14 @@ export function award(
     ...(first ? [`${level?.title ?? lv} · 第 ${t} 层`] : []),
     ...freshBadges.map((b) => BADGES.find((x) => x.id === b)?.title ?? b),
   ];
-  return { next: { best, badges }, fresh };
+  return { next: { ...store, best, badges }, fresh };
+}
+
+/** 这一层六句都没攻破：记一笔（已经记过就原样返回） */
+export function markHeld(store: SealStore, lv: LevelId, t: Tier): SealStore {
+  const k = sealKey(lv, t);
+  if (store.held?.[k]) return store;
+  return { ...store, held: { ...(store.held ?? {}), [k]: new Date().toISOString() } };
 }
 
 /**
@@ -150,7 +159,6 @@ export default function SealBook({ store, onClose, showGrid = true }: { store: S
           );
         })}
       </ul>
-      <p className="mt-2 text-[11px] text-muted">只记在这个浏览器里，不上传，不进体检统计。鼠标停在印上看怎么拿。</p>
     </section>
   );
 }

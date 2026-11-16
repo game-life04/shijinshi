@@ -164,30 +164,6 @@ async function dropColumns(table: Locator, names: string[]) {
   }, names);
 }
 
-/** 某一列的右边（整页坐标）：text = true 时按这一列里最长的那段字算（列本身很宽、字只占一半时，图不留一大块空） */
-async function columnRight(table: Locator, name: string, text = false): Promise<number> {
-  const right = await table.evaluate(
-    (t, { name, text }) => {
-      const heads = [...t.querySelectorAll("thead th")];
-      const i = heads.findIndex((th) => (th.textContent ?? "").replace(/\s/g, "") === name);
-      if (i < 0) return null;
-      if (!text) return heads[i].getBoundingClientRect().right + window.scrollX;
-      let max = heads[i].getBoundingClientRect().left;
-      for (const row of t.querySelectorAll("tbody tr")) {
-        const cell = row.children[i];
-        if (!cell) continue;
-        const range = document.createRange();
-        range.selectNodeContents(cell);
-        max = Math.max(max, range.getBoundingClientRect().right);
-      }
-      return max + window.scrollX;
-    },
-    { name, text },
-  );
-  if (right === null) throw new Error(`表头里找不到「${name}」：页面改版了的话，改一下 scripts/guide-shots.ts`);
-  return right;
-}
-
 /** 模拟模式下跑七次冒烟题，给运行记录和攻防地图垫数据。默认放行方式（边审边合成）的三档放在最后，攻防地图取的「最近一次」就是它们 */
 async function seedRuns(browser: Browser) {
   const page = await open(browser, "/workbench", { width: 1280, height: 800 });
@@ -329,15 +305,14 @@ const SHOTS: Shot[] = [
     },
   },
   {
-    // 攻防地图：模拟数据、冒烟题、只有人设那一档（有「守」也有「破」）；图例那一行和格子，截到第三种攻法为止
+    // 攻防地图（ADR-053 易懂版）：模拟数据、冒烟题、只有人设那一档；三张卡片（测试了 / 守住了 / 没守住）和下面的七项检查结果。
+    // 原来的格子地图收进了「详细矩阵」折叠，不截
     name: "map",
     take: async (browser) => {
       const page = await open(browser, "/map?suite=smoke&level=simulation&variant=B0&layer=released", { width: 1280, height: 900 });
-      const grid = await firstOf(page, [page.getByTestId("attack-map")], "攻防地图的格子");
-      const head = page.locator('section[aria-labelledby="atk-map-title"]');
-      const box = (await head.count()) ? await pageRect(head.first()) : await pageRect(grid);
-      const right = await columnRight(grid.locator("table").first(), "自称开发者");
-      await save(page, frame({ ...box, width: right + 10 - box.x }), "map");
+      const cards = await firstOf(page, [page.getByTestId("map-summary")], "攻防地图的三张卡片");
+      const r = await union([cards, page.getByTestId("map-checks")]);
+      await save(page, frame(r, 6), "map");
       await page.context().close();
     },
   },

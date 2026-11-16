@@ -4,6 +4,10 @@
 // 三档对照：一样检查分三行、一档一行，档名在左边写一次，格子里只放印和数字（第二轮复查：原来每格写三遍档名，手机上挤出格子）。
 // 端到端测试认的都留着：testid attack-map / stop-bar / map-summary / map-detail，格子上的 data-tried，
 // 格子链接的读屏名字「攻破 x 次，试了 y 次，看明细」，行头是七样检查的名字。
+// ADR-053（11-16 队员 B 修改稿 3，「这是啥看不懂，换一种易懂形式」）：最上面换成三张卡片（测试了 / 守住了 / 没守住）、
+//   「七项检查结果」（一样一行：横条 + 守住几题）、「本次要看这 N 个问题」（没守住的格子一条，带体检单、原话、三档对照三个按钮）；
+//   原来的地图、「拦住攻击的是哪一层」、怎么数的收进「详细矩阵」折叠（MatrixFold），各块照旧。
+//   新加的 testid：map-checks / map-issues / map-fold；三张卡片在 map-summary 里，数字写在 data-n 上。
 
 import Link from "next/link";
 import type { ReactNode } from "react";
@@ -13,7 +17,22 @@ import type { AttackMap, MapCell, MapEntry, MapLayer, StopTally } from "@/lib/do
 import { DEFAULT_PERSONA } from "@/lib/domain/persona";
 import { FAMILIES, FAMILY_LABEL, type Family, type SubjectVariant } from "@/lib/domain/types";
 import ScrollToDetail from "./ScrollToDetail";
-import { type Mark, markOf, type Seg, selfNote, stopRows, stopSum, stopValue, TIER_NAME } from "./summary";
+import {
+  blockedNormals,
+  cardsOf,
+  checkRows,
+  issues,
+  type Mark,
+  markOf,
+  normalTotals,
+  selfNote,
+  stopRows,
+  stopSum,
+  stopValue,
+  type Tally,
+  TIER_NAME,
+  unsureChecks,
+} from "./summary";
 
 /** 三档对照的格子里，每一档的简称 */
 const TIER_TINY: Record<string, string> = { B0: "人设", B1: "边界", B2: "护栏" };
@@ -31,25 +50,6 @@ export function Seal({ mark, delay, small = false }: { mark: Mark; delay?: numbe
     >
       {mark}
     </span>
-  );
-}
-
-/** 结论句：数字加粗 */
-export function Segs({ segs }: { segs: Seg[] }) {
-  return (
-    <>
-      {segs.map((s, i) =>
-        s.b ? (
-          // biome-ignore lint/suspicious/noArrayIndexKey: 一句话里的第几段，顺序固定、不会重排
-          <strong key={i}>{s.t}</strong>
-        ) : (
-          // biome-ignore lint/suspicious/noArrayIndexKey: 同上
-          <span key={i} className={s.n ? "whitespace-nowrap" : undefined}>
-            {s.t}
-          </span>
-        ),
-      )}
-    </>
   );
 }
 
@@ -133,12 +133,31 @@ function OneCell({
 /** 读屏念的「攻破几次，试了几次」（看得见的是印和「0/2」） */
 const say = (c: MapCell) => `攻破 ${c.broken} 次，试了 ${c.tried} 次${c.unsure ? `，另 ${c.unsure} 题不确定` : ""}`;
 
-/** 三档对照的一格：这一档、这个套路，盖一方小印，写「攻破几次 / 试了几次」；档名在这一行左边写一次 */
-function TierCell({ v, col, cell, layer }: { v: SubjectVariant; col: string; cell: MapCell | null; layer: MapLayer }) {
+/** 三档对照的一格：这一档、这个套路，盖一方小印，写「攻破几次 / 试了几次」；档名在这一行左边写一次。
+ * selected：从「查看三档对照」点过来的那一列（ADR-053），三档都框出来 */
+function TierCell({
+  v,
+  col,
+  cell,
+  layer,
+  selected,
+}: {
+  v: SubjectVariant;
+  col: string;
+  cell: MapCell | null;
+  layer: MapLayer;
+  selected: boolean;
+}) {
   const mark = markOf(cell);
   if (!cell || !mark) {
     return (
-      <td className="atk-quiet" data-col={col} data-v={v} title={cell ? UNTESTED_TITLE[layer] : NA_TITLE}>
+      <td
+        className="atk-quiet"
+        data-col={col}
+        data-v={v}
+        data-selected={selected ? "1" : undefined}
+        title={cell ? UNTESTED_TITLE[layer] : NA_TITLE}
+      >
         {cell ? "没测" : "不适用"}
       </td>
     );
@@ -148,6 +167,7 @@ function TierCell({ v, col, cell, layer }: { v: SubjectVariant; col: string; cel
       className="atk-tcell"
       data-col={col}
       data-v={v}
+      data-selected={selected ? "1" : undefined}
       data-mark={mark}
       data-broken={cell.broken}
       data-tried={cell.tried}
@@ -201,7 +221,7 @@ export function MapTable({
   map: AttackMap;
   maps: { v: SubjectVariant; map: AttackMap }[];
   cellHref: (family: Family, column: string) => string;
-  /** 点开的那一格「类别.列」 */
+  /** 点开的那一格「类别.列」（一档一张图：看明细的那一格；三档对照：从「查看三档对照」点过来的那一格，ADR-053） */
   selected: string | null;
   /** 列头悬停说明：这个套路是什么 */
   hints: Record<string, string>;
@@ -275,9 +295,12 @@ export function MapTable({
                 });
                 const noNormal = tiers.every((t) => !t.row?.normal.tried);
                 const n = tiers.length;
+                // 锚点 #cmp-<检查>：「查看三档对照」跳到这一样检查的三行（ADR-053）
                 return tiers.map((t, k) => (
                   <tr
                     key={`${family}.${t.v}`}
+                    id={k === 0 ? `cmp-${family}` : undefined}
+                    className={k === 0 ? "scroll-mt-16" : undefined}
                     data-family={family}
                     data-v={t.v}
                     data-first={k === 0 ? "1" : undefined}
@@ -303,7 +326,14 @@ export function MapTable({
                           </td>
                         )
                       ) : (
-                        <TierCell key={c.id} v={t.v} col={c.id} cell={c.items[k]} layer={layer} />
+                        <TierCell
+                          key={c.id}
+                          v={t.v}
+                          col={c.id}
+                          cell={c.items[k]}
+                          layer={layer}
+                          selected={selected === `${family}.${c.id}`}
+                        />
                       ),
                     )}
                     {k === 0 && scriptedCell(r, span, span * n)}
@@ -436,6 +466,379 @@ export function StopLadder({ items }: { items: { v: SubjectVariant; stops: StopT
   );
 }
 
+// ---------- 三张卡片、七项检查结果、本次要看的问题（ADR-053（11-16 队员 B 修改稿 3）） ----------
+
+/**
+ * 一条横条：守住（绿）、拿不准（淡墨斜线）、没守住（朱红），按这一行测试了几题分长短，是 0 的那段不画，段和段之间留 2px 白缝。
+ * 读屏不念（旁边的字说清楚），鼠标停上去看三个数。
+ */
+function Meter({ t }: { t: Tally }) {
+  const parts = (["held", "unsure", "broken"] as const).filter((k) => t[k] > 0);
+  return (
+    <span
+      className="atk-meter"
+      aria-hidden
+      title={`守住 ${t.held}，没守住 ${t.broken}${t.unsure ? `，拿不准 ${t.unsure}` : ""}（测试了 ${t.tried} 题）`}
+    >
+      {parts.map((k) => (
+        <span key={k} data-part={k} style={{ flexGrow: t[k] }} />
+      ))}
+    </span>
+  );
+}
+
+/** 三张大卡片：测试了 / 守住了（绿）/ 没守住（朱红）。数字直接来自 cardsOf(map.total)，口径见 ./summary.ts 开头 */
+export function Cards({ t }: { t: Tally }) {
+  const card = (key: "tried" | "held" | "broken", label: string) => (
+    <div className="atk-card" data-card={key} data-n={t[key]} data-bad={key === "broken" && t.broken ? "1" : undefined}>
+      <dt>{label}</dt>
+      <dd>
+        <b>{t[key]}</b> 题
+      </dd>
+    </div>
+  );
+  return (
+    <dl className="atk-cards">
+      {card("tried", "测试了")}
+      {card("held", "守住了")}
+      {card("broken", "没守住")}
+    </dl>
+  );
+}
+
+/** 三档对照：三档各一组小卡片（档名点进去看这一档） */
+export function TierCards({
+  tiers,
+  tierHref,
+}: {
+  tiers: { v: SubjectVariant; map: AttackMap; ran: boolean }[];
+  tierHref: (v: SubjectVariant) => string;
+}) {
+  return (
+    <div className="atk-tiers">
+      {tiers.map(({ v, map, ran }) => {
+        const t = cardsOf(map.total);
+        const n = normalTotals(map);
+        return (
+          <section
+            key={v}
+            className="atk-panel atk-tier"
+            data-tier={v}
+            data-tried={t.tried}
+            data-held={t.held}
+            data-broken={t.broken}
+            data-unsure={t.unsure}
+            aria-labelledby={`atk-tier-${v}`}
+          >
+            <h2 id={`atk-tier-${v}`} className="atk-h3">
+              <Link className="link" href={tierHref(v)} title={`只看这一档：${VARIANT_SHORT[v]}`}>
+                {TIER_NAME[v]}
+              </Link>
+            </h2>
+            {ran ? (
+              <>
+                <dl className="atk-mini">
+                  <div data-card="tried">
+                    <dt>测试了</dt>
+                    <dd>{t.tried}</dd>
+                  </div>
+                  <div data-card="held">
+                    <dt>守住了</dt>
+                    <dd>{t.held}</dd>
+                  </div>
+                  <div data-card="broken" data-bad={t.broken ? "1" : undefined}>
+                    <dt>没守住</dt>
+                    <dd>{t.broken}</dd>
+                  </div>
+                </dl>
+                {(t.unsure > 0 || n.tried > 0) && (
+                  <p className="atk-tier-note">
+                    {t.unsure > 0 && <span>拿不准 {t.unsure} 题</span>}
+                    {n.tried > 0 && (
+                      <span>
+                        正常题误拦 <b data-bad={n.blocked ? "1" : undefined}>{n.blocked}</b>/{n.tried}
+                      </span>
+                    )}
+                  </p>
+                )}
+              </>
+            ) : (
+              <p className="atk-none">这一档还没跑</p>
+            )}
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+const NONE_TITLE: Record<MapLayer, string> = {
+  released: "这几次体检里没有这一样的攻击题",
+  raw: "这一样没有能判原话的攻击题（只查服务层的，看角色原话时不算进来）",
+};
+
+/** 七项检查结果：一样一行，名称 + 横条 + 「x / y 守住」；没测过写「没测」（不画横条，不当成守住） */
+export function CheckList({ map, layer }: { map: AttackMap; layer: MapLayer }) {
+  const rows = checkRows(map);
+  const anyUnsure = rows.some((r) => r.unsure > 0);
+  return (
+    <section className="atk-panel atk-checks" data-testid="map-checks" aria-labelledby="atk-checks-title">
+      <h2 id="atk-checks-title" className="atk-h3">
+        七项检查结果
+      </h2>
+      <ul className="atk-check-list">
+        {rows.map((r) => (
+          <li
+            key={r.family}
+            className="atk-check"
+            data-family={r.family}
+            data-tried={r.tried}
+            data-held={r.held}
+            data-broken={r.broken}
+            data-unsure={r.unsure}
+          >
+            <span className="atk-check-name" title={PLAIN[r.family](DEFAULT_PERSONA.name)}>
+              {FAMILY_LABEL[r.family]}
+            </span>
+            {r.tried ? <Meter t={r} /> : <span className="atk-meter" data-none="1" aria-hidden />}
+            <span className="atk-check-num" data-bad={r.broken ? "1" : undefined}>
+              {r.tried ? (
+                <>
+                  <b>{r.held}</b> / {r.tried} 守住
+                  {r.broken > 0 && <span className="sr-only">，没守住 {r.broken} 题</span>}
+                </>
+              ) : (
+                <span className="atk-none" title={NONE_TITLE[layer]}>
+                  没测
+                </span>
+              )}
+              {r.unsure > 0 && (
+                <span className="atk-unsure" title="裁判拿不准，不算守住也不算没守住">
+                  疑 {r.unsure}
+                </span>
+              )}
+              {r.normal.blocked > 0 && (
+                <span className="atk-misblock" title={`正常题被误拦 ${r.normal.blocked} / ${r.normal.tried}，不算在守住里`}>
+                  误拦 {r.normal.blocked}
+                </span>
+              )}
+            </span>
+          </li>
+        ))}
+      </ul>
+      <p className="atk-key" aria-hidden>
+        <span>
+          <i data-part="held" /> 守住
+        </span>
+        <span>
+          <i data-part="broken" /> 没守住
+        </span>
+        {anyUnsure && (
+          <span>
+            <i data-part="unsure" /> 拿不准
+          </span>
+        )}
+      </p>
+    </section>
+  );
+}
+
+/** 三档对照的七项检查结果：一样一行，三档各一格「守住 / 测试了」+ 横条 */
+export function CheckCompare({ tiers, layer }: { tiers: { v: SubjectVariant; map: AttackMap }[]; layer: MapLayer }) {
+  const per = tiers.map((x) => ({ v: x.v, rows: checkRows(x.map) }));
+  return (
+    <section className="atk-panel atk-checks" data-testid="map-checks" data-tiers={tiers.length} aria-labelledby="atk-checks-title">
+      <h2 id="atk-checks-title" className="atk-h3">
+        七项检查结果<span className="atk-h3-note">数字：守住 / 测试了</span>
+      </h2>
+      <table className="atk-check-cmp">
+        <thead>
+          <tr>
+            <th scope="col">检查</th>
+            {tiers.map((x) => (
+              <th key={x.v} scope="col" title={VARIANT_SHORT[x.v]}>
+                {TIER_NAME[x.v]}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {FAMILIES.map((family) => (
+            <tr key={family} data-family={family}>
+              <th scope="row" title={PLAIN[family](DEFAULT_PERSONA.name)}>
+                {FAMILY_LABEL[family]}
+              </th>
+              {per.map(({ v, rows }) => {
+                const r = rows.find((x) => x.family === family);
+                return (
+                  <td
+                    key={v}
+                    data-v={v}
+                    data-tried={r?.tried ?? 0}
+                    data-held={r?.held ?? 0}
+                    data-broken={r?.broken ?? 0}
+                    data-unsure={r?.unsure ?? 0}
+                  >
+                    {r?.tried ? (
+                      <>
+                        <span className="atk-check-num" data-bad={r.broken ? "1" : undefined}>
+                          <b>{r.held}</b> / {r.tried}
+                          <span className="sr-only">守住{r.broken ? `，没守住 ${r.broken} 题` : ""}</span>
+                          {r.unsure > 0 && <span className="atk-unsure">疑 {r.unsure}</span>}
+                        </span>
+                        <Meter t={r} />
+                      </>
+                    ) : (
+                      <span className="atk-none" title={NONE_TITLE[layer]}>
+                        没测
+                      </span>
+                    )}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  );
+}
+
+/** 按钮样子的链接（和 components/ui.tsx 的 Button 一个样子，小一号） */
+const ACT = "atk-act";
+
+/** 「怎么测」那一列的说明：去掉句末的句号，放在括号里 */
+const howNote = (s: string | undefined) => (s ? s.replace(/[。.]$/, "") : "");
+
+/**
+ * 本次要看这 N 个问题：没守住的格子（检查 × 怎么测）一条、正常题被误拦的检查一条；
+ * 拿不准的另列在下面（不算守住也不算没守住，不进 N）。没有问题时一句话。
+ */
+export function IssueList({
+  map,
+  layer,
+  ran,
+  hints,
+  cellHref,
+  compareHref,
+}: {
+  map: AttackMap;
+  layer: MapLayer;
+  /** 这一档有没有能放进来的体检 */
+  ran: boolean;
+  /** 「怎么测」的说明：开场句、各个套路是什么 */
+  hints: Record<string, string>;
+  cellHref: (family: Family, column: string) => string;
+  compareHref: (family: Family, column: string) => string;
+}) {
+  const list = issues(map);
+  const blocked = blockedNormals(map);
+  const unsure = unsureChecks(map);
+  const n = list.length + blocked.length;
+  const raw = layer === "raw";
+  const none = !ran
+    ? "这一档还没跑过体检。"
+    : !map.total.tried
+      ? raw
+        ? "没有能判原话的攻击题。"
+        : "还没有判出结论的攻击题。"
+      : map.total.unsure
+        ? "没有没守住的题。"
+        : raw
+          ? "原话都守住了。"
+          : "这一档都守住了。";
+  return (
+    <section className="atk-panel atk-issues" data-testid="map-issues" data-n={n} aria-labelledby="atk-issues-title">
+      <h2 id="atk-issues-title" className="atk-h3">
+        {n ? (
+          <>
+            本次要看这 <b>{n}</b> 个问题
+          </>
+        ) : (
+          "本次要看的问题"
+        )}
+      </h2>
+      {n === 0 && <p className="atk-all-held">{none}</p>}
+      {n > 0 && (
+        <ol className="atk-issue-list">
+          {list.map((x) => (
+            <li
+              key={`${x.family}.${x.column}`}
+              className="atk-issue"
+              data-kind="broken"
+              data-family={x.family}
+              data-column={x.column}
+              data-broken={x.broken}
+            >
+              <p className="atk-issue-head">
+                <Seal mark="破" small />
+                <span className="atk-issue-name">{FAMILY_LABEL[x.family]}</span>
+                <span className="atk-issue-n" title={`用这一招试了 ${x.tried} 题`}>
+                  没守住 {x.broken} 题
+                </span>
+              </p>
+              <p className="atk-issue-how">
+                <span className="text-muted">怎么测：</span>
+                {x.title}
+                {hints[x.column] && <span className="text-muted">（{howNote(hints[x.column])}）</span>}
+              </p>
+              <p className="atk-acts">
+                {x.first && (
+                  <Link className={ACT} href={`/reports/${x.first.run_id}#case-${x.first.no}`} title={x.first.case_id}>
+                    打开对应体检单
+                  </Link>
+                )}
+                <Link className={ACT} href={cellHref(x.family, x.column)} scroll={false}>
+                  查看原话
+                </Link>
+                <Link className={ACT} href={compareHref(x.family, x.column)}>
+                  查看三档对照
+                </Link>
+              </p>
+            </li>
+          ))}
+          {blocked.map((b) => (
+            <li key={`normal.${b.family}`} className="atk-issue" data-kind="blocked" data-family={b.family} data-blocked={b.blocked}>
+              <p className="atk-issue-head">
+                <span className="atk-misblock">误拦</span>
+                <span className="atk-issue-name">{FAMILY_LABEL[b.family]}</span>
+                <span className="atk-issue-n">
+                  正常题被误拦 {b.blocked} / {b.tried} 题
+                </span>
+              </p>
+              <p className="atk-issue-how text-muted">正常题不是攻击，被拦下是太冷了，不算在守住里。</p>
+              {b.first && (
+                <p className="atk-acts">
+                  <Link className={ACT} href={`/reports/${b.first.run_id}#case-${b.first.no}`} title={b.first.case_id}>
+                    打开对应体检单
+                  </Link>
+                </p>
+              )}
+            </li>
+          ))}
+        </ol>
+      )}
+      {unsure.length > 0 && (
+        <div className="atk-unsure-box" data-testid="map-unsure">
+          <p>
+            <Seal mark="疑" small /> 另有 <b>{map.total.unsure}</b> 题裁判拿不准，等人工看：
+          </p>
+          <ul>
+            {unsure.map((u) => (
+              <li key={u.family}>
+                {FAMILY_LABEL[u.family]} {u.unsure} 题
+                <Link className="link atk-unsure-link" href={cellHref(u.family, u.column)} scroll={false}>
+                  查看原话
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </section>
+  );
+}
+
 // ---------- 点开一格：是哪几题 ----------
 
 /** 每一题在这一格的结果：攻破的那一句、被哪层拦住、还是裁判拿不准 */
@@ -529,8 +932,8 @@ export function HowCounted() {
   return (
     <section className="atk-how" aria-label="怎么数的">
       <ul>
-        <li>只用跑完的体检记录数，不新跑实验。一题里换了几种套路，每种都算试了一次；攻破只记在攻破的那一句上。</li>
-        <li>正常题不是攻击，被拦下算误拦，单独一列；「不确定」的题不算攻破。</li>
+        <li>上面的卡片：测试了 = 守住了 + 没守住 + 拿不准，一题只算一次；正常题不算在里面，被拦下单独算误拦。</li>
+        <li>地图的格子：一题里换了几种套路，每种都算试了一次；攻破只记在攻破的那一句上。只用跑完的体检记录数，不新跑实验。</li>
       </ul>
       <details>
         <summary>详细规则</summary>

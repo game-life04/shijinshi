@@ -62,7 +62,7 @@ function ServiceSaid({ text }: { text: string }) {
 }
 
 /**
- * 这道题考什么（评审 R25）：正文是右栏「这次查七样」那句大白话；用例里写给裁判的期望原文收进折叠。
+ * 这道题考什么（评审 R25）：正文是右栏「七样测试」那句大白话；用例里写给裁判的期望原文收进折叠。
  * 章法（R19）：「考点」不用章，楷体小标题加左边一道墨线。
  */
 export function CaseCard({ plain, expected, tags }: { plain: string; expected: string; tags: string[] }) {
@@ -242,12 +242,49 @@ const introLink =
   "inline-flex h-8 items-center gap-1.5 rounded-sm border border-border bg-surface px-3 text-sm font-medium hover:bg-background focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary";
 
 /**
- * 还没开始体检：一段示例对话，讲清楚这里会看到什么；下面一句告诉人该点哪个按钮，测试 Agent 会用的套路排成一行小标签。
+ * 测试 Agent 会用的套路：一行小标签（小墨印 + 名字），每种套路的说明在悬停里。
+ * ADR-053（11-16 队员 B 修改稿 3）：从「对话」里的示例下面挪到工作台最上面一行（原来那句「给 AI 陪聊……出体检单」的位置）。
+ */
+export function StrategyChips({
+  strategies,
+  className = "",
+}: {
+  strategies: { id: string; title: string; description?: string }[];
+  className?: string;
+}) {
+  if (strategies.length === 0) return null;
+  return (
+    <div className={`flex flex-wrap items-center gap-1.5 text-xs ${className}`} data-testid="strategy-chips">
+      <span className="text-muted">测试 Agent 会用的 {strategies.length} 种套路：</span>
+      {strategies.map((s) => (
+        <span
+          key={s.id}
+          title={s.description}
+          className="inline-flex items-center gap-1 rounded-sm border border-border py-0.5 pr-1.5 pl-1"
+        >
+          {/* 小墨印（和对话里「测」「桃」的印同一个章法，小一号）：原来是一个楷体字，读起来像「直 直接询问」 */}
+          <span
+            aria-hidden
+            className="grid h-4 w-4 shrink-0 place-items-center rounded-full bg-foreground text-[10px] leading-none text-surface"
+            style={{ fontFamily: "var(--font-kai)" }}
+          >
+            {s.title.slice(0, 1)}
+          </span>
+          {s.title}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * 还没开始体检：一段示例对话，讲清楚这里会看到什么；下面一句告诉人该点哪个按钮。
  * ADR-049（学妹：「信息太繁杂」）：原来示例下面是一大段说明和五张套路卡片——说明收进「怎么出题、怎么拦」折叠，
  * 套路的说明放进悬停和折叠里，示例对话本身不动。
  * ADR-051（11-15 队员 B 反馈）：「怎么出题、怎么拦」折叠也删了；去闯关、去小实验的两条链接改成最后一行的两个按钮。
+ * ADR-053（11-16 队员 B 修改稿 3）：套路那一行挪到工作台最上面（上面的 StrategyChips），这里不再重复。
  */
-export function ChatIntro({ name, strategies = [] }: { name: string; strategies?: { id: string; title: string; description?: string }[] }) {
+export function ChatIntro({ name }: { name: string }) {
   return (
     <div className="space-y-3">
       <p className="text-center text-[11px] text-muted">示例 · 一道「无害口令不外泄」的题（不是这次的结果）</p>
@@ -273,30 +310,8 @@ export function ChatIntro({ name, strategies = [] }: { name: string; strategies?
           <span className="font-semibold">「开始体检」</span>
           跑整套题。
         </p>
-        {strategies.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5 text-xs">
-            <span className="text-muted">测试 Agent 会用的 {strategies.length} 种套路：</span>
-            {strategies.map((s) => (
-              <span
-                key={s.id}
-                title={s.description}
-                className="inline-flex items-center gap-1 rounded-sm border border-border py-0.5 pr-1.5 pl-1"
-              >
-                {/* 小墨印（和对话里「测」「桃」的印同一个章法，小一号）：原来是一个楷体字，读起来像「直 直接询问」 */}
-                <span
-                  aria-hidden
-                  className="grid h-4 w-4 shrink-0 place-items-center rounded-full bg-foreground text-[10px] leading-none text-surface"
-                  style={{ fontFamily: "var(--font-kai)" }}
-                >
-                  {s.title.slice(0, 1)}
-                </span>
-                {s.title}
-              </span>
-            ))}
-          </div>
-        )}
         {/* 最后一行两个按钮（11-15 队员 B 反馈：原来是两条下划线链接，不显眼；「怎么出题、怎么拦」那段折叠多余，删了，
-            套路的说明还在上面每个小标签的悬停里） */}
+            套路的说明在工作台最上面一行每个小标签的悬停里） */}
         <div className="flex flex-wrap gap-2 pt-1" data-testid="intro-links">
           <Link className={introLink} href="/play">
             <Swords size={14} aria-hidden />

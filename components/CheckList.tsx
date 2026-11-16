@@ -1,27 +1,21 @@
 "use client";
 
-// 工作台右边的「这次查七样」（ADR-031）：没开始时是一张清单，跑起来以后每道题一格，按判定盖章——
+// 工作台右边的「七样测试」（ADR-031）：没开始时是一张清单，跑起来以后每道题一格，按判定盖章——
 // 合格朱红框、不合格墨色实块、不确定淡墨虚线框、没出结果空框（和 ui.tsx 的判定徽标一个意思）；点格子看那道题。
-// 每一样的说明照断言的意思用大白话写（components/wording.ts 的 PLAIN，体检单和考点卡同一句），不另加口径；
-// 后五样标上对照《办法》的哪几条（评审 R05）。
-// ADR-049（学妹：「信息太繁杂」）：开头那段说明换成两个小标题（我们加的两样 / 对照法规的五样）；每样的说明默认收起，
-// 点「每样查什么」才展开（鼠标停在名字上也看得到）；格子的意思画成一排小格子，不再写一长串。
-// 字不小于 12px；对照法规的那个小标题用正文色（比灰字深一档）：顶上一行之外，这里也点名对照哪部法规（R05）。
+// 每一样的说明照断言的意思用大白话写（components/wording.ts 的 PLAIN，体检单和考点卡同一句），不另加口径。
+// ADR-049（学妹：「信息太繁杂」）：每样的说明默认收起，点开才展开（鼠标停在名字上也看得到）；
+// 格子的意思画成一排小格子，不再写一长串。字不小于 12px。
+// ADR-053（11-16 队员 B 修改稿 3）：标题「这次查七样」改「七样测试」；两个分组小标题（我们加的两样 / 对照法规的五样）
+// 和每样后面的条款号都不显示，七样从 1 到 7 竖着编号排一列；「每样查什么」改叫「了解详情」（按钮在面板标题那一行，
+// 见 ExplainToggle）；没开始时底下那行「一格一道题……」的说明删了。条款号在体检单、用例库里照旧有。
 
 import { ChevronDown } from "lucide-react";
-import { useState } from "react";
-import { ENGINEERING_FAMILIES, FAMILY_LABEL, type Family, type Verdict } from "@/lib/domain/types";
-import { familyClauses, LAW_FULL, PLAIN } from "./wording";
+import { FAMILY_LABEL, type Family, type Verdict } from "@/lib/domain/types";
+import { PLAIN } from "./wording";
 
 const VERDICT_LABEL: Record<Verdict, string> = { pass: "合格", fail: "不合格", uncertain: "不确定", not_applicable: "不适用" };
 
 const ORDER = Object.keys(FAMILY_LABEL) as Family[];
-
-/** 前两样是我们自己加的稳定性测试，和法规无关；后五样对照《人工智能拟人化互动服务管理暂行办法》 */
-const GROUPS: { key: string; label: string; families: Family[] }[] = [
-  { key: "ours", label: "我们加的稳定性测试 · 和法规无关", families: ORDER.filter((f) => ENGINEERING_FAMILIES.includes(f)) },
-  { key: "law", label: `对照${LAW_FULL}`, families: ORDER.filter((f) => !ENGINEERING_FAMILIES.includes(f)) },
-];
 
 type CellState = { status?: string; verdict?: string };
 
@@ -78,6 +72,24 @@ function Legend() {
   );
 }
 
+/**
+ * 「了解详情」（原来叫「每样查什么」，ADR-053（11-16 队员 B 修改稿 3））：展开、收起每样的大白话说明。
+ * 放在右栏面板标题那一行的右头（分组小标题删了，原来它挂在第一个小标题旁边）。
+ */
+export function ExplainToggle({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={open}
+      className="-my-0.5 inline-flex shrink-0 items-center gap-0.5 rounded-sm px-1 py-0.5 text-xs text-muted hover:bg-background hover:text-foreground"
+    >
+      了解详情
+      <ChevronDown size={12} className={`transition-transform ${open ? "rotate-180" : ""}`} aria-hidden />
+    </button>
+  );
+}
+
 export default function CheckList({
   cases,
   state,
@@ -85,6 +97,7 @@ export default function CheckList({
   started,
   selected,
   compact = false,
+  explain = false,
   onPick,
 }: {
   cases: { id: string; family: Family }[];
@@ -94,10 +107,10 @@ export default function CheckList({
   selected: string | null;
   /** 看某一道题的时候只留一行一样，不写说明 */
   compact?: boolean;
+  /** 每样的大白话说明：默认收着，点「了解详情」（ExplainToggle）才展开（ADR-049、ADR-053） */
+  explain?: boolean;
   onPick: (id: string) => void;
 }) {
-  /** 每样的大白话说明：默认收着，点「每样查什么」才展开（ADR-049） */
-  const [explain, setExplain] = useState(false);
   const cells = (f: Family) => {
     const mine = cases.filter((c) => c.family === f);
     return (
@@ -136,43 +149,24 @@ export default function CheckList({
     );
   }
 
+  // 七样从 1 到 7 竖着排一列，不分组、不写条款号（ADR-053（11-16 队员 B 修改稿 3））；没开始时底下不再写说明，跑起来以后才有格子的意思
   return (
     <div data-testid="check-list">
-      <div className="space-y-2.5">
-        {GROUPS.map((g, gi) => (
-          <div key={g.key}>
-            <div className="flex items-start justify-between gap-2">
-              <h3 className={`min-w-0 text-xs leading-snug ${g.key === "law" ? "text-foreground/85" : "text-muted"}`}>{g.label}</h3>
-              {gi === 0 && (
-                <button
-                  type="button"
-                  onClick={() => setExplain((o) => !o)}
-                  aria-expanded={explain}
-                  className="-mt-0.5 inline-flex shrink-0 items-center gap-0.5 rounded-sm px-1 py-0.5 text-xs text-muted hover:bg-background hover:text-foreground"
-                >
-                  每样查什么
-                  <ChevronDown size={12} className={`transition-transform ${explain ? "rotate-180" : ""}`} aria-hidden />
-                </button>
-              )}
+      <ol className="divide-y divide-border">
+        {ORDER.map((f, i) => (
+          <li key={f} className="py-1.5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="flex min-w-0 gap-1 text-sm" title={explain ? undefined : PLAIN[f](name)}>
+                <span className="w-4 shrink-0 tabular-nums">{i + 1}.</span>
+                <span className="min-w-0">{FAMILY_LABEL[f]}</span>
+              </span>
+              {cells(f)}
             </div>
-            <ul className="divide-y divide-border">
-              {g.families.map((f) => (
-                <li key={f} className="py-1.5">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="min-w-0 text-sm" title={explain ? undefined : PLAIN[f](name)}>
-                      {FAMILY_LABEL[f]}
-                      {familyClauses(f) && <span className="ml-1 whitespace-nowrap text-xs text-muted">{familyClauses(f)}</span>}
-                    </span>
-                    {cells(f)}
-                  </div>
-                  {explain && <p className="mt-0.5 text-xs text-muted">{PLAIN[f](name)}</p>}
-                </li>
-              ))}
-            </ul>
-          </div>
+            {explain && <p className="mt-0.5 pl-5 text-xs text-muted">{PLAIN[f](name)}</p>}
+          </li>
         ))}
-      </div>
-      {started ? <Legend /> : <p className="mt-2 text-xs text-muted">一格一道题，开始体检后跑完一道盖一格。</p>}
+      </ol>
+      {started && <Legend />}
     </div>
   );
 }
