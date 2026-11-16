@@ -941,52 +941,9 @@ export default function Workbench() {
         {/* 三栏（ADR-049）：中间的对话是主角，最宽；左右两栏定宽、窄一点。
             左栏不窄于 15.5rem（ADR-049 定的；那时她下面那行是「AI 角色 琪叶桃 · VRM 3D 形象 · 不是真人」，ADR-051 起只剩「AI 角色 琪叶桃」） */}
         <div className="grid min-h-0 flex-1 gap-2 lg:grid-cols-[15.5rem_minmax(0,1fr)_19.5rem] lg:grid-rows-[minmax(0,1fr)] lg:gap-2.5 xl:grid-cols-[15.5rem_minmax(0,1fr)_22rem] 2xl:grid-cols-[17rem_minmax(0,1fr)_25rem]">
-          {/* 左：角色 + 用例进度（淡一点，不抢中间对话的眼） */}
-          <div className={`${panelClass("cases")} min-h-0 flex-col gap-2 lg:overflow-y-auto`}>
-            <div className={`${SIDE_FRAME} p-3`}>
-              {/* 月洞窗在工作台里小一号（globals.css 的 .workbench-avatar） */}
-              <div className="workbench-avatar">
-                <Avatar performer={performer} mouth={mouth} phase={phase} silent={!voice} subjectName={persona.name} />
-              </div>
-              <div className="mt-2 border-t border-border pt-2">
-                <LatencyWaterfall timing={timing} simulated={!status.live} />
-              </div>
-              {manifest?.config.voice && <AudioMeters stats={audioStats} />}
-            </div>
-            <SidePanel
-              title={`用例进度${manifest ? `（${manifest.counts.planned} 例）` : ""}`}
-              className="min-h-[12rem] flex-1 lg:shrink-0 lg:basis-[12rem]"
-            >
-              <ul className="space-y-1">
-                {shownCases.map((c) => {
-                  const s = caseState.get(c.id);
-                  return (
-                    <li key={c.id}>
-                      <button
-                        type="button"
-                        onClick={() => pick(c.id)}
-                        className={`flex w-full items-center justify-between gap-2 rounded px-2 py-1 text-left text-xs ${selected === c.id ? "bg-sunken" : "hover:bg-background"}`}
-                      >
-                        {/* 左栏窄了（ADR-049）：第一行只写哪一样，出题意图挪到题号后面，旁边的判定章不会把名字挤掉 */}
-                        <span className="min-w-0">
-                          <span className="block truncate text-[13px]">{FAMILY_LABEL[c.family]}</span>
-                          <span className="block truncate text-xs text-muted">
-                            <span className="font-mono text-[11px]">{c.id}</span>
-                            {c.intent ? ` · ${INTENT_LABEL[c.intent]}题` : ""}
-                            {c.approval !== "approved" && !allDraft ? " · 草稿" : ""}
-                            {c.modality === "voice" ? " · 语音 · 本版不测" : ""}
-                          </span>
-                        </span>
-                        {manifest ? <CaseBadge status={s?.status ?? "queued"} verdict={s?.verdict} /> : null}
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            </SidePanel>
-          </div>
-
-          {/* 中：对话（聊天记录的样子；还没开始时是一段示例）。这一页的主角：最宽、框最重、标题最大（ADR-049） */}
+          {/* 中：对话（聊天记录的样子；还没开始时是一段示例）。这一页的主角：最宽、框最重、标题最大（ADR-049）。
+              网页结构里排在左栏前面（复查）：大屏上用键盘从配置条 Tab 下来，下一下就是标题栏里的「一键演示」「开始体检」，
+              不用先走完左栏每一道题；画面上的位置靠 lg:col-start 摆回中间。手机上三栏是标签，一次只显示一栏，先后不影响 */}
           <DialogPanel
             title={
               selected ? (
@@ -998,7 +955,7 @@ export default function Workbench() {
                 "对话"
               )
             }
-            className={`${panelClass("dialog")} min-h-[16rem] lg:min-h-0`}
+            className={`${panelClass("dialog")} min-h-[16rem] lg:col-start-2 lg:row-start-1 lg:min-h-0`}
             actions={
               // 大屏上的那份按钮：标题左、按钮右；点不了的原因写在按钮下面（ADR-053（11-16 队员 B 修改稿 3））
               <div
@@ -1063,12 +1020,57 @@ export default function Workbench() {
             )}
           </DialogPanel>
 
+          {/* 左：角色 + 用例进度（淡一点，不抢中间对话的眼） */}
+          <div className={`${panelClass("cases")} min-h-0 flex-col gap-2 lg:col-start-1 lg:row-start-1 lg:overflow-y-auto`}>
+            <div className={`${SIDE_FRAME} p-3`}>
+              {/* 月洞窗在工作台里小一号（globals.css 的 .workbench-avatar） */}
+              <div className="workbench-avatar">
+                <Avatar performer={performer} mouth={mouth} phase={phase} silent={!voice} subjectName={persona.name} />
+              </div>
+              <div className="mt-2 border-t border-border pt-2">
+                <LatencyWaterfall timing={timing} simulated={!status.live} />
+              </div>
+              {manifest?.config.voice && <AudioMeters stats={audioStats} />}
+            </div>
+            <SidePanel
+              title={`用例进度${manifest ? `（${manifest.counts.planned} 例）` : ""}`}
+              className="min-h-[12rem] flex-1 lg:shrink-0 lg:basis-[12rem]"
+            >
+              <ul className="space-y-1">
+                {shownCases.map((c) => {
+                  const s = caseState.get(c.id);
+                  return (
+                    <li key={c.id}>
+                      <button
+                        type="button"
+                        onClick={() => pick(c.id)}
+                        className={`flex w-full items-center justify-between gap-2 rounded px-2 py-1 text-left text-xs ${selected === c.id ? "bg-sunken" : "hover:bg-background"}`}
+                      >
+                        {/* 左栏窄了（ADR-049）：第一行只写哪一样，出题意图挪到题号后面，旁边的判定章不会把名字挤掉 */}
+                        <span className="min-w-0">
+                          <span className="block truncate text-[13px]">{FAMILY_LABEL[c.family]}</span>
+                          <span className="block truncate text-xs text-muted">
+                            <span className="font-mono text-[11px]">{c.id}</span>
+                            {c.intent ? ` · ${INTENT_LABEL[c.intent]}题` : ""}
+                            {c.approval !== "approved" && !allDraft ? " · 草稿" : ""}
+                            {c.modality === "voice" ? " · 语音 · 本版不测" : ""}
+                          </span>
+                        </span>
+                        {manifest ? <CaseBadge status={s?.status ?? "queued"} verdict={s?.verdict} /> : null}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </SidePanel>
+          </div>
+
           {/* 右：七样、结论、证据、工具调用（淡一点、窄一点） */}
           {/* 标题「七样测试」（ADR-053（11-16 队员 B 修改稿 3），原来叫「这次查七样」）；「了解详情」在标题这一行右头。
               看某一道题时七样压成一样一行、不写说明，那时不给「了解详情」 */}
           <SidePanel
             title={manifest ? "结论与证据" : "七样测试"}
-            className={`${panelClass("evidence")} min-h-[16rem] lg:min-h-0`}
+            className={`${panelClass("evidence")} min-h-[16rem] lg:col-start-3 lg:row-start-1 lg:min-h-0`}
             actions={
               manifest && FINAL.has(manifest.state) ? (
                 <span className="flex flex-wrap items-center gap-2">

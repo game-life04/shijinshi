@@ -42,7 +42,7 @@ export function safeNext(next: unknown): string {
 
 // ---------- 限流 ----------
 
-export type RateBucket = "run" | "play_start" | "play_say" | "login" | "login_fail";
+export type RateBucket = "run" | "play_start" | "play_say" | "asr" | "login" | "login_fail";
 
 interface RateRule {
   label: string;
@@ -75,6 +75,14 @@ export function rateRules(): Record<RateBucket, RateRule> {
       windowMs: HOUR,
       windowLabel: "每小时",
       perDay: envInt("RATE_PLAY_TURNS_PER_DAY", 3000),
+    },
+    // 语音转文字（ADR-054）：一次几秒钱、几百 token，主要防有人拿接口刷；一般人一句话说一次
+    asr: {
+      label: "语音转文字",
+      perClient: envInt("RATE_ASR_PER_HOUR", 120),
+      windowMs: HOUR,
+      windowLabel: "每小时",
+      perDay: envInt("RATE_ASR_PER_DAY", 3000),
     },
     login: {
       label: "登录尝试",

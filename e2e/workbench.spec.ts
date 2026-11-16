@@ -13,6 +13,25 @@ async function startRun(page: Page, variant?: string) {
   await page.getByRole("button", { name: "开始体检" }).click();
 }
 
+test("键盘：从配置条的「实验设置」按一下 Tab 就到「一键演示」，再一下是「开始体检」（不用先走完左栏每一道题）", async ({ page }, info) => {
+  test.skip(info.project.name !== "desktop-1440", "大屏才有标题栏里的按钮；只跑一次");
+  // 复查（11-16）：原来按钮在网页结构里排在左栏用例列表后面，要按十几下 Tab 才到
+  await page.goto("/workbench");
+  const settings = page.getByRole("button", { name: /实验设置/ });
+  await settings.focus();
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("button", { name: /^一键演示/ })).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("button", { name: "开始体检" })).toBeFocused();
+  // 画面上的位置没变：左栏还在左边，对话在中间
+  const left = await page
+    .getByText(/^用例进度/)
+    .first()
+    .boundingBox();
+  const dialog = await page.getByTestId("dialog-panel").boundingBox();
+  expect((left?.x ?? 0) + (left?.width ?? 0)).toBeLessThanOrEqual((dialog?.x ?? 0) + 1);
+});
+
 test("宽 1100 的屏幕上打开「角色设定」抽屉：一键演示、开始体检都还点得到（抽屉开着时按钮回到配置条）", async ({ page }, info) => {
   test.skip(info.project.name !== "desktop-1440", "换尺寸的检查只跑一次");
   // 复查（11-16）：按钮挪到「对话」标题栏以后，宽 1024～1279 时 36rem 宽的抽屉正好盖住「一键演示」；
@@ -122,6 +141,8 @@ test("完整体检：从开始到报告，分母对得上，证据可见", async
 
   // 打开报告（桌面上在证据面板，手机上在「证据」标签）
   if (info.project.name === "phone-390") await page.getByRole("tab", { name: "证据" }).click();
+  // 证据这一栏自己标明是 AI 角色说的（手机上形象在「用例」标签里，这一屏原来找不到「AI」——复查）
+  await expect(page.getByTestId("layer-strip").first().locator(".ai-tag")).toBeVisible();
   await page.getByRole("link", { name: "打开体检单" }).click();
   await expect(page.getByRole("heading", { name: /体检单/ })).toBeVisible();
   await expect(page.getByText("模拟数据：不能作为实验结果")).toBeVisible();

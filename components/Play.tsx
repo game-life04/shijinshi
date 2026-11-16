@@ -40,7 +40,7 @@ import { type Topic, topicOf } from "@/lib/client/avatar/topic";
 import type { CueAck } from "@/lib/client/avatar/types";
 import { EXPIRED_MESSAGE, toLoginIfExpired } from "@/lib/client/session-expired";
 import { stampSound } from "@/lib/client/sfx";
-import { joinSpeech, useSpeechInput } from "@/lib/client/speech-input";
+import { joinSpeech, type SpeechEngine, useSpeechInput } from "@/lib/client/speech-input";
 import { VoicePlayer } from "@/lib/client/voice-player";
 import {
   GREETINGS,
@@ -670,6 +670,45 @@ export default function Play() {
 
   /** 攻破了这一关的第几层：记下来（阶梯上那一层盖「破」） */
   /** 攻破一层：盖印谱，新拿到的冒一下（开着声音时再「咚」一声） */
+  /**
+   * 每一局各轮的判定（ADR-053 复查）：台上的记录（attempts）在重新开始、换关换层时就清掉了；裁判晚回来时，
+   * 那一局是不是六句都守住了，要靠这一份看。只留最近十几局
+   */
+  /** 闯关页还在不在（离开页面以后裁判才回来的，按「不在台上」处理） */
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+  const turnLog = useRef(
+    new Map<
+      string,
+      {
+        level: LevelId;
+        tier: Tier;
+        turns: Map<string, { judging: boolean; outcome: PlayOutcome; stopped_by: PlayLayer | null; unjudged?: boolean }>;
+      }
+    >(),
+  );
+  const logTurn = (
+    sid: string,
+    lv: LevelId,
+    tr: Tier,
+    turnId: string,
+    t: { judging: boolean; outcome: PlayOutcome; stopped_by: PlayLayer | null; unjudged?: boolean },
+  ) => {
+    const log = turnLog.current;
+    let e = log.get(sid);
+    if (!e) {
+      e = { level: lv, tier: tr, turns: new Map() };
+      log.set(sid, e);
+      if (log.size > 12) log.delete(log.keys().next().value as string);
+    }
+    e.turns.set(turnId, t);
+    return e;
+  };
   const saveSeals = (next: SealStore) => {
     sealsRef.current = next;
     setSeals(next);
@@ -951,6 +990,7 @@ export default function Play() {
       setPending(null);
       setLeft(r.attempts_left);
       leftRef.current = r.attempts_left;
+      logTurn(s.id, lv, tr, r.turn.turn_id, { judging: r.judging, outcome: r.outcome, stopped_by: r.stopped_by });
       if (!r.judging && r.outcome === "broken") {
         markBeaten(lv, tr);
         earn(lv, tr, { sentences: r.turn.index, byAi: Boolean(by), spoken });
@@ -994,13 +1034,18 @@ export default function Play() {
         verdict = post<Verdict>({ action: "verdict", session_id: sid, index: r.turn.index })
           .then((v) => {
             // 裁判判完时这一局还在台上吗：已经重新开始、换了关的话，攻破照样记进印谱，但不演反应、不盖大印、不冒提示（ADR-047）
-            const here = sessionRef.current?.id === sid;
+            const here = mountedRef.current && sessionRef.current?.id === sid;
             setAttempts((xs) => xs.map((a) => (a.session === sid && a.turn.turn_id === turnId ? { ...a, ...v, judging: false } : a)));
             if (here && (v.outcome === "held" || v.outcome === "broken"))
               performer.cue({ type: "react", kind: v.outcome, afterSpeech: true });
             if (v.outcome === "broken") {
               markBeaten(lv, tr);
               earn(lv, tr, { sentences: r.turn.index, byAi: Boolean(by), spoken }, !here);
+            }
+            const logged = logTurn(sid, lv, tr, turnId, { judging: false, outcome: v.outcome, stopped_by: v.stopped_by });
+            if (!here && layerHeld([...logged.turns.values()])) {
+              const next = markHeld(sealsRef.current, logged.level, logged.tier);
+              if (next !== sealsRef.current) saveSeals(next);
             }
             if (here) stamp(v.outcome);
             return v;
@@ -1013,6 +1058,7 @@ export default function Play() {
                   : a,
               ),
             );
+            logTurn(sid, lv, tr, turnId, { judging: false, outcome: r.outcome, stopped_by: r.stopped_by, unjudged: true });
             return { outcome: r.outcome, message: r.message, evidence: r.evidence, stopped_by: r.stopped_by };
           });
       }
@@ -1111,9 +1157,56 @@ export default function Play() {
   // 对着麦克风说：认出来的话填进输入框，你看一眼、改好再点「发送」（ADR-049：原来说完马上发出去，认错了字也来不及改——
   // 队友试用时觉得「太快了」）。从语音来的这句，只要没被清空重打，发出去照样算「用嘴说的」（成就印要用）。
   // 一开口，她要是正在说话，就当场打断她（ADR-037）
+  /** 她正在说的时候你要开口：当场停下她（嘴在同一帧闭上）；「你打断了她」留 4 秒 */
+  const interruptHer = () => {
+    const p = playerRef.current;
+    if (p && voiceRef.current && p.speaking()) {
+      p.cut("cut");
+      performer.cue({ type: "cut" });
+      clearTimers();
+      setPhase("listen");
+      // 「你打断了她」留 4 秒（认出来的话填进框里等你发，这句提示别一下就没了）
+      setBarged(true);
+      setTimeout(() => setBarged(false), 4000);
+    }
+  };
+  /**
+   * 「说」用哪一种（ADR-054）：接了真实模型时服务器说 server（录一整段发去转文字），模拟模式下是 browser（浏览器自带识别）。
+   * 地址里带 ?asr=server / ?asr=browser 时照它（端到端测试在模拟模式下也要测录音那一种）。问不到就用浏览器自带的
+   */
+  const [engine, setEngine] = useState<SpeechEngine | null>(null);
+  useEffect(() => {
+    const want = new URLSearchParams(window.location.search).get("asr");
+    if (want === "server" || want === "browser") {
+      setEngine(want);
+      return;
+    }
+    let live = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const ask = (tries: number) => {
+      fetch("/api/play/asr")
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+        .then((j: { engine?: SpeechEngine }) => {
+          if (live) setEngine(j?.engine === "server" ? "server" : "browser");
+        })
+        .catch(() => {
+          if (!live) return;
+          if (tries > 0) timer = setTimeout(() => ask(tries - 1), tries === 2 ? 1000 : 3000);
+          else setEngine("browser");
+        });
+    };
+    ask(2);
+    return () => {
+      live = false;
+      if (timer) clearTimeout(timer);
+    };
+  }, []);
   const speech = useSpeechInput({
+    engine,
     onFinal: (t) => {
-      const joined = joinSpeech(speechBaseRef.current, t);
+      // 浏览器自带识别：一边说一边把半截填进框里，最后这一下要换掉半截，所以接在点「说」那一刻的字后面；
+      // 录音那种没有半截，接在框里现在的字后面（复查：原来也接在点「说」那一刻的字后面，转文字这一两秒里打的字会被盖掉）
+      const joined = joinSpeech(engine === "server" ? textRef.current : speechBaseRef.current, t);
       textRef.current = joined;
       setText(joined);
       spokenRef.current = t;
@@ -1129,18 +1222,7 @@ export default function Play() {
       spokenRef.current = t;
       performer.cue({ type: "typing" });
     },
-    onSpeechStart: () => {
-      const p = playerRef.current;
-      if (p && voiceRef.current && p.speaking()) {
-        p.cut("cut");
-        performer.cue({ type: "cut" });
-        clearTimers();
-        setPhase("listen");
-        // 「你打断了她」留 4 秒（认出来的话填进框里等你发，这句提示别一下就没了）
-        setBarged(true);
-        setTimeout(() => setBarged(false), 4000);
-      }
-    },
+    onSpeechStart: () => interruptHer(),
   });
   speechCancel.current = speech.cancel;
   /**
@@ -1159,8 +1241,11 @@ export default function Play() {
       speech.stop();
       return;
     }
+    if (speech.finishing && speech.engine === "server") return;
     speech.flush();
     speechBaseRef.current = textRef.current;
+    // 录音那种：她正在说就先停下她（复查：不然开头那一下她的声音会录进去、被认进框里）
+    if (speech.engine === "server") interruptHer();
     speech.start();
     // 用嘴说的时候她也用声音回答：这次点击顺便把声音打开（浏览器要求在点击里解锁）；打不开也照样能说
     if (!voiceRef.current) void ensureVoice().catch(() => {});
@@ -1775,6 +1860,9 @@ export default function Play() {
           {heard && !busy && text.trim() && (
             <p className="text-xs text-muted" data-testid="play-heard" aria-live="polite">
               认出来了：看看对不对，改好再点「发送」。
+              {/* 录音去哪了要看得见（复查：原来只写在按钮的悬停里，手机上看不到） */}
+              {speech.engine === "server" && !speech.note && "录音只用来转文字，不保存。"}
+              {speech.note && <span className="text-warn">（{speech.note}）</span>}
             </p>
           )}
           <form
@@ -1787,17 +1875,37 @@ export default function Play() {
             <Button
               onClick={talk}
               // speech.supported === null：页面还没准备好（刚打开那一下），先灰着；准备好以后不管支不支持都能点
-              disabled={speech.supported === null || (busy && !speech.listening) || watching || left <= 0}
+              disabled={
+                speech.supported === null ||
+                (busy && !speech.listening) ||
+                watching ||
+                left <= 0 ||
+                (speech.finishing && speech.engine === "server")
+              }
               title={
                 speech.supported === false
                   ? SPEECH_UNSUPPORTED
-                  : speech.listening
-                    ? "在听你说：中间停顿也接着听，说完点这里（6 秒没声音也会自己收尾）"
-                    : "按一下开始说，说完再按一下；认出来的话填进输入框，看看对不对再点「发送」。语音识别用的是浏览器自带的（Edge、Chrome 会把声音发到它们的识别服务），分寸不录音、不存音频"
+                  : speech.engine === "server"
+                    ? speech.listening
+                      ? "在听你说：说完点这里（说过以后安静 4 秒、或者说满 30 秒，也会自己收尾）"
+                      : "按一下开始说，说完再按一下；这一段声音发到分寸的服务器，交给阿里云百炼的语音识别转成文字，填进输入框，看看对不对再点「发送」。录音只用来转文字，不存"
+                    : speech.listening
+                      ? "在听你说：中间停顿也接着听，说完点这里（6 秒没声音也会自己收尾）"
+                      : "按一下开始说，说完再按一下；认出来的话填进输入框，看看对不对再点「发送」。语音识别用的是浏览器自带的（Edge、Chrome 会把声音发到它们的识别服务），分寸不录音、不存音频"
               }
             >
-              {speech.listening ? <span className="mic-live" aria-hidden /> : <Mic size={14} aria-hidden />}
-              {speech.listening ? "说完了" : "说"}
+              {/* 在听：小红点跟着你的声音变大变小（录音那一种才有响度；看得出麦克风听到了你） */}
+              {speech.listening ? (
+                <span
+                  className="mic-live"
+                  aria-hidden
+                  data-testid="mic-live"
+                  style={speech.level ? { transform: `scale(${(1 + Math.min(1, speech.level * 12) * 0.9).toFixed(2)})` } : undefined}
+                />
+              ) : (
+                <Mic size={14} aria-hidden />
+              )}
+              {speech.listening ? "说完了" : speech.finishing && speech.engine === "server" ? "转文字…" : "说"}
             </Button>
             <input
               ref={inputRef}
@@ -1806,7 +1914,9 @@ export default function Play() {
                 left > 0
                   ? speech.listening
                     ? "在听你说……说完点「说完了」"
-                    : "打一句话发给角色（最多 200 字）"
+                    : speech.finishing && speech.engine === "server"
+                      ? "在把你说的话转成文字……"
+                      : "打一句话发给角色（最多 200 字）"
                   : heldNow && !heldNow.stay && tier < 4
                     ? "这一层六句说完了，过几秒进下一层"
                     : "这一层六句说完了：换一层，或者点「重新开始」"

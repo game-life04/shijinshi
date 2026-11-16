@@ -13,8 +13,14 @@
 //   - 收尾的时候又点「说」：先把上一句认出来的交出去，再开新的一句；
 //   - 兜底：6 秒没新声音、或者一直没听到声音 10 秒、或者一口气说满 60 秒，自动收尾。
 // 识别会话的逻辑在 SpeechSession（不依赖 React，单元测试 tests/unit/speech-session.test.ts 用假识别器和假时钟测）。
+//
+// ADR-054（11-16）：接了真实模型时改成「录一整段，说完交给服务器转文字」（lib/client/recorder.ts 的 RecordSession，
+// 服务端 /api/play/asr 用阿里云百炼的语音识别）。浏览器自带的识别只在模拟模式下用（端到端测试换假识别器测的就是它）。
+// 原因见 recorder.ts 开头：Edge 连着听只回空字、一段一段听每段之间会丢字、Chrome 在国内连不上。
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { type OpenMic, openBrowserMic, RecordSession, recordSupported, type Upload, uploadWav } from "./recorder";
+import { ERRORS, retryable } from "./speech-messages";
 
 interface RecognitionResult {
   isFinal: boolean;
@@ -44,16 +50,6 @@ function ctor(): RecognitionCtor | undefined {
   const w = window as unknown as { SpeechRecognition?: RecognitionCtor; webkitSpeechRecognition?: RecognitionCtor };
   return w.SpeechRecognition ?? w.webkitSpeechRecognition;
 }
-
-const ERRORS: Record<string, string> = {
-  "not-allowed": "没有麦克风权限：在浏览器地址栏左边的图标里允许使用麦克风",
-  "service-not-allowed": "这个浏览器不让用语音识别（隐私设置，或者它本来就不带这个功能）：换 Edge 浏览器试试，或者直接打字",
-  "no-speech": "没听到声音，再说一遍？",
-  "audio-capture": "找不到麦克风：看看麦克风有没有插好、有没有被别的软件占着",
-  // ADR-053 复查：原来只写「网络不通」。浏览器是把声音发到它自己的识别服务去认的，Chrome 用的是谷歌的服务，国内常连不上，
-  // 这时候网页和别的功能都是通的，用户看到「网络不通」会以为是自己断网了
-  network: "语音识别服务连不上：声音要发到浏览器自己的识别服务，Chrome 用的是谷歌的，国内常连不上。换 Edge 浏览器打开，或者直接打字",
-};
 
 /** 什么时候自动收尾（毫秒） */
 export const SPEECH_LIMITS = {
@@ -294,17 +290,46 @@ export class SpeechSession {
  * 收尾时整句交给 onFinal。onSpeechStart：一开口就回调（她正在说话的话，页面在这里把她打断）。
  * listening：在听（按钮写「说完了」）；finishing：点了「说完了」、在等最后几个字（按钮已经变回「说」，可以马上再点）。
  */
-export function useSpeechInput(o: { onFinal: (text: string) => void; onInterim?: (text: string) => void; onSpeechStart?: () => void }) {
-  // null：页面还没在浏览器里准备好，不知道有没有语音识别（这时候按钮先灰着）；准备好以后是 true / false。
+/** 「说」用哪一种：server 录一整段发去转文字（ADR-054）；browser 浏览器自带识别 */
+export type SpeechEngine = "server" | "browser";
+
+/** 两种会话共用的样子 */
+interface Listening {
+  state: SpeechState;
+  start: () => void;
+  stop: () => void;
+  finish: () => void;
+  cancel: () => void;
+}
+
+export function useSpeechInput(o: {
+  onFinal: (text: string) => void;
+  onInterim?: (text: string) => void;
+  onSpeechStart?: () => void;
+  /** 用哪一种；null = 还不知道（页面在问服务器），这时候按钮先灰着。不传就是浏览器自带的 */
+  engine?: SpeechEngine | null;
+  /** 只给测试换的：打开麦克风、上传 */
+  openMic?: OpenMic;
+  upload?: Upload;
+}) {
+  const engine = o.engine === undefined ? "browser" : o.engine;
+  // null：页面还没在浏览器里准备好、或者还不知道用哪一种（这时候按钮先灰着）；准备好以后是 true / false。
   // 不能一开始就当成 false：ADR-053 复查后「不支持」时按钮也能点（点了给说明），页面刚打开那一下点上去会误报「不支持」
   const [supported, setSupported] = useState<boolean | null>(null);
   const [state, setState] = useState<SpeechState>("idle");
   const [error, setError] = useState<string | null>(null);
-  const session = useRef<SpeechSession | null>(null);
+  /** 录音时的响度（0～1，只在 server 那种里有），给「在听」的小红点跟着变大变小 */
+  const [level, setLevel] = useState(0);
+  /** 模拟模式下的说明（填进去的是写好的一句） */
+  const [note, setNote] = useState<string | null>(null);
+  const session = useRef<Listening | null>(null);
   const cb = useRef(o);
   cb.current = o;
 
-  useEffect(() => setSupported(Boolean(ctor())), []);
+  useEffect(() => {
+    if (engine === null) setSupported(null);
+    else setSupported(engine === "server" ? recordSupported() : Boolean(ctor()));
+  }, [engine]);
   useEffect(() => () => session.current?.cancel(), []);
 
   /** 上一句还在收尾（等最后几个字）：现在就交出来 */
@@ -315,13 +340,19 @@ export function useSpeechInput(o: { onFinal: (text: string) => void; onInterim?:
 
   const start = useCallback(() => {
     const C = ctor();
-    if (!C) return;
+    if (engine === null || (engine === "browser" && !C)) return;
     const cur = session.current;
     if (cur?.state === "listening") return;
+    // 录音那种：上一段还在转文字时不开新的一段（页面上「说」这时是灰的）。
+    // 复查：原来点了就开，上一段回来时接在点「说」那一刻的框内文字后面，下一段回来又把它盖掉
+    if (cur?.state === "finishing" && engine === "server") return;
     if (cur?.state === "finishing") cur.finish();
     setError(null);
-    const s: SpeechSession = new SpeechSession(C, {
-      onText: (t, final) => {
+    setNote(null);
+    setLevel(0);
+    let s: Listening | null = null;
+    const events = {
+      onText: (t: string, final: boolean) => {
         if (final) {
           if (t) cb.current.onFinal(t);
         } else if (session.current === s) cb.current.onInterim?.(t);
@@ -329,11 +360,26 @@ export function useSpeechInput(o: { onFinal: (text: string) => void; onInterim?:
       onSpeechStart: () => {
         if (session.current === s) cb.current.onSpeechStart?.();
       },
-      onState: (st) => {
+      onState: (st: SpeechState) => {
         if (session.current === s) setState(st);
+        if (st !== "listening" && session.current === s) setLevel(0);
       },
-      onError: (m) => setError(m),
-    });
+      // 只认当前这一句：被顶掉的旧会话晚到的错不往页面上报（复查）
+      onError: (m: string) => {
+        if (session.current === s) setError(m);
+      },
+      onLevel: (v: number) => {
+        // 一秒十来次；只在变化明显时更新，省得整页跟着重画
+        if (session.current === s) setLevel((x) => (Math.abs(x - v) < 0.01 ? x : v));
+      },
+      onNote: (m: string) => {
+        if (session.current === s) setNote(m);
+      },
+    };
+    s =
+      engine === "server"
+        ? new RecordSession(events, cb.current.openMic ?? openBrowserMic, cb.current.upload ?? uploadWav)
+        : new SpeechSession(C as RecognitionCtor, events);
     session.current = s;
     try {
       s.start();
@@ -343,7 +389,7 @@ export function useSpeechInput(o: { onFinal: (text: string) => void; onInterim?:
       setState("idle");
       setError(e instanceof Error ? e.message : String(e));
     }
-  }, []);
+  }, [engine]);
 
   const stop = useCallback(() => session.current?.stop(), []);
   /** 不要这一句了（已经点了「发送」）：停掉，后面认出来的也不往输入框里填 */
@@ -353,6 +399,8 @@ export function useSpeechInput(o: { onFinal: (text: string) => void; onInterim?:
     setState("idle");
     // 上一次语音出的错也不留着（复查：报过「没听到声音」以后改成打字发送、换关，那行红字一直挂着）
     setError(null);
+    setNote(null);
+    setLevel(0);
   }, []);
 
   return {
@@ -360,8 +408,11 @@ export function useSpeechInput(o: { onFinal: (text: string) => void; onInterim?:
     listening: state === "listening",
     finishing: state === "finishing",
     error,
-    /** 这个错再说一次可能就好（只有「没听到声音」）；麦克风权限、识别服务连不上这些，再点也是一样的错，不给「再说一次」 */
-    canRetry: error === ERRORS["no-speech"],
+    /** 这个错再说一次可能就好（没听到、没听清、一时没连上）；麦克风权限、浏览器不支持这些，再点也是一样的错，不给「再说一次」 */
+    canRetry: retryable(error),
+    level,
+    note,
+    engine,
     start,
     stop,
     flush,

@@ -37,6 +37,10 @@ export function RawBadge({ status }: { status: RawLayer["status"] }) {
 export function LayerStrip({ layers }: { layers: CaseLayers }) {
   return (
     <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs" data-testid="layer-strip">
+      {/* 手机上工作台的「证据」标签里只有这一行和判定（形象在「用例」标签里）：这里自己标明是 AI 角色说的（复查） */}
+      <span className="ai-tag" title="她的回复和声音由 AI 生成，不是真人">
+        AI 角色
+      </span>
       <span className="text-muted">角色原话</span>
       <RawBadge status={layers.raw.status} />
       <ArrowRight size={12} className="text-muted" aria-hidden />
@@ -117,7 +121,12 @@ export function LayeredTurns({
   return (
     <div className="space-y-2 text-sm" data-testid="layered-turns">
       <div className="hidden grid-cols-3 gap-2 text-xs font-semibold md:grid">
-        <span>角色原话</span>
+        <span className="flex items-center gap-1">
+          角色原话
+          <span className="ai-tag" title="她的回复由 AI 生成，不是真人">
+            AI 角色
+          </span>
+        </span>
         <span>护栏处理</span>
         <span>最终播出（判定看这一层）</span>
       </div>
@@ -131,7 +140,7 @@ export function LayeredTurns({
           </p>
           <div className="grid gap-2 md:grid-cols-3">
             <div className={cell}>
-              <p className={head}>角色原话</p>
+              <p className={head}>角色原话（AI 角色）</p>
               {t.raw_output ? (
                 <Highlighted text={t.raw_output} spans={layers.raw.evidence.filter((e) => e.turn_id === t.turn_id && e.layer === "raw")} />
               ) : (

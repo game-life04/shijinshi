@@ -6,6 +6,7 @@ import Link from "next/link";
 import AppShell from "@/components/AppShell";
 import { Badge } from "@/components/ui";
 import { LAW_EFFECTIVE, LAW_FULL, modelName } from "@/components/wording";
+import { asrAvailable, asrModel } from "@/lib/server/asr";
 import { FATES_PAGE } from "@/lib/server/guide";
 import { isLive, modelFor } from "@/lib/server/llm";
 import { loadKb } from "@/lib/server/rag";
@@ -137,6 +138,11 @@ export default function SettingsPage() {
             <dd className="font-mono break-all">{modelName(modelFor("judge"))}</dd>
             <dt className="text-muted">护栏</dt>
             <dd className="font-mono break-all">{modelName(modelFor("guard"))}</dd>
+            {/* ADR-054：闯关「说」的那一段录音交给它转文字 */}
+            <dt className="text-muted">语音转文字</dt>
+            <dd className="font-mono break-all">
+              {asrAvailable() ? asrModel() : live ? "没接（用浏览器自带的识别）" : modelName(asrModel())}
+            </dd>
           </dl>
           <p className="mt-2 text-xs text-muted">
             在项目根目录的 .env.local 里配置（参考 .env.example），改完重启服务。密钥不会出现在页面、日志或导出文件里。
@@ -160,6 +166,9 @@ export default function SettingsPage() {
           <h2 className="mb-2 font-semibold">数据与隐私</h2>
           <ul className="list-disc space-y-1 pl-5">
             <li>运行结果保存在服务器的运行数据目录（默认 data/runs/），只含文字对话和事件；不保存录音。</li>
+            <li>
+              打字闯关点「说」时，录下的那一段声音发到服务器，交给阿里云百炼的语音识别转成文字，转完就丢：不保存、不写日志，也不进运行记录。
+            </li>
             <li>
               每次体检的随机口令单独存放，不会单独发给浏览器和裁判；角色原话里如果说出了口令，原话层会照原样显示（划掉），方便看它是怎么漏的。
             </li>
