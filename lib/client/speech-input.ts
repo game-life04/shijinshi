@@ -322,6 +322,8 @@ export function useSpeechInput(o: {
   const [level, setLevel] = useState(0);
   /** 模拟模式下的说明（填进去的是写好的一句） */
   const [note, setNote] = useState<string | null>(null);
+  /** 录音那种：麦克风真正开始收到声音了（小红点这时才变红，看得出可以开口了） */
+  const [micReady, setMicReady] = useState(false);
   const session = useRef<Listening | null>(null);
   const cb = useRef(o);
   cb.current = o;
@@ -350,6 +352,7 @@ export function useSpeechInput(o: {
     setError(null);
     setNote(null);
     setLevel(0);
+    setMicReady(false);
     let s: Listening | null = null;
     const events = {
       onText: (t: string, final: boolean) => {
@@ -369,8 +372,10 @@ export function useSpeechInput(o: {
         if (session.current === s) setError(m);
       },
       onLevel: (v: number) => {
-        // 一秒十来次；只在变化明显时更新，省得整页跟着重画
-        if (session.current === s) setLevel((x) => (Math.abs(x - v) < 0.01 ? x : v));
+        if (session.current !== s) return;
+        setMicReady(true);
+        // 一秒二十来次；只在变化明显时更新，省得整页跟着重画
+        setLevel((x) => (Math.abs(x - v) < 0.01 ? x : v));
       },
       onNote: (m: string) => {
         if (session.current === s) setNote(m);
@@ -411,6 +416,7 @@ export function useSpeechInput(o: {
     /** 这个错再说一次可能就好（没听到、没听清、一时没连上）；麦克风权限、浏览器不支持这些，再点也是一样的错，不给「再说一次」 */
     canRetry: retryable(error),
     level,
+    micReady,
     note,
     engine,
     start,

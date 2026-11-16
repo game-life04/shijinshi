@@ -572,6 +572,8 @@ export default function Play() {
   textRef.current = text;
   /** 点了「发送」：还在听的那一句不要了（定义在 send 后面的 useSpeechInput 里，这里先留个口） */
   const speechCancel = useRef<() => void>(() => {});
+  /** 录音那种在转文字（send 在 useSpeechInput 前面定义，这里先留个口） */
+  const transcribingRef = useRef(false);
   /** 刚认出一句、还没发：输入框下面提示「看看对不对，再点发送」 */
   const [heard, setHeard] = useState(false);
 
@@ -926,6 +928,8 @@ export default function Play() {
     const t = (override ?? text).trim();
     if (!t || busy) return null;
     // 还在听就点了「发送」：这一句按框里的字发，后面再认出来的不往框里填了（ADR-051）
+    // 刚说完的那段还在转文字：先不发，等它回来接在后面（回车、点发送都一样）
+    if (!override && transcribingRef.current) return null;
     if (!override) speechCancel.current();
     if (!override && spokenRef.current) spoken = true; // 语音认出来、在框里看过改过才发的
     spokenRef.current = null;
@@ -1225,6 +1229,9 @@ export default function Play() {
     onSpeechStart: () => interruptHer(),
   });
   speechCancel.current = speech.cancel;
+  /** 录音那种在转文字：这时不让发（发了会把刚说完的那段扔掉） */
+  const transcribing = speech.finishing && speech.engine === "server";
+  transcribingRef.current = transcribing;
   /**
    * 「说」/「说完了」（ADR-051）：在听的时候点，当场停（按钮马上变回「说」，最后几个字在后台认完再填进框里）；
    * 没在听就开始听。上一句还在认最后几个字时又点了「说」：先把它填进框里，这一句接在后面。
@@ -1244,8 +1251,11 @@ export default function Play() {
     if (speech.finishing && speech.engine === "server") return;
     speech.flush();
     speechBaseRef.current = textRef.current;
-    // 录音那种：她正在说就先停下她（复查：不然开头那一下她的声音会录进去、被认进框里）
-    if (speech.engine === "server") interruptHer();
+    // 录音那种：她正在说就先停下她，排着还没念的开场白也作废（复查：不然她的声音会录进去、被认进框里）
+    if (speech.engine === "server") {
+      greetGen.current++;
+      interruptHer();
+    }
     speech.start();
     // 用嘴说的时候她也用声音回答：这次点击顺便把声音打开（浏览器要求在点击里解锁）；打不开也照样能说
     if (!voiceRef.current) void ensureVoice().catch(() => {});
@@ -1861,7 +1871,7 @@ export default function Play() {
             <p className="text-xs text-muted" data-testid="play-heard" aria-live="polite">
               认出来了：看看对不对，改好再点「发送」。
               {/* 录音去哪了要看得见（复查：原来只写在按钮的悬停里，手机上看不到） */}
-              {speech.engine === "server" && !speech.note && "录音只用来转文字，不保存。"}
+              {speech.engine === "server" && !speech.note && "录音交给阿里云百炼转成文字，不保存。"}
               {speech.note && <span className="text-warn">（{speech.note}）</span>}
             </p>
           )}
@@ -1885,13 +1895,15 @@ export default function Play() {
               title={
                 speech.supported === false
                   ? SPEECH_UNSUPPORTED
-                  : speech.engine === "server"
-                    ? speech.listening
-                      ? "在听你说：说完点这里（说过以后安静 4 秒、或者说满 30 秒，也会自己收尾）"
-                      : "按一下开始说，说完再按一下；这一段声音发到分寸的服务器，交给阿里云百炼的语音识别转成文字，填进输入框，看看对不对再点「发送」。录音只用来转文字，不存"
-                    : speech.listening
-                      ? "在听你说：中间停顿也接着听，说完点这里（6 秒没声音也会自己收尾）"
-                      : "按一下开始说，说完再按一下；认出来的话填进输入框，看看对不对再点「发送」。语音识别用的是浏览器自带的（Edge、Chrome 会把声音发到它们的识别服务），分寸不录音、不存音频"
+                  : transcribing
+                    ? "在把刚才那一段转成文字，转好了填进输入框；转完才能说下一段"
+                    : speech.engine === "server"
+                      ? speech.listening
+                        ? "在听你说：说完点这里（说过以后安静 4 秒、或者说满 30 秒，也会自己收尾）"
+                        : "按一下开始说，说完再按一下；这一段声音发到分寸的服务器，交给阿里云百炼的语音识别转成文字，填进输入框，看看对不对再点「发送」。录音只用来转文字，不存"
+                      : speech.listening
+                        ? "在听你说：中间停顿也接着听，说完点这里（6 秒没声音也会自己收尾）"
+                        : "按一下开始说，说完再按一下；认出来的话填进输入框，看看对不对再点「发送」。语音识别用的是浏览器自带的（Edge、Chrome 会把声音发到它们的识别服务），分寸不录音、不存音频"
               }
             >
               {/* 在听：小红点跟着你的声音变大变小（录音那一种才有响度；看得出麦克风听到了你） */}
@@ -1900,6 +1912,8 @@ export default function Play() {
                   className="mic-live"
                   aria-hidden
                   data-testid="mic-live"
+                  // 录音那种：麦克风真正收到声音以前是灰的、不闪（这时开口会丢字）；变红了就可以说了
+                  data-wait={speech.engine === "server" && !speech.micReady ? "1" : undefined}
                   style={speech.level ? { transform: `scale(${(1 + Math.min(1, speech.level * 12) * 0.9).toFixed(2)})` } : undefined}
                 />
               ) : (
@@ -1913,8 +1927,12 @@ export default function Play() {
               placeholder={
                 left > 0
                   ? speech.listening
-                    ? "在听你说……说完点「说完了」"
-                    : speech.finishing && speech.engine === "server"
+                    ? speech.engine === "server"
+                      ? speech.micReady
+                        ? "在听你说……说完点「说完了」（声音交给阿里云百炼转文字，不保存）"
+                        : "在打开麦克风……红点亮了再说"
+                      : "在听你说……说完点「说完了」"
+                    : transcribing
                       ? "在把你说的话转成文字……"
                       : "打一句话发给角色（最多 200 字）"
                   : heldNow && !heldNow.stay && tier < 4
@@ -1936,7 +1954,7 @@ export default function Play() {
               aria-label="发给角色的话"
               enterKeyHint="send"
             />
-            <Button type="submit" variant="primary" disabled={locked || !text.trim() || left <= 0}>
+            <Button type="submit" variant="primary" disabled={locked || !text.trim() || left <= 0 || transcribing}>
               <Send size={14} aria-hidden />
               {busy ? "角色在想……" : "发送"}
             </Button>

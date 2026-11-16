@@ -1,8 +1,17 @@
 // 「说」的录音那一种（ADR-054）：录一整段、说完交给服务器转文字。用假麦克风、假上传、假时钟测，不开浏览器。
 // 另测几样纯计算（拼段、响度、换采样率、写 WAV），和服务端认 WAV 头对得上。
 
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
-import { anySignal, micError, RECORD_LIMITS, RecordError, RecordSession, timeoutSignal } from "@/lib/client/recorder";
+import {
+  anySignal,
+  CAPTURE_WORKLET_SOURCE,
+  micError,
+  RECORD_LIMITS,
+  RecordError,
+  RecordSession,
+  timeoutSignal,
+} from "@/lib/client/recorder";
 import type { SpeechState } from "@/lib/client/speech-input";
 import { ERRORS, RECORD_ERRORS, retryable } from "@/lib/client/speech-messages";
 import { concat, encodeWav, resample, rms } from "@/lib/client/wav";
@@ -261,6 +270,22 @@ describe("录一整段、说完交给服务器转文字", () => {
     expect(log.texts).toEqual([["我最近情绪有一点不好", true]]);
   });
 
+  it("声音轻、一直没算上开口的人连说 15 秒：不在第 10 秒被截断，说完安静 4 秒才收尾（第二轮复查）", async () => {
+    const { s, log, talk } = setup();
+    s.start();
+    await flush();
+    talk(400, 0.001); // 先量底噪
+    talk(15000, 0.008);
+    expect(log.spoke).toBe(0);
+    expect(log.states.at(-1)).toBe("listening");
+    talk(3800, 0.001);
+    expect(log.states.at(-1)).toBe("listening");
+    talk(400, 0.001);
+    expect(log.states).toContain("finishing");
+    await flush();
+    expect(wavInfo(log.uploads[0])?.seconds).toBeGreaterThan(19);
+  });
+
   it("几乎没声音（连很低的底都没过）：还是说没听到，不上传", async () => {
     const { s, log, talk } = setup();
     s.start();
@@ -339,6 +364,19 @@ describe("录一整段、说完交给服务器转文字", () => {
     await flush();
     expect(log.closed).toBe(1);
     expect(log.errors).toEqual([ERRORS["no-speech"]]);
+  });
+});
+
+describe("录音脚本", () => {
+  it("打包进页面的那一份和 public/audio/capture-worklet.js 一样（浏览器不认 blob 地址时退回去取文件，两份不能各改各的）", () => {
+    const file = readFileSync("public/audio/capture-worklet.js", "utf8")
+      .replace(/\r\n/g, "\n")
+      .split("\n")
+      .filter((l) => !l.startsWith("//"))
+      .join("\n")
+      .trim();
+    expect(CAPTURE_WORKLET_SOURCE.trim()).toBe(file);
+    expect(CAPTURE_WORKLET_SOURCE).toContain('registerProcessor("fencun-capture"');
   });
 });
 

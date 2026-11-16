@@ -80,6 +80,11 @@ export class RecordSession {
   private lastVoice = 0;
   private voiceSince: number | null = null;
   private heardAny = false;
+  /** 有声音（过了很低的底，比开口门槛低）：自动收尾看这个，不看开口门槛（复查：声音轻的人原来说到第 10 秒就被截掉） */
+  private soundAny = false;
+  private lastSound = 0;
+  /** 量出来的底噪 */
+  private floor = 0;
   private peak = 0;
   /** 开头那一小会儿各段的响度（量底噪）；量完了是 null */
   private floorLevels: number[] | null = [];
@@ -135,10 +140,15 @@ export class RecordSession {
     if (this.floorLevels) {
       this.floorLevels.push(level);
       if (this.micAt !== null && t - this.micAt >= this.limits.floorMs) {
-        const floor = Math.min(...this.floorLevels);
-        this.threshold = Math.min(this.limits.voiceRmsMax, Math.max(this.limits.voiceRmsMin, floor * 3));
+        this.floor = Math.min(...this.floorLevels);
+        this.threshold = Math.min(this.limits.voiceRmsMax, Math.max(this.limits.voiceRmsMin, this.floor * 3));
         this.floorLevels = null;
       }
+    }
+    // 有声音：底噪量出来以后，过了很低的底、又比底噪响一半以上（吵的房间里底噪本身不算）
+    if (this.floorLevels === null && level >= Math.max(this.limits.faintRms, this.floor * 1.5)) {
+      this.soundAny = true;
+      this.lastSound = t;
     }
     if (level >= this.threshold) {
       this.voiceSince ??= t;
@@ -217,7 +227,9 @@ export class RecordSession {
       if (this.state !== "listening") return;
       if (this.micAt !== null) {
         const t = this.now();
-        const quiet = this.heardAny ? t - this.lastVoice >= this.limits.silenceMs : t - this.micAt >= this.limits.noSpeechMs;
+        const active = this.heardAny || this.soundAny;
+        const last = Math.max(this.heardAny ? this.lastVoice : 0, this.soundAny ? this.lastSound : 0);
+        const quiet = active ? t - last >= this.limits.silenceMs : t - this.micAt >= this.limits.noSpeechMs;
         if (quiet || t - this.micAt >= this.limits.maxMs) {
           this.stop();
           return;
@@ -228,20 +240,71 @@ export class RecordSession {
   }
 }
 
-/** 浏览器里打开麦克风：AudioContext 要在点击里同步建（Safari 只认点击里建的），所以放在第一个 await 前面 */
-export const openBrowserMic: OpenMic = async (onChunk) => {
-  const ctx = new AudioContext();
-  let stream: MediaStream | null = null;
+/**
+ * 录音脚本（AudioWorklet）的代码：直接打包在页面里，用的时候生成一个 blob 地址交给浏览器（ADR-054 线上核对）。
+ * 原来点「说」以后才去服务器取 /audio/capture-worklet.js，线上要 3 秒左右，这段时间没在收音，点完马上开口，
+ * 头几个字就丢了（线上用 8 秒录音核对，只录进了后 5.4 秒）。public/audio/capture-worklet.js 留着同一份，
+ * 浏览器不认 blob 地址时退回去取它（tests/unit/record-session.test.ts 核对两份一样）。
+ */
+export const CAPTURE_WORKLET_SOURCE = `class FencunCapture extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.buf = new Float32Array(2048);
+    this.n = 0;
+  }
+  process(inputs) {
+    const ch = inputs[0]?.[0];
+    if (ch) {
+      let i = 0;
+      while (i < ch.length) {
+        const take = Math.min(ch.length - i, this.buf.length - this.n);
+        this.buf.set(ch.subarray(i, i + take), this.n);
+        this.n += take;
+        i += take;
+        if (this.n === this.buf.length) {
+          this.port.postMessage(this.buf);
+          this.buf = new Float32Array(2048);
+          this.n = 0;
+        }
+      }
+    }
+    return true;
+  }
+}
+registerProcessor("fencun-capture", FencunCapture);
+`;
+let workletUrl: string | null = null;
+async function loadCaptureWorklet(ctx: AudioContext): Promise<void> {
   try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-    });
+    workletUrl ??= URL.createObjectURL(new Blob([CAPTURE_WORKLET_SOURCE], { type: "text/javascript" }));
+    await ctx.audioWorklet.addModule(workletUrl);
+  } catch {
     // 录音脚本取不到（网络抖了、登录过期被跳到登录页）单独说：按规范这时抛的也是 AbortError，不能说成麦克风被占着（复查）
     try {
       await ctx.audioWorklet.addModule("/audio/capture-worklet.js");
     } catch {
       throw new RecordError(RECORD_ERRORS.load);
     }
+  }
+}
+
+/**
+ * 浏览器里打开麦克风：AudioContext 要在点击里同步建（Safari 只认点击里建的），所以放在第一个 await 前面；
+ * 要麦克风权限和装录音脚本同时做（原来一前一后）
+ */
+export const openBrowserMic: OpenMic = async (onChunk) => {
+  const ctx = new AudioContext();
+  let stream: MediaStream | null = null;
+  try {
+    const gum = navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    });
+    const load = loadCaptureWorklet(ctx);
+    // 麦克风先出错时，脚本那边的失败不再另外报（下面的 catch 只报麦克风的原因）
+    load.catch(() => {});
+    stream = await gum;
+    // 拿到了麦克风、脚本却装不上：抛出去以后下面的 catch 会把麦克风关掉，指示灯不会一直亮
+    await load;
     const src = ctx.createMediaStreamSource(stream);
     const node = new AudioWorkletNode(ctx, "fencun-capture", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
     // 接一个音量为 0 的出口到扬声器：有的浏览器不接到出口就不跑这个节点

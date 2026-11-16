@@ -48,6 +48,8 @@ test("录一整段：点「说」开始录、小红点跟着声音动，点「�
   await talk.click();
   const done = page.getByRole("button", { name: "说完了" });
   await expect(done).toBeVisible();
+  // 麦克风真正收到声音以后小红点才变红（之前是灰的，开口会丢字）
+  await expect(page.getByTestId("mic-live")).not.toHaveAttribute("data-wait", "1", { timeout: 5000 });
   // 听到声音了：小红点跟着响度变大
   await expect
     .poll(async () => page.getByTestId("mic-live").evaluate((el) => (el as HTMLElement).style.transform), { timeout: 5000 })

@@ -1428,6 +1428,17 @@ h2 {
     opacity: 0.35;
   }
 }
+/* 录音那种：麦克风还没真正收到声音（在要权限、在准备）——灰的、不闪，变红了再开口（ADR-054） */
+.mic-live[data-wait="1"] {
+  background: var(--muted);
+  animation: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mic-live {
+    /* biome-ignore lint/complexity/noImportantStyles: 缩放写在元素自己的 style 上（跟着响度变），不加 !important 盖不过 */
+    transform: none !important;
+  }
+}
 /* 关卡和记录那一块里面的几段（大屏上是右边一栏，手机上是面板） */
 .play-sheet-top {
   display: none;
