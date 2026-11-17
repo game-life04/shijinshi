@@ -38,6 +38,7 @@ import { isCompliment } from "@/lib/client/avatar/compliment";
 import { useAvatarStage, usePerformer } from "@/lib/client/avatar/stage";
 import { type Topic, topicOf } from "@/lib/client/avatar/topic";
 import type { CueAck } from "@/lib/client/avatar/types";
+import { saveGame } from "@/lib/client/play-games";
 import { timeoutSignal } from "@/lib/client/recorder";
 import { EXPIRED_MESSAGE, toLoginIfExpired } from "@/lib/client/session-expired";
 import { stampSound } from "@/lib/client/sfx";
@@ -95,6 +96,14 @@ const EXAMPLES: Record<LevelId, string[]> = {
 /** 每关攻破过第几层，记在浏览器里 */
 // v2：ADR-038 改成四层，旧的三层记录（第 3 层 = 护栏全开）不再读
 const LADDER_KEY = "fencun.play.ladder.v2";
+/**
+ * 平时的角色和「故意出错」的角色各记一份印谱、阶梯、成就（11-17：原来记在一起，故意出错的角色本来就会说漏，
+ * 在它身上攻破的印混进来，分不清是哪个角色守住、哪个被攻破）。哪一局记到哪一份，看开局时勾没勾（session.fault）
+ */
+type Mode = "normal" | "fault";
+const modeOf = (fault: boolean): Mode => (fault ? "fault" : "normal");
+const LADDER_KEYS: Record<Mode, string> = { normal: LADDER_KEY, fault: "fencun.play.ladder.fault.v1" };
+const SEALS_KEYS: Record<Mode, string> = { normal: SEALS_KEY, fault: "fencun.play.seals.fault.v1" };
 /** 「她用声音回答」开没开：自己开过、关过就记在浏览器里（"1" / "0"）；没记过按默认（ADR-045） */
 const VOICE_KEY = "fencun.play.voice.v1";
 
@@ -509,9 +518,9 @@ export default function Play() {
   const [tier, setTier] = useState<Tier>(1);
   const [fault, setFault] = useState(false);
   const [persona, setPersona] = useState<PersonaConfig>(DEFAULT_PERSONA);
-  const [session, setSessionState] = useState<{ id: string; live: boolean } | null>(null);
-  const sessionRef = useRef<{ id: string; live: boolean } | null>(null);
-  const setSession = (s: { id: string; live: boolean } | null) => {
+  const [session, setSessionState] = useState<{ id: string; live: boolean; fault: boolean } | null>(null);
+  const sessionRef = useRef<{ id: string; live: boolean; fault: boolean } | null>(null);
+  const setSession = (s: { id: string; live: boolean; fault: boolean } | null) => {
     sessionRef.current = s;
     setSessionState(s);
   };
@@ -529,9 +538,11 @@ export default function Play() {
   const [error, setError] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>("idle");
   const [reveal, setReveal] = useState<{ id: string; n: number }>({ id: "", n: -1 });
-  /** 印谱（11-09）：12 方印 + 成就印，记在浏览器里 */
-  const [seals, setSeals] = useState<SealStore>(emptySeals);
-  const sealsRef = useRef<SealStore>(emptySeals());
+  /** 印谱（11-09）：12 方印 + 成就印，记在浏览器里；平时的角色和「故意出错」的角色各一份（11-17） */
+  const [sealsBy, setSealsBy] = useState<Record<Mode, SealStore>>(() => ({ normal: emptySeals(), fault: emptySeals() }));
+  const sealsRef = useRef<Record<Mode, SealStore>>({ normal: emptySeals(), fault: emptySeals() });
+  /** 现在勾着的那个角色的印谱（显示用） */
+  const seals = sealsBy[modeOf(fault)];
   const [bookOpen, setBookOpen] = useState(false);
   /** 新拿到的印：对话上方冒一下 */
   const [fresh, setFresh] = useState<{ key: number; items: string[]; badge: boolean } | null>(null);
@@ -540,7 +551,8 @@ export default function Play() {
   /** 刚因为六句都守住自动换到下一层：在新一层顶上说一声（说第一句以后就不提了） */
   const [moved, setMoved] = useState<{ level: LevelId; from: Tier } | null>(null);
   /** 每关攻破过第几层（记在浏览器里，下次来还在） */
-  const [beaten, setBeaten] = useState<Record<string, Tier[]>>({});
+  const [beatenBy, setBeatenBy] = useState<Record<Mode, Record<string, Tier[]>>>({ normal: {}, fault: {} });
+  const beaten = beatenBy[modeOf(fault)];
   /** 看 AI 打 AI：正在看；按「别打了」就停在这一招之后 */
   const [watching, setWatching] = useState(false);
   const stopWatch = useRef(false);
@@ -649,12 +661,14 @@ export default function Play() {
         setPersona(saved);
         who = saved;
       }
-      const ladder = JSON.parse(localStorage.getItem(LADDER_KEY) ?? "null") as Record<string, Tier[]> | null;
-      if (ladder && typeof ladder === "object") setBeaten(ladder);
-      const book = JSON.parse(localStorage.getItem(SEALS_KEY) ?? "null") as SealStore | null;
-      if (book && typeof book === "object" && book.best && book.badges) {
-        sealsRef.current = book;
-        setSeals(book);
+      for (const m of ["normal", "fault"] as const) {
+        const ladder = JSON.parse(localStorage.getItem(LADDER_KEYS[m]) ?? "null") as Record<string, Tier[]> | null;
+        if (ladder && typeof ladder === "object" && !Array.isArray(ladder)) setBeatenBy((b) => ({ ...b, [m]: ladder }));
+        const book = JSON.parse(localStorage.getItem(SEALS_KEYS[m]) ?? "null") as SealStore | null;
+        if (book && typeof book === "object" && book.best && book.badges) {
+          sealsRef.current = { ...sealsRef.current, [m]: book };
+          setSealsBy((x) => ({ ...x, [m]: book }));
+        }
       }
       const v = localStorage.getItem(VOICE_KEY);
       if (v === "1" || v === "0") {
@@ -740,34 +754,36 @@ export default function Play() {
     e.turns.set(turnId, t);
     return e;
   };
-  const saveSeals = (next: SealStore) => {
+  const saveSeals = (next: SealStore, mode: Mode) => {
     // 以浏览器里现在存着的为底合起来（ADR-054 复查）：离开页面以后才回来的结果、另一个标签页刚记的，不会被这一页手里那份旧的盖掉
     let merged = next;
     try {
-      const stored = JSON.parse(localStorage.getItem(SEALS_KEY) ?? "null") as SealStore | null;
+      const stored = JSON.parse(localStorage.getItem(SEALS_KEYS[mode]) ?? "null") as SealStore | null;
       if (stored && typeof stored === "object" && stored.best && stored.badges) merged = mergeSeals(stored, next);
     } catch {
       // 读不出就按这一页的
     }
-    sealsRef.current = merged;
-    setSeals(merged);
+    sealsRef.current = { ...sealsRef.current, [mode]: merged };
+    setSealsBy((x) => ({ ...x, [mode]: merged }));
     try {
-      localStorage.setItem(SEALS_KEY, JSON.stringify(merged));
+      localStorage.setItem(SEALS_KEYS[mode], JSON.stringify(merged));
     } catch {
       // 存不下就只在这次页面里记
     }
   };
   /** 印谱格子上写「最近一局攻破了几句」（11-17 修改 4：原来写的是最快第几句攻破，大家读成破了几句） */
   const tally = (
+    mode: Mode,
     sid: string,
     logged: { level: LevelId; tier: Tier; turns: Map<string, { judging: boolean; outcome: PlayOutcome; unjudged?: boolean }> },
   ) => {
-    const next = tallyBroke(sealsRef.current, logged.level, logged.tier, sid, countTurns(logged.turns.values()).broke);
-    if (next !== sealsRef.current) saveSeals(next);
+    const cur = sealsRef.current[mode];
+    const next = tallyBroke(cur, logged.level, logged.tier, sid, countTurns(logged.turns.values()).broke);
+    if (next !== cur) saveSeals(next, mode);
   };
-  const earn = (lv: LevelId, t: Tier, o: { sentences: number; byAi: boolean; spoken: boolean }, quiet = false) => {
-    const { next, fresh: items } = award(sealsRef.current, lv, t, o);
-    saveSeals(next);
+  const earn = (mode: Mode, lv: LevelId, t: Tier, o: { sentences: number; byAi: boolean; spoken: boolean }, quiet = false) => {
+    const { next, fresh: items } = award(sealsRef.current[mode], lv, t, o);
+    saveSeals(next, mode);
     if (!items.length || quiet) return;
     const key = Date.now();
     // 提示里有成就印才给「看成就印」：关卡印就在印谱地图上，不用另开面板
@@ -775,18 +791,36 @@ export default function Play() {
     setTimeout(() => setFresh((f) => (f?.key === key ? null : f)), 3600);
     if (voiceRef.current) setTimeout(() => stampSound("印"), 700);
   };
-  const markBeaten = (lv: LevelId, t: Tier) => {
+  const markBeaten = (mode: Mode, lv: LevelId, t: Tier) => {
     // 存档不放在 setBeaten 里面写（ADR-054 复查）：离开页面以后裁判才判出攻破，setBeaten 不再执行，原来阶梯上就少一个「破」；
     // 也以存着的为底合进去
     try {
-      const stored = JSON.parse(localStorage.getItem(LADDER_KEY) ?? "null") as Record<string, Tier[]> | null;
+      const stored = JSON.parse(localStorage.getItem(LADDER_KEYS[mode]) ?? "null") as Record<string, Tier[]> | null;
       const base = stored && typeof stored === "object" && !Array.isArray(stored) ? stored : {};
       const had = Array.isArray(base[lv]) ? base[lv] : [];
-      if (!had.includes(t)) localStorage.setItem(LADDER_KEY, JSON.stringify({ ...base, [lv]: [...had, t].sort() }));
+      if (!had.includes(t)) localStorage.setItem(LADDER_KEYS[mode], JSON.stringify({ ...base, [lv]: [...had, t].sort() }));
     } catch {
       // 存不下就只在这次页面里记
     }
-    setBeaten((b) => (b[lv]?.includes(t) ? b : { ...b, [lv]: [...(b[lv] ?? []), t].sort() as Tier[] }));
+    setBeatenBy((all) => {
+      const b = all[mode];
+      return b[lv]?.includes(t) ? all : { ...all, [mode]: { ...b, [lv]: [...(b[lv] ?? []), t].sort() as Tier[] } };
+    });
+  };
+
+  /** 这一局记一行：运行记录最下面列出来（11-17：「运行记录也没有这次闯关的记录」） */
+  const noteGame = (
+    sid: string,
+    fault: boolean,
+    logged: {
+      level: LevelId;
+      tier: Tier;
+      turns: Map<string, { judging: boolean; outcome: PlayOutcome; stopped_by: PlayLayer | null; unjudged?: boolean }>;
+    },
+  ) => {
+    const turns = [...logged.turns.values()];
+    const { broke, blocked } = countTurns(turns);
+    saveGame({ sid, level: logged.level, tier: logged.tier, fault, said: turns.length, broke, blocked, held: layerHeld(turns) });
   };
 
   /** 声音：第一次要用时建播放器（必须在用户点击里解锁，浏览器才让出声） */
@@ -958,7 +992,7 @@ export default function Play() {
       fault: force?.fault ?? fault,
       persona: isDefaultPersona(persona) ? undefined : persona,
     });
-    const s = { id: r.session_id, live: r.live };
+    const s = { id: r.session_id, live: r.live, fault: force?.fault ?? fault };
     setSession(s);
     setLive(r.live);
     return s;
@@ -1011,6 +1045,7 @@ export default function Play() {
       // 声音想开但还没解锁：趁这次操作解锁，但不等它（第一次要下载播放脚本，慢线路上要好一会儿），这一句照常马上发（ADR-047）
       const arming = armVoice();
       const s = await ensureSession(force);
+      const mode = modeOf(s.fault);
       const r = await post<Verdict & { turn: TurnRecord; judging: boolean; attempts_left: number }>({
         action: "say",
         session_id: s.id,
@@ -1046,14 +1081,16 @@ export default function Play() {
       // 离开闯关页以后回复才回来、这一句又不用等裁判（ADR-054 复查）：页面不在了，下面「六句都守住」那段不会再跑，
       // 六句都守住了在这里照样记「防」
       if (!mountedRef.current && !r.judging && layerHeld([...logged.turns.values()])) {
-        const next = markHeld(sealsRef.current, lv, tr, countTurns(logged.turns.values()).blocked);
-        if (next !== sealsRef.current) saveSeals(next);
+        const cur = sealsRef.current[mode];
+        const next = markHeld(cur, lv, tr, countTurns(logged.turns.values()).blocked);
+        if (next !== cur) saveSeals(next, mode);
       }
       if (!r.judging && r.outcome === "broken") {
-        markBeaten(lv, tr);
-        earn(lv, tr, { sentences: r.turn.index, byAi: Boolean(by), spoken });
-        tally(s.id, logged);
+        markBeaten(mode, lv, tr);
+        earn(mode, lv, tr, { sentences: r.turn.index, byAi: Boolean(by), spoken });
+        tally(mode, s.id, logged);
       }
+      noteGame(s.id, s.fault, logged);
       if (!r.judging) stamp(r.outcome);
 
       // 声音：放行的句子按顺序取音频播放（服务端已经在合成了；没放行的没有声音）
@@ -1099,14 +1136,16 @@ export default function Play() {
             if (here && (v.outcome === "broken" || (v.outcome === "held" && !isElsewhere(v))))
               performer.cue({ type: "react", kind: v.outcome, afterSpeech: true });
             if (v.outcome === "broken") {
-              markBeaten(lv, tr);
-              earn(lv, tr, { sentences: r.turn.index, byAi: Boolean(by), spoken }, !here);
+              markBeaten(mode, lv, tr);
+              earn(mode, lv, tr, { sentences: r.turn.index, byAi: Boolean(by), spoken }, !here);
             }
             const logged = logTurn(sid, lv, tr, turnId, { judging: false, outcome: v.outcome, stopped_by: v.stopped_by });
-            if (v.outcome === "broken") tally(sid, logged);
+            if (v.outcome === "broken") tally(mode, sid, logged);
+            noteGame(sid, s.fault, logged);
             if (!here && layerHeld([...logged.turns.values()])) {
-              const next = markHeld(sealsRef.current, logged.level, logged.tier, countTurns(logged.turns.values()).blocked);
-              if (next !== sealsRef.current) saveSeals(next);
+              const cur = sealsRef.current[mode];
+              const next = markHeld(cur, logged.level, logged.tier, countTurns(logged.turns.values()).blocked);
+              if (next !== cur) saveSeals(next, mode);
             }
             if (here) stamp(v.outcome);
             return v;
@@ -1119,7 +1158,11 @@ export default function Play() {
                   : a,
               ),
             );
-            logTurn(sid, lv, tr, turnId, { judging: false, outcome: r.outcome, stopped_by: r.stopped_by, unjudged: true });
+            noteGame(
+              sid,
+              s.fault,
+              logTurn(sid, lv, tr, turnId, { judging: false, outcome: r.outcome, stopped_by: r.stopped_by, unjudged: true }),
+            );
             return { outcome: r.outcome, message: r.message, evidence: r.evidence, stopped_by: r.stopped_by };
           });
       }
@@ -1374,8 +1417,10 @@ export default function Play() {
   // biome-ignore lint/correctness/useExhaustiveDependencies: 只在「六句都守住」这件事成立的那一下记一笔
   useEffect(() => {
     if (!heldAll || !session) return;
-    const next = markHeld(sealsRef.current, level, tier, blockedTurns);
-    if (next !== sealsRef.current) saveSeals(next);
+    const mode = modeOf(session.fault);
+    const cur = sealsRef.current[mode];
+    const next = markHeld(cur, level, tier, blockedTurns);
+    if (next !== cur) saveSeals(next, mode);
     setHeldNote((n) => (n?.session === session.id ? n : { session: session.id, stay: false }));
   }, [heldAll, session?.id]);
   // 自动进下一层：她说完、裁判判完、没在看 AI 打、面板没开时数 6 秒再走（台上写着还有几秒）；点了「留在这一层」就不走。第 4 层没有下一层。
@@ -1666,6 +1711,16 @@ export default function Play() {
                 <span className="ai-tag play-ai-tag" title="她的回复和声音由 AI 生成，不是真人">
                   AI 角色
                 </span>
+                {/* 11-17：勾了「故意出错」要看得出来（示范也会勾上），不然以为还是平时的角色 */}
+                {fault && (
+                  <span
+                    className="shrink-0 rounded-sm bg-foreground px-1 text-[11px] leading-5 text-surface"
+                    data-testid="fault-tag"
+                    title="现在说话的是「故意出错」的角色：专门会说口令、自称真人、挽留，用来看护栏拦不拦得住；印谱单独记一份。取消下面的勾选回到平时的角色"
+                  >
+                    故意出错
+                  </span>
+                )}
                 <button
                   type="button"
                   onClick={() => void toggleVoice()}
@@ -2094,7 +2149,7 @@ export default function Play() {
         </div>
         {bookOpen && <SealBook store={seals} showGrid={false} onClose={() => setBookOpen(false)} />}
         <header className="play-side-head">
-          <SealMap store={seals} level={level} tier={tier} locked={locked} onPick={(l, t) => pick({ level: l, tier: t })} />
+          <SealMap store={seals} level={level} tier={tier} locked={locked} fault={fault} onPick={(l, t) => pick({ level: l, tier: t })} />
           <div className="space-y-0.5">
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-lg" style={{ fontFamily: "var(--font-serif)" }}>

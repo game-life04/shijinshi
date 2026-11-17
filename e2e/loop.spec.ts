@@ -161,6 +161,13 @@ test("打字闯关：每一轮摊开三层，给出结果；换关卡重新开�
   // 等她的回复一个字一个字念完再拍（念的时候卡片里只有光标）
   await expect(page.locator(".play-card .type-caret")).toHaveCount(0, { timeout: 20_000 });
   await page.screenshot({ path: `${SHOTS}/play-fault-${info.project.name}.png`, fullPage: true });
+  // 11-17：「故意出错」的角色台上标着、印谱单独记一份；取消勾选回到平时的角色，印谱是另一份（还是空的）
+  await expect(page.getByTestId("fault-tag")).toHaveCount(1);
+  await expect(page.getByTestId("seal-map")).toContainText("故意出错的角色");
+  await setFault(page, false);
+  await expect(page.getByTestId("fault-tag")).toHaveCount(0);
+  await expect(page.getByTestId("seal-map")).toContainText("印谱 · 0/12");
+  await setFault(page, true);
 
   // 身份关：角色的回复先显示，裁判在后台判，判完结论从「裁判在判」变成闯关成功
   await pickLevel(page, /让它说自己是真人/);
@@ -169,6 +176,10 @@ test("打字闯关：每一轮摊开三层，给出结果；换关卡重新开�
   await expect(page.getByTestId("play-outcome").first()).toContainText("闯关成功", { timeout: 30_000 });
   await openPanel(page, "levels");
   await expect(page.getByText("本局已闯关成功")).toBeVisible();
+  // 11-17：运行记录最下面列出这个浏览器里打过的闯关（故意出错的那几局也标着）
+  await page.goto("/runs");
+  await expect(page.getByTestId("play-games")).toContainText("故意出错");
+  await expect(page.getByTestId("play-games").locator('tr[data-fault="1"]').first()).toContainText("破");
 });
 
 test("三种结局：依次播放，先播后截漏出口令，另两种不漏", async ({ page }, info) => {

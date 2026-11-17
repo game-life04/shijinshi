@@ -9,6 +9,7 @@
 import Link from "next/link";
 import AppShell from "@/components/AppShell";
 import AutoRefresh from "@/components/AutoRefresh";
+import PlayGames from "@/components/PlayGames";
 import RunPicker, { type RunRow } from "@/components/RunPicker";
 import { POLICY_SHORT, VARIANT_SHORT } from "@/components/wording";
 import { FATES_PAGE } from "@/lib/domain/fates-page";
@@ -113,6 +114,7 @@ export default async function RunsPage({ searchParams }: PageProps<"/runs">) {
             </nav>
           )}
         </div>
+        <p className="text-xs text-muted">上面是体检工作台跑的体检；打字闯关的记录在最下面。</p>
         {!shown.length && <p className="text-muted">还没有运行记录。到「体检工作台」开始一次体检。</p>}
         {full.length > 0 && <RunPicker rows={full.map(row)} a0={a} b0={b} />}
         {demos.length > 0 && (
@@ -126,6 +128,8 @@ export default async function RunsPage({ searchParams }: PageProps<"/runs">) {
             </div>
           </details>
         )}
+        {/* 这个浏览器里打过的闯关（11-17）：不进体检统计，单独一块 */}
+        <PlayGames />
       </div>
     </AppShell>
   );

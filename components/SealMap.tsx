@@ -16,12 +16,15 @@ export default function SealMap({
   tier,
   locked,
   onPick,
+  fault = false,
 }: {
   store: SealStore;
   level: LevelId;
   tier: Tier;
   locked: boolean;
   onPick: (level: LevelId, tier: Tier) => void;
+  /** 现在看的是「故意出错」的角色那一份（11-17：和平时的角色分开记） */
+  fault?: boolean;
 }) {
   const got = Object.keys(store.best).length;
   return (
@@ -29,6 +32,12 @@ export default function SealMap({
       <p className="mb-1 flex items-baseline justify-between gap-2 text-[11px] text-muted">
         <span className="text-sm text-foreground" style={{ fontFamily: "var(--font-kai)" }}>
           印谱 · {got}/{LEVELS.length * TIERS.length}
+          {fault && (
+            <span className="text-xs" data-testid="seal-map-fault" title="「故意出错」的角色单独记一份，不和平时的角色混在一起">
+              {" "}
+              · 故意出错的角色
+            </span>
+          )}
         </span>
         <span>点一格，就打那一关的那一层</span>
       </p>

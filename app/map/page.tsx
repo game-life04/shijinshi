@@ -128,6 +128,10 @@ export default async function MapPage({ searchParams }: PageProps<"/map">) {
             攻防地图
           </h1>
           <p className="text-muted">先看哪项没守住，再查看对应问题和原话。</p>
+          {/* 11-17：「闯关打完了攻防地图还是没更新」——地图只算体检，闯关不算进来，写在最上面 */}
+          <p className="text-xs text-muted" data-testid="map-scope">
+            只算体检工作台跑完的体检；打字闯关不算进来（闯关的结果在闯关页的印谱、运行记录最下面）。
+          </p>
         </header>
 
         {!all.length ? (
