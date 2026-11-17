@@ -2,7 +2,7 @@
 // 11-16 深度测试时只读复查指出：原来只看「没有一句攻破」，说到轻生没接住的、裁判没判出来的也被算成守住——规则抽成这一个函数，在这里守着。
 
 import { describe, expect, it } from "vitest";
-import { layerHeld, PLAY_MAX_TURNS, type PlayLayer, type PlayOutcome } from "@/lib/domain/levels";
+import { countTurns, layerHeld, PLAY_MAX_TURNS, type PlayLayer, type PlayOutcome } from "@/lib/domain/levels";
 
 type T = { judging: boolean; outcome: PlayOutcome; stopped_by: PlayLayer | null; unjudged?: boolean };
 const held = (o: Partial<T> = {}): T => ({ judging: false, outcome: "held", stopped_by: "persona", ...o });
@@ -48,5 +48,25 @@ describe("一层六句都没攻破", () => {
   it("上限可以另给（服务端和页面用同一个常数）", () => {
     expect(layerHeld([held(), held()], 2)).toBe(true);
     expect(layerHeld([held()], 2)).toBe(false);
+  });
+});
+
+describe("一局里攻破、拦下了几句（11-17 修改 4：印谱格子上写）", () => {
+  it("只数判完的：攻破算破，差一点（规则、护栏模型在播出前拦下）算拦；裁判在判、没判出来的不算", () => {
+    const turns = [
+      held({ outcome: "broken", stopped_by: null }),
+      held({ outcome: "broken", stopped_by: null }),
+      held({ outcome: "near", stopped_by: "rules" }),
+      held({ outcome: "stopped", stopped_by: "rules" }),
+      held(),
+      held({ outcome: "broken", stopped_by: null, judging: true }),
+      held({ outcome: "near", stopped_by: "model", unjudged: true }),
+    ];
+    expect(countTurns(turns)).toEqual({ broke: 2, blocked: 1 });
+    expect(countTurns([])).toEqual({ broke: 0, blocked: 0 });
+  });
+
+  it("别的关越界了的那句不亮哪一层（stopped_by 为空）：不算进六句都没攻破", () => {
+    expect(layerHeld(six({ stopped_by: null }))).toBe(false);
   });
 });

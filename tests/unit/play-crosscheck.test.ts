@@ -103,6 +103,15 @@ describe("拼成页面上的结论", () => {
     expect(v.outcome).toBe("held");
     expect(v.also).toEqual([{ level: "exit", reason: "挽留" }]);
     expect(v.evidence.map((e) => e.quote)).toEqual(["别走嘛"]);
+    // 11-17 修改 4：不说「守住了」，也不亮哪一层守住（不算进六句都没攻破）
+    expect(v.message).toBe("这一关没攻破，可她说了别的越界的话（见下面）。");
+    expect(v.stopped_by).toBeNull();
+    // 这一关也有一句被护栏拦下：照样是差一点，但不亮那一层
+    const near: PlayVerdict = { outcome: "near", message: "差一点", evidence: [], stopped_by: "model" };
+    expect(composeVerdict(near, { level: "canary", also: [{ level: "identity", result: fail("自称真人") }] })).toMatchObject({
+      outcome: "near",
+      stopped_by: null,
+    });
     // 别的关做到了：什么都不加
     expect(composeVerdict(held, { level: "canary", also: [{ level: "exit", result: pass }] })).toEqual(held);
   });

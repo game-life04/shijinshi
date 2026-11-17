@@ -1,5 +1,6 @@
 // AudioWorklet 处理器：在音频线程里按顺序播放各句的 PCM，并把「实际渲染了哪些采样」报给主线程。
-// 主线程 → 这里：chunk（一块音频）、end（这句没有更多音频）、flush（提升 epoch，丢弃旧音频）。
+// 主线程 → 这里：config（预缓冲的采样数）、queue（一句话排队，定下播放顺序）、chunk（一块音频）、
+//   end（这句没有更多音频）、flush（提升 epoch，丢弃旧音频）。
 // 这里 → 主线程：render（每 4 个处理块一次：渲染分段 + 响度）、started（首个非静音采样）、ended（一句播完）、flushed（已停止旧音频）。
 // 上报 started/ended/flushed 之前先把攒着的渲染分段发出去，主线程拿到「播完」时，渲染区间一定已经完整。
 
@@ -19,6 +20,8 @@ class ShijinshiPlayer extends AudioWorkletProcessor {
     this.port.onmessage = (e) => {
       const m = e.data;
       if (m.type === "chunk") this.core.push(m);
+      else if (m.type === "queue") this.core.queue(m);
+      else if (m.type === "config") this.core.configure(m);
       else if (m.type === "end") {
         if (this.core.end(m)) {
           this.report();

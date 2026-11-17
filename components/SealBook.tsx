@@ -1,8 +1,8 @@
-// 印谱（11-09，队长：好玩、有趣）：打字闯关的收集册。三关 × 四层 = 12 方印，攻破哪一层就盖哪一方，旁边记最少几句攻破；
+// 印谱（11-09，队长：好玩、有趣）：打字闯关的收集册。三关 × 四层 = 12 方印，攻破哪一层就盖哪一方，旁边记最近一局攻破了几句（11-17 修改 4，原来记最快第几句攻破，大家读成破了几句）；
 // 下面一排成就印，攻破的方式特别才给（连护栏模型都没拦住、让 AI 玩家替你攻破、用嘴说攻破、第一句就攻破、12 方全齐）。
 // 只记在这个浏览器里（换浏览器、清缓存就没了），不上传、不进体检统计。
 
-import { LEVELS, type LevelId, TIERS, type Tier } from "@/lib/domain/levels";
+import { LEVELS, type LevelId, PLAY_MAX_TURNS, TIERS, type Tier } from "@/lib/domain/levels";
 
 export type BadgeId = "first" | "rules" | "model" | "borrow" | "voice" | "oneshot" | "all";
 
@@ -23,6 +23,10 @@ export interface SealStore {
   badges: Partial<Record<BadgeId, string>>;
   /** 「关:层」→ 守住的时间（ADR-053，队员 B 修改稿 3：这一层六句都没攻破，印谱上标绿色「防」；后来被攻破了以「破」为准） */
   held?: Record<string, string>;
+  /** 「关:层」→ 最近一局攻破了几句（11-17 修改 4）；sid 是那一局的编号，at 是那一局第一次攻破的时间 */
+  broke?: Record<string, { sid: string; at: string; n: number }>;
+  /** 「关:层」→ 记「防」的那一局里，规则、护栏模型在播出前拦下了几句（她原话越界了，11-17 修改 4） */
+  heldBlocked?: Record<string, number>;
 }
 
 export const SEALS_KEY = "fencun.play.seals.v1";
@@ -61,11 +65,35 @@ export function award(
   return { next: { ...store, best, badges }, fresh };
 }
 
-/** 这一层六句都没攻破：记一笔（已经记过就原样返回） */
-export function markHeld(store: SealStore, lv: LevelId, t: Tier): SealStore {
+/** 这一层六句都没攻破：记一笔，连同这一局拦下了几句（已经记过就原样返回） */
+export function markHeld(store: SealStore, lv: LevelId, t: Tier, blocked = 0): SealStore {
   const k = sealKey(lv, t);
   if (store.held?.[k]) return store;
-  return { ...store, held: { ...(store.held ?? {}), [k]: new Date().toISOString() } };
+  const next: SealStore = { ...store, held: { ...(store.held ?? {}), [k]: new Date().toISOString() } };
+  if (blocked > 0) next.heldBlocked = { ...(store.heldBlocked ?? {}), [k]: blocked };
+  return next;
+}
+
+/** 一局攻破了几句：同一局更新成最新的数，换了一局就从这一局重新记（格子上写的是最近一局，11-17 修改 4） */
+export function tallyBroke(store: SealStore, lv: LevelId, t: Tier, sid: string, n: number): SealStore {
+  if (n <= 0) return store;
+  const k = sealKey(lv, t);
+  const cur = store.broke?.[k];
+  if (cur?.sid === sid && cur.n === n) return store;
+  const at = cur?.sid === sid ? cur.at : new Date().toISOString();
+  return { ...store, broke: { ...(store.broke ?? {}), [k]: { sid, at, n } } };
+}
+
+/** 攻破过的格子的说明：最近一局攻破了几句、最快第几句攻破（旧存档没有句数就只说最快） */
+export function brokeTitle(store: SealStore, k: string): string {
+  const n = store.broke?.[k]?.n;
+  return `攻破过：${n ? `最近一局 ${PLAY_MAX_TURNS} 句里攻破了 ${n} 句，` : ""}最快第 ${store.best[k]} 句就攻破`;
+}
+
+/** 守住过的格子的说明：六句都没攻破，其中拦下了几句 */
+export function heldTitle(store: SealStore, k: string): string {
+  const n = store.heldBlocked?.[k] ?? 0;
+  return `守住过：${PLAY_MAX_TURNS} 句都没攻破${n > 0 ? `，其中 ${n} 句她原话越界了，是规则或护栏模型在播出前拦下的` : ""}`;
 }
 
 /**
@@ -81,7 +109,26 @@ export function mergeSeals(a: SealStore, b: SealStore): SealStore {
     return out;
   };
   const held = earlier(a.held, b.held) as Record<string, string>;
-  return { best, badges: earlier(a.badges, b.badges) as SealStore["badges"], ...(Object.keys(held).length ? { held } : {}) };
+  // 「防」那一局拦下了几句：跟着留下来的那次「防」走
+  const heldBlocked: Record<string, number> = {};
+  for (const k of Object.keys(held)) {
+    const n = a.held?.[k] === held[k] ? a.heldBlocked?.[k] : b.heldBlocked?.[k];
+    if (typeof n === "number" && n > 0) heldBlocked[k] = n;
+  }
+  // 最近一局攻破了几句：同一局取大的（判完的句子只会越来越多），不同局取后开始的那一局
+  const broke = { ...(a.broke ?? {}) };
+  for (const [k, v] of Object.entries(b.broke ?? {})) {
+    if (!v || typeof v.n !== "number") continue;
+    const cur = broke[k];
+    if (!cur || (v.sid === cur.sid ? v.n > cur.n : v.at > cur.at)) broke[k] = v;
+  }
+  return {
+    best,
+    badges: earlier(a.badges, b.badges) as SealStore["badges"],
+    ...(Object.keys(held).length ? { held } : {}),
+    ...(Object.keys(heldBlocked).length ? { heldBlocked } : {}),
+    ...(Object.keys(broke).length ? { broke } : {}),
+  };
 }
 
 /**
@@ -138,11 +185,13 @@ export default function SealBook({ store, onClose, showGrid = true }: { store: S
                         <span
                           className="inline-flex h-9 w-9 -rotate-3 flex-col items-center justify-center rounded-[3px] bg-foreground leading-none text-surface"
                           style={{ fontFamily: "var(--font-kai)" }}
-                          title={`攻破过，最少用了 ${best} 句`}
+                          title={brokeTitle(store, sealKey(l.id, t.tier))}
                           data-sealed="1"
                         >
                           <span className="text-sm">破</span>
-                          <span className="text-[9px] opacity-80">{best} 句</span>
+                          {store.broke?.[sealKey(l.id, t.tier)] && (
+                            <span className="text-[9px] opacity-80">{store.broke[sealKey(l.id, t.tier)]?.n} 句</span>
+                          )}
                         </span>
                       )}
                     </td>

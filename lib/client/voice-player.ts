@@ -5,6 +5,9 @@
 //   cancel_to_stop_ms   收到截断/终止 → 主线程收到 worklet「已丢弃旧音频」的确认。确认之后不可能再渲染旧音频，所以这是上界；
 //   cancel_to_mouth_zero_ms  收到截断/终止 → 下一帧画面里口型为 0。
 // 截断按 epoch（代际）进行：先把 epoch 加一，再通知 worklet 丢弃旧块；之后才到的旧音频在主线程和 worklet 两处都会被丢掉。
+// 播放顺序 = 调用 play() 的顺序：play() 先同步告诉 worklet 排队，再去取音频，几句同时在下载、分块交错着到也不会放乱；
+// 取不到音频的句子也告诉 worklet「没有更多音频」，不挡后面的句子。
+// 预缓冲 prerollMs 默认 0（收到就放）：工作台和「先审还是先播」量首声等待和漏出时长，不开；闯关页要听着顺，可以开。
 
 import { union } from "@/lib/audio/intervals";
 import type { SampleRange, UtteranceAudio } from "@/lib/domain/types";
@@ -52,6 +55,14 @@ type WorkletMessage =
 
 const round1 = (x: number) => Math.round(x * 10) / 10;
 
+export interface VoicePlayerOptions {
+  /**
+   * 预缓冲（毫秒）：每句开播前、中途断粮以后，先攒够这么长的音频（或者这句已经全部到了）再放，网络一抖不会放一下停一下。
+   * 代价是首声最多晚这么长。默认 0 = 收到就放，和以前完全一样
+   */
+  prerollMs?: number;
+}
+
 export class VoicePlayer {
   private ctx?: AudioContext;
   private node?: AudioWorkletNode;
@@ -66,6 +77,13 @@ export class VoicePlayer {
   onError?: (message: string) => void;
   /** 音频从哪里取：默认是体检运行的 /api/runs/<编号>/audio；闯关页换成 /api/play/audio（ADR-037） */
   audioUrl?: (runId: string, uttId: string) => string;
+  /** 预缓冲换算成采样数（AudioContext 是 24 kHz，和源采样一一对应）；0 = 不开 */
+  private readonly prerollSamples: number;
+
+  constructor(opts: VoicePlayerOptions = {}) {
+    const ms = opts.prerollMs ?? 0;
+    this.prerollSamples = Number.isFinite(ms) && ms > 0 ? Math.round((ms * PLAYER_SAMPLE_RATE) / 1000) : 0;
+  }
 
   get ready(): boolean {
     return this.ctx?.state === "running";
@@ -112,6 +130,8 @@ export class VoicePlayer {
       });
       this.node.port.onmessage = (e: MessageEvent<WorkletMessage>) => this.onMessage(e.data);
       this.node.connect(this.ctx.destination);
+      // 预缓冲的设置：worklet 是第一次要用时才建的（关掉以后再用会重建），所以每次建好就发；不开就不发，worklet 默认收到就放
+      if (this.prerollSamples > 0) this.node.port.postMessage({ type: "config", prerollSamples: this.prerollSamples });
     }
   }
 
@@ -144,6 +164,8 @@ export class VoicePlayer {
     };
     this.turns.get(turnId)?.utts.push(uttId);
     this.utts.set(uttId, st);
+    // 先排队再取音频：播放顺序 = 调用 play() 的顺序，不看哪句的音频先到
+    this.node.port.postMessage({ type: "queue", epoch: st.epoch, uttId });
     void this.stream(runId, st);
   }
 
@@ -159,9 +181,9 @@ export class VoicePlayer {
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
-        if (st.epoch < this.epoch) {
+        if (st.epoch < this.epoch || st.abort.signal.aborted) {
           await reader.cancel();
-          return; // 已经被截断：之后到达的旧音频不再送去播放
+          return; // 已经被截断（或者等超时、这句不要了）：之后到达的旧音频不再送去播放
         }
         let bytes = value;
         if (carry !== null) {
@@ -180,14 +202,19 @@ export class VoicePlayer {
         node.port.postMessage({ type: "chunk", epoch: st.epoch, uttId: st.uttId, offset, samples }, [samples.buffer]);
         offset += n;
       }
-      if (st.epoch < this.epoch) return;
+      if (st.epoch < this.epoch || st.abort.signal.aborted) return;
+      // 一块都没有（空音频）也要发：它在 worklet 里排着队，不发就一直挡着后面的句子
       node.port.postMessage({ type: "end", epoch: st.epoch, uttId: st.uttId });
       if (offset === 0) {
         st.outcome = "not_played";
         st.settle();
       }
     } catch (e) {
-      if (st.epoch < this.epoch || st.abort.signal.aborted) return; // 截断引起的中止，由 flushed 收尾
+      // 截断引起的中止，由 flushed 收尾；等超时停掉的，finishTurn 已经告诉过 worklet
+      if (st.epoch < this.epoch || st.abort.signal.aborted) return;
+      // 取音频失败也告诉 worklet 这句没有更多音频（已经收到的照放），不然它一直排在前面，后面的句子都放不出来。
+      // 这句当场记成失败、收尾；worklet 之后报的「播完」改不了它（onMessage 只处理还没收尾的）
+      node.port.postMessage({ type: "end", epoch: st.epoch, uttId: st.uttId });
       st.outcome = "failed";
       st.settle();
       this.onError?.(e instanceof Error ? e.message : String(e));
@@ -273,6 +300,13 @@ export class VoicePlayer {
     const turn = this.turns.get(turnId);
     const utts = (turn?.utts ?? []).map((id) => this.utts.get(id)).filter((u): u is UttState => Boolean(u));
     await Promise.race([Promise.all(utts.map((u) => u.done)), new Promise((r) => setTimeout(r, timeoutMs))]);
+    // 等到超时还没收尾的句子（多半是取音频卡住了）：停掉下载，告诉 worklet 这句不会再有音频。
+    // worklet 按排队顺序放，不然它一直占着最前面，同一代里后面的句子（下一轮的也算）都放不出来
+    for (const u of utts) {
+      if (u.settled) continue;
+      u.abort.abort();
+      this.node?.port.postMessage({ type: "end", epoch: u.epoch, uttId: u.uttId });
+    }
     const report: TurnPlaybackReport = {
       turn_id: turnId,
       first_audio_ms: turn?.firstAudioAt === undefined ? undefined : round1(turn.firstAudioAt - turn.startedAt),

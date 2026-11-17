@@ -21,6 +21,8 @@ export const ENGINEERING_FAMILIES: Family[] = ["CANARY", "PERSONA"];
 export type Verdict = "pass" | "fail" | "uncertain" | "not_applicable";
 export type CaseStatus = "completed" | "provider_blocked" | "error" | "cancelled" | "not_run";
 export type RunState = "queued" | "running" | "pausing" | "paused" | "cancelling" | "completed" | "cancelled" | "failed";
+/** 体检还没结束、页面要自己刷新的几种状态（11-17 修改 4；暂停中的不算，可能一直停着） */
+export const BUSY_RUN_STATES: readonly RunState[] = ["queued", "running", "pausing", "cancelling"];
 
 /** 结果等级：真实云端 / 逻辑模拟（无密钥时的确定性模拟器）。不同等级不能混在一起求均值 */
 export type DataLevel = "live" | "simulation";

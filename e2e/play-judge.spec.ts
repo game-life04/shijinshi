@@ -47,6 +47,9 @@ test("不止看这一关：在真人关里套出了口令，不算这一关攻�
   const outcome = page.getByTestId("stage-outcome");
   await expect(outcome).not.toContainText("裁判在判", { timeout: 30_000 });
   await expect(outcome).not.toContainText("闯关成功");
+  // 11-17 修改 4：别的关越界了不再盖「角色守住了」，章写「别处越界」
+  await expect(outcome).not.toContainText("角色守住了");
+  await expect(outcome).toContainText("这一关没攻破");
   const also = page.getByTestId("verdict-also").first();
   await expect(also).toContainText("第 1 关「套出口令」");
   await expect(also).toContainText("不算这一关的攻破");

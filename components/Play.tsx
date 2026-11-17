@@ -44,6 +44,7 @@ import { stampSound } from "@/lib/client/sfx";
 import { joinSpeech, type SpeechEngine, useSpeechInput } from "@/lib/client/speech-input";
 import { VoicePlayer } from "@/lib/client/voice-player";
 import {
+  countTurns,
   GREETINGS,
   LAYER_NOTES,
   LEVELS,
@@ -65,7 +66,7 @@ import Avatar from "./Avatar";
 import { bubble, Chop, duration, Note, Row } from "./Chat";
 import { GuardCell } from "./Layers";
 import PlayGates from "./PlayGates";
-import SealBook, { award, BADGES, emptySeals, markHeld, mergeSeals, SEALS_KEY, type SealStore, sealKey } from "./SealBook";
+import SealBook, { award, BADGES, emptySeals, markHeld, mergeSeals, SEALS_KEY, type SealStore, sealKey, tallyBroke } from "./SealBook";
 import SealMap from "./SealMap";
 import SentenceJourney, { slipsOf } from "./SentenceJourney";
 import type { Phase } from "./StatusRing";
@@ -176,11 +177,14 @@ function trimLabel(message: string, outcome: PlayOutcome): string {
   return message.startsWith(label) ? message.slice(label.length).replace(/^[：:。，,\s]+/, "") : message;
 }
 
+/** 这一句在别的关越界了（不算这一关的攻破，ADR-051）：章和四层条都不说「守住」（11-17 修改 4） */
+const isElsewhere = (a: Pick<Attempt, "also">) => Boolean(a.also?.some((x) => !x.here));
+
 /**
  * 结果章，和工作台同一套：越界播出是墨色实印（同「不合格」），守住是朱红章（同「合格」），差一点是朱红小「拦」印。
  * 说到轻生、未成年（ADR-051）：接住了是朱红章，没接住是墨色实印，拿不准是淡字；不是闯关，所以不写「闯关成功」
  */
-function Stamp({ outcome, sensitive }: { outcome: PlayOutcome; sensitive?: PlaySensitive }) {
+function Stamp({ outcome, sensitive, elsewhere }: { outcome: PlayOutcome; sensitive?: PlaySensitive; elsewhere?: boolean }) {
   const kai = { fontFamily: "var(--font-kai)" };
   if (outcome === "sensitive") {
     const word = sensitive?.kind === "minor" ? ["守住了", "没守住"] : ["接住了", "没接住"];
@@ -210,6 +214,17 @@ function Stamp({ outcome, sensitive }: { outcome: PlayOutcome; sensitive?: PlayS
         style={kai}
       >
         闯关成功
+      </span>
+    );
+  // 别的关越界了（11-17 修改 4：「她说自己是真人，居然显示守住了」）：这一关没攻破，可她说了越界的话，不盖「守住了」
+  if (elsewhere && (outcome === "held" || outcome === "near"))
+    return (
+      <span
+        className="inline-flex items-center rounded-sm bg-foreground px-1.5 py-0.5 text-xs font-semibold whitespace-nowrap text-surface"
+        style={kai}
+        data-verdict="fail"
+      >
+        别处越界
       </span>
     );
   if (outcome === "near")
@@ -270,9 +285,10 @@ function VerdictMore({ a, stage = false }: { a: Pick<Attempt, "also" | "sensitiv
 }
 
 /** 这一招被哪一层拦住（ADR-038）：一句话说清 */
-function layerSay(a: Pick<Attempt, "outcome" | "stopped_by" | "tier">): string {
+function layerSay(a: Pick<Attempt, "outcome" | "stopped_by" | "tier" | "also">): string {
   if (a.outcome === "broken") return a.tier === 1 ? "只有人设，没拦住" : `开着的 ${a.tier} 层都没拦住`;
   if (a.outcome === "stopped") return "规则按「说要走就停」直接停了";
+  if (isElsewhere(a) && (a.outcome === "held" || a.outcome === "near")) return "这一关没攻破，可她在别处越界了：这句不算守住";
   if (a.outcome === "sensitive" && a.stopped_by === null) return "说到了敏感话题，没人拦";
   switch (a.stopped_by) {
     case "persona":
@@ -318,7 +334,10 @@ function InkDots({ left }: { left: number }) {
   );
 }
 
-/** 每一轮下面的四层条：开着的层实线，没开的虚线；拦住这一招的那一层盖白文「拦」 */
+/**
+ * 每一轮下面的四层条：开着的层实线，没开的虚线；规则、护栏模型拦下的那一层盖白文「拦」，
+ * 她自己没说（人设、边界提示管住了）盖「守」（11-17 修改 4：原来也盖「拦」，读着像她说了以后自己拦下）
+ */
 function LayerStrip({ a }: { a: Attempt }) {
   if (a.judging) return null;
   return (
@@ -327,6 +346,7 @@ function LayerStrip({ a }: { a: Attempt }) {
       {TIERS.map((t) => {
         const on = t.tier <= a.tier;
         const lit = a.stopped_by === t.layer;
+        const self = t.layer === "persona" || t.layer === "prompt";
         return (
           <span
             key={t.tier}
@@ -342,11 +362,11 @@ function LayerStrip({ a }: { a: Attempt }) {
           >
             {lit && (
               <span className="seal-bai px-0.5 text-[11px] leading-4" aria-hidden>
-                拦
+                {self ? "守" : "拦"}
               </span>
             )}
             {t.short}
-            {lit && <span className="sr-only">（拦在这一层）</span>}
+            {lit && <span className="sr-only">{self ? "（她自己守住了）" : "（拦在这一层）"}</span>}
           </span>
         );
       })}
@@ -420,12 +440,20 @@ function PlayTurn({ a, name, shown, mode }: { a: Attempt; name: string; shown: n
       )}
       {mode === "history" ? (
         <p className="text-[11px]" data-testid="play-history-outcome">
-          {a.judging ? <Badge tone="muted">裁判在判……</Badge> : <Stamp outcome={a.outcome} sensitive={a.sensitive} />}
+          {a.judging ? (
+            <Badge tone="muted">裁判在判……</Badge>
+          ) : (
+            <Stamp outcome={a.outcome} sensitive={a.sensitive} elsewhere={isElsewhere(a)} />
+          )}
         </p>
       ) : (
         <>
           <p className="flex flex-wrap items-center gap-2 text-sm" data-testid="play-outcome">
-            {a.judging ? <Badge tone="muted">裁判在判……</Badge> : <Stamp outcome={a.outcome} sensitive={a.sensitive} />}
+            {a.judging ? (
+              <Badge tone="muted">裁判在判……</Badge>
+            ) : (
+              <Stamp outcome={a.outcome} sensitive={a.sensitive} elsewhere={isElsewhere(a)} />
+            )}
             <span className="text-muted">{a.judging ? a.message : trimLabel(a.message, a.outcome)}</span>
           </p>
           {!a.judging && <VerdictMore a={a} />}
@@ -729,6 +757,14 @@ export default function Play() {
       // 存不下就只在这次页面里记
     }
   };
+  /** 印谱格子上写「最近一局攻破了几句」（11-17 修改 4：原来写的是最快第几句攻破，大家读成破了几句） */
+  const tally = (
+    sid: string,
+    logged: { level: LevelId; tier: Tier; turns: Map<string, { judging: boolean; outcome: PlayOutcome; unjudged?: boolean }> },
+  ) => {
+    const next = tallyBroke(sealsRef.current, logged.level, logged.tier, sid, countTurns(logged.turns.values()).broke);
+    if (next !== sealsRef.current) saveSeals(next);
+  };
   const earn = (lv: LevelId, t: Tier, o: { sentences: number; byAi: boolean; spoken: boolean }, quiet = false) => {
     const { next, fresh: items } = award(sealsRef.current, lv, t, o);
     saveSeals(next);
@@ -755,7 +791,8 @@ export default function Play() {
 
   /** 声音：第一次要用时建播放器（必须在用户点击里解锁，浏览器才让出声） */
   const ensureVoice = async () => {
-    playerRef.current ??= new VoicePlayer();
+    // 闯关页要听着顺：每句先攒 300 毫秒再放，网络一抖不会放一下停一下（11-17 修改 4；开场白也用这个播放器）
+    playerRef.current ??= new VoicePlayer({ prerollMs: 300 });
     const p = playerRef.current;
     // 开场白不属于哪一局：编号写成 greet:关卡，从 /api/play/greet 取（ADR-046）
     p.audioUrl = (sid, u) =>
@@ -1009,12 +1046,13 @@ export default function Play() {
       // 离开闯关页以后回复才回来、这一句又不用等裁判（ADR-054 复查）：页面不在了，下面「六句都守住」那段不会再跑，
       // 六句都守住了在这里照样记「防」
       if (!mountedRef.current && !r.judging && layerHeld([...logged.turns.values()])) {
-        const next = markHeld(sealsRef.current, lv, tr);
+        const next = markHeld(sealsRef.current, lv, tr, countTurns(logged.turns.values()).blocked);
         if (next !== sealsRef.current) saveSeals(next);
       }
       if (!r.judging && r.outcome === "broken") {
         markBeaten(lv, tr);
         earn(lv, tr, { sentences: r.turn.index, byAi: Boolean(by), spoken });
+        tally(s.id, logged);
       }
       if (!r.judging) stamp(r.outcome);
 
@@ -1034,7 +1072,8 @@ export default function Play() {
       let ack: CueAck = {};
       if (r.turn.released_output) ack = performer.cue({ type: "say", id: r.turn.turn_id, text: r.turn.released_output, voiced });
       if (r.turn.service.exited) performer.cue({ type: "react", kind: "stopped" });
-      else if (!r.judging && (r.outcome === "held" || r.outcome === "broken"))
+      // 别的关越界了就不演「守住了」的得意（11-17 修改 4）
+      else if (!r.judging && (r.outcome === "broken" || (r.outcome === "held" && !isElsewhere(r))))
         performer.cue({ type: "react", kind: r.outcome, afterSpeech: true });
       if (r.attempts_left <= 0) performer.cue({ type: "react", kind: "done", afterSpeech: true });
 
@@ -1057,15 +1096,16 @@ export default function Play() {
             // 裁判判完时这一局还在台上吗：已经重新开始、换了关的话，攻破照样记进印谱，但不演反应、不盖大印、不冒提示（ADR-047）
             const here = mountedRef.current && sessionRef.current?.id === sid;
             setAttempts((xs) => xs.map((a) => (a.session === sid && a.turn.turn_id === turnId ? { ...a, ...v, judging: false } : a)));
-            if (here && (v.outcome === "held" || v.outcome === "broken"))
+            if (here && (v.outcome === "broken" || (v.outcome === "held" && !isElsewhere(v))))
               performer.cue({ type: "react", kind: v.outcome, afterSpeech: true });
             if (v.outcome === "broken") {
               markBeaten(lv, tr);
               earn(lv, tr, { sentences: r.turn.index, byAi: Boolean(by), spoken }, !here);
             }
             const logged = logTurn(sid, lv, tr, turnId, { judging: false, outcome: v.outcome, stopped_by: v.stopped_by });
+            if (v.outcome === "broken") tally(sid, logged);
             if (!here && layerHeld([...logged.turns.values()])) {
-              const next = markHeld(sealsRef.current, logged.level, logged.tier);
+              const next = markHeld(sealsRef.current, logged.level, logged.tier, countTurns(logged.turns.values()).blocked);
               if (next !== sealsRef.current) saveSeals(next);
             }
             if (here) stamp(v.outcome);
@@ -1328,11 +1368,13 @@ export default function Play() {
    * 规则在 lib/domain/levels.ts 的 layerHeld 里（tests/unit/play-held.test.ts）。
    */
   const heldAll = Boolean(session) && layerHeld(mine);
+  /** 这一局里规则、护栏模型在播出前拦下了几句（她原话越界了）：「防」那段话和印谱格子上写出来（11-17 修改 4） */
+  const blockedTurns = countTurns(mine).blocked;
   const heldNow = heldNote && heldNote.session === session?.id ? heldNote : null;
   // biome-ignore lint/correctness/useExhaustiveDependencies: 只在「六句都守住」这件事成立的那一下记一笔
   useEffect(() => {
     if (!heldAll || !session) return;
-    const next = markHeld(sealsRef.current, level, tier);
+    const next = markHeld(sealsRef.current, level, tier, blockedTurns);
     if (next !== sealsRef.current) saveSeals(next);
     setHeldNote((n) => (n?.session === session.id ? n : { session: session.id, stay: false }));
   }, [heldAll, session?.id]);
@@ -1715,7 +1757,7 @@ export default function Play() {
                       {current.judging ? (
                         <Badge tone="muted">裁判在判……</Badge>
                       ) : (
-                        <Stamp outcome={current.outcome} sensitive={current.sensitive} />
+                        <Stamp outcome={current.outcome} sensitive={current.sensitive} elsewhere={isElsewhere(current)} />
                       )}
                       <span className="text-muted">{current.judging ? current.message : trimLabel(current.message, current.outcome)}</span>
                     </p>
@@ -1822,6 +1864,7 @@ export default function Play() {
                     {brokeBefore
                       ? `第 ${tier} 层这六句都没攻破（这一格以前攻破过，印谱上还是「破」）。`
                       : `第 ${tier} 层六句都没攻破，印谱上这一格记了绿色「防」。`}
+                    {blockedTurns > 0 && `其中 ${blockedTurns} 句她的原话越界了，是规则或护栏模型在播出前拦下的，没播出去。`}
                     {tier < 4
                       ? heldNow.stay
                         ? ""

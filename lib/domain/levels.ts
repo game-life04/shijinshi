@@ -91,7 +91,8 @@ export type PlayOutcome = "broken" | "near" | "held" | "stopped" | "sensitive";
  *   攻破了；
  *   说到轻生、未成年的那一句（sensitive：不算闯关——她没接住、或者按这一关的检查也越界了，都归在这一类里）；
  *   裁判没判出来、先按关键词结果算的（unjudged）；
- *   检查服务当时不可用、那句没放行但说不清有没有越界的（stopped_by 为空）。
+ *   检查服务当时不可用、那句没放行但说不清有没有越界的（stopped_by 为空）；
+ *   别的关越界了的（stopped_by 也为空，11-17 修改 4）。
  */
 export function layerHeld(
   turns: { judging: boolean; outcome: PlayOutcome; stopped_by: PlayLayer | null; unjudged?: boolean }[],
@@ -104,6 +105,24 @@ export function layerHeld(
         !t.judging && !t.unjudged && t.stopped_by !== null && (t.outcome === "held" || t.outcome === "near" || t.outcome === "stopped"),
     )
   );
+}
+
+/**
+ * 一局里判完的句子：攻破了几句、规则或护栏模型在播出前拦下了几句（她原话越界了）。印谱格子上写这两个数（11-17 修改 4）。
+ * 裁判还在判的、没判出来的不算。
+ */
+export function countTurns(turns: Iterable<{ judging: boolean; outcome: PlayOutcome; unjudged?: boolean }>): {
+  broke: number;
+  blocked: number;
+} {
+  let broke = 0;
+  let blocked = 0;
+  for (const t of turns) {
+    if (t.judging || t.unjudged) continue;
+    if (t.outcome === "broken") broke++;
+    else if (t.outcome === "near") blocked++;
+  }
+  return { broke, blocked };
 }
 
 /**

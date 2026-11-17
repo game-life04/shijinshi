@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { intersectLength, leakRenderedMs, union } from "@/lib/audio/intervals";
+import { VoicePlayer } from "@/lib/client/voice-player";
 import type { RunEvent, UtteranceRecord } from "@/lib/domain/types";
 import { AudioStore } from "@/lib/server/audio-store";
 import { UsageMeter } from "@/lib/server/llm";
@@ -72,6 +73,25 @@ describe("AudioWorklet 播放队列（epoch 截断）", () => {
     offset,
     samples: new Float32Array(n).fill(v),
   });
+  /** 连着渲染几个处理块（每块 128 帧，从 from 帧开始）：输出拼起来，顺便收集分段、开口、播完 */
+  const run = (core: PlaybackCore, blocks: number, from = 0) => {
+    const out = new Float32Array(128);
+    const audio: number[] = [];
+    const segments: [string, number, number][] = [];
+    const started: string[] = [];
+    const finished: string[] = [];
+    for (let b = 0; b < blocks; b++) {
+      const r = core.render(out, from + b * 128);
+      audio.push(...out);
+      for (const s of r.segments) segments.push([s.uttId, s.start, s.end]);
+      for (const s of r.started) started.push(s.uttId);
+      finished.push(...r.finished);
+    }
+    return { audio, segments, started, finished };
+  };
+  /** 先后放了哪几句：相邻同一句的分段并成一个，来回跳就看得出来 */
+  const order = (segments: [string, number, number][]) => segments.map((s) => s[0]).filter((id, k, a) => k === 0 || a[k - 1] !== id);
+  const all = (xs: number[], v: number) => xs.every((x) => x === v);
 
   it("按顺序渲染，分段记录源采样区间，记下首个非静音采样", () => {
     const core = new PlaybackCore();
@@ -116,6 +136,260 @@ describe("AudioWorklet 播放队列（epoch 截断）", () => {
     core.flush(1);
     core.push(chunk(1, "C#1.u0", 0, 100));
     expect(core.render(out, 128).started.map((s) => s.uttId)).toEqual(["C#1.u0"]);
+  });
+
+  it("几句同时在下载、分块交错着到：按排队的先后放，一句放完才放下一句，不混在一起", () => {
+    const core = new PlaybackCore();
+    core.queue({ epoch: 0, uttId: "u0" });
+    core.queue({ epoch: 0, uttId: "u1" });
+    // 线上 HTTP/2 多路复用：第二句的块先到，两句交错着到
+    core.push(chunk(0, "u1", 0, 100, 0.25));
+    core.push(chunk(0, "u0", 0, 100));
+    core.push(chunk(0, "u1", 100, 100, 0.25));
+    core.push(chunk(0, "u0", 100, 100));
+    core.end({ epoch: 0, uttId: "u1" });
+    core.end({ epoch: 0, uttId: "u0" });
+    const r = run(core, 4);
+    expect(order(r.segments)).toEqual(["u0", "u1"]);
+    expect(all(r.audio.slice(0, 200), 0.5)).toBe(true); // 先是第一句的 200 个采样
+    expect(all(r.audio.slice(200, 400), 0.25)).toBe(true); // 紧接着第二句，中间没有空白
+    expect(all(r.audio.slice(400), 0)).toBe(true);
+    expect(r.started).toEqual(["u0", "u1"]);
+    expect(r.finished).toEqual(["u0", "u1"]);
+  });
+
+  it("排在最前面的那句还没有音频（或者中途断了粮）：放静音等它，不跳到后面已经到了的句子", () => {
+    const core = new PlaybackCore();
+    core.queue({ epoch: 0, uttId: "u0" });
+    core.queue({ epoch: 0, uttId: "u1" });
+    core.push(chunk(0, "u1", 0, 300, 0.25));
+    core.end({ epoch: 0, uttId: "u1" });
+    let r = run(core, 2);
+    expect(r.segments).toEqual([]); // 第二句全到了也不先放
+    expect(all(r.audio, 0)).toBe(true);
+    core.push(chunk(0, "u0", 0, 100)); // 第一句来了一块，还没完
+    r = run(core, 2, 256);
+    expect(r.segments).toEqual([["u0", 0, 100]]); // 放完这块就断粮了：放静音，还是不跳到第二句
+    expect(all(r.audio.slice(100), 0)).toBe(true);
+    core.push(chunk(0, "u0", 100, 50));
+    core.end({ epoch: 0, uttId: "u0" });
+    r = run(core, 3, 512);
+    expect(order(r.segments)).toEqual(["u0", "u1"]);
+    expect(all(r.audio.slice(0, 50), 0.5)).toBe(true);
+    expect(all(r.audio.slice(50, 350), 0.25)).toBe(true);
+    expect(r.finished).toEqual(["u0", "u1"]);
+  });
+
+  it("取音频失败、空音频的句子：一收到 end 就从队里拿掉（马上报播完），不挡后面的句子；失败前收到的那部分照放", () => {
+    const core = new PlaybackCore();
+    core.queue({ epoch: 0, uttId: "u0" }); // 取音频失败，一块都没收到
+    core.queue({ epoch: 0, uttId: "u1" }); // 空音频
+    core.queue({ epoch: 0, uttId: "u2" });
+    core.push(chunk(0, "u2", 0, 100));
+    core.end({ epoch: 0, uttId: "u2" });
+    expect(run(core, 1).segments).toEqual([]); // 第一句还在等
+    expect(core.end({ epoch: 0, uttId: "u1" })).toBe(true); // 不在最前面，也马上报播完
+    expect(core.end({ epoch: 0, uttId: "u0" })).toBe(true);
+    let r = run(core, 1, 128);
+    expect(r.segments).toEqual([["u2", 0, 100]]);
+    expect(r.finished).toEqual(["u2"]);
+    // 取到一半失败：已经收到的 50 个采样照放，放完接着放下一句
+    core.queue({ epoch: 0, uttId: "u3" });
+    core.queue({ epoch: 0, uttId: "u4" });
+    core.push(chunk(0, "u3", 0, 50));
+    expect(core.end({ epoch: 0, uttId: "u3" })).toBe(false);
+    core.push(chunk(0, "u4", 0, 100));
+    core.end({ epoch: 0, uttId: "u4" });
+    r = run(core, 2, 256);
+    expect(r.segments).toEqual([
+      ["u3", 0, 50],
+      ["u4", 0, 78],
+      ["u4", 78, 100],
+    ]);
+    expect(r.finished).toEqual(["u3", "u4"]);
+  });
+
+  it("预缓冲：攒够门槛才开播；这句已经全部送来（短句）就不用等门槛，接着上一句放", () => {
+    const core = new PlaybackCore();
+    core.configure({ prerollSamples: 300 });
+    core.queue({ epoch: 0, uttId: "u0" });
+    core.queue({ epoch: 0, uttId: "u1" });
+    core.push(chunk(0, "u0", 0, 200));
+    let r = run(core, 2);
+    expect(r.segments).toEqual([]); // 才 200 个采样，不到 300：先不放
+    expect(r.started).toEqual([]);
+    core.push(chunk(0, "u0", 200, 100)); // 攒够 300 了
+    r = run(core, 1, 256);
+    expect(r.segments).toEqual([["u0", 0, 128]]);
+    expect(r.started).toEqual(["u0"]);
+    core.end({ epoch: 0, uttId: "u0" });
+    core.push(chunk(0, "u1", 0, 100, 0.25)); // 短句：一共 100 个，不到门槛，但已经全部送来
+    core.end({ epoch: 0, uttId: "u1" });
+    r = run(core, 3, 384);
+    expect(all(r.audio.slice(0, 172), 0.5)).toBe(true);
+    expect(all(r.audio.slice(172, 272), 0.25)).toBe(true); // 紧接着上一句，中间不多等
+    expect(all(r.audio.slice(272), 0)).toBe(true);
+    expect(r.finished).toEqual(["u0", "u1"]);
+  });
+
+  it("预缓冲：中途断了粮，要重新攒够门槛才接着放（不会来一点放一点）；这句全部送来了就不再等", () => {
+    const core = new PlaybackCore();
+    core.configure({ prerollSamples: 200 });
+    core.queue({ epoch: 0, uttId: "u0" });
+    core.push(chunk(0, "u0", 0, 200));
+    let r = run(core, 2);
+    expect(r.segments).toEqual([
+      ["u0", 0, 128],
+      ["u0", 128, 200],
+    ]); // 放完 200 个就断粮了
+    core.push(chunk(0, "u0", 200, 100));
+    expect(run(core, 1, 256).segments).toEqual([]); // 只来了 100 个，不到门槛：不接着放
+    core.push(chunk(0, "u0", 300, 100));
+    r = run(core, 2, 384);
+    expect(r.segments).toEqual([
+      ["u0", 200, 300],
+      ["u0", 300, 328],
+      ["u0", 328, 400],
+    ]); // 攒够了，接着放
+    core.push(chunk(0, "u0", 400, 50));
+    core.end({ epoch: 0, uttId: "u0" });
+    r = run(core, 1, 640);
+    expect(r.segments).toEqual([["u0", 400, 450]]); // 不到门槛，但已经全部送来：马上放完
+    expect(r.finished).toEqual(["u0"]);
+  });
+
+  it("截断连排着的队一起清掉：旧代际排着队、音频还没到的句子，不会挡住新代际的句子", () => {
+    const core = new PlaybackCore();
+    core.queue({ epoch: 0, uttId: "u0" }); // 排了队，音频还没到
+    core.queue({ epoch: 0, uttId: "u1" });
+    core.push(chunk(0, "u1", 0, 100));
+    expect(run(core, 1).segments).toEqual([]);
+    expect(core.flush(1)).toBe(100); // 丢掉的还是「还没渲染的采样数」
+    expect(core.queue({ epoch: 0, uttId: "u2" })).toBe(false); // 旧代际的排队、音频、结束一律不收
+    expect(core.push(chunk(0, "u0", 0, 100))).toBe(false);
+    expect(core.end({ epoch: 0, uttId: "u0" })).toBe(false);
+    core.queue({ epoch: 1, uttId: "f0" }); // 兜底句
+    core.push(chunk(1, "f0", 0, 50));
+    core.end({ epoch: 1, uttId: "f0" });
+    const r = run(core, 1, 128);
+    expect(r.segments).toEqual([["f0", 0, 50]]);
+    expect(r.finished).toEqual(["f0"]);
+  });
+
+  it("预缓冲默认 0：和原来一样，收到就在这个处理块里放，断粮以后来一块放一块", () => {
+    const core = new PlaybackCore();
+    const out = new Float32Array(128);
+    core.queue({ epoch: 0, uttId: "u0" });
+    core.push(chunk(0, "u0", 0, 10));
+    const r1 = core.render(out, 5000);
+    expect(r1.segments).toEqual([{ uttId: "u0", start: 0, end: 10, frame: 5000 }]);
+    expect(r1.started).toEqual([{ uttId: "u0", offset: 0, frame: 5000 }]); // 首声不多等
+    expect(core.render(out, 5128).segments).toEqual([]); // 断粮：静音
+    core.push(chunk(0, "u0", 10, 5));
+    expect(core.render(out, 5256).segments).toEqual([{ uttId: "u0", start: 10, end: 15, frame: 5256 }]);
+  });
+});
+
+describe("主线程播放器（假的 AudioWorklet）：先排队再取音频，取不到也发 end", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** 换上假的 AudioContext / AudioWorkletNode：记下发给 worklet 的每条消息，worklet 的回信由测试来发 */
+  const fakeAudio = () => {
+    const sent: { type: string; epoch?: number; uttId?: string; prerollSamples?: number }[] = [];
+    const nodes: { port: { onmessage: ((e: { data: unknown }) => void) | null } }[] = [];
+    vi.stubGlobal(
+      "AudioContext",
+      class {
+        sampleRate = 24000;
+        state = "suspended";
+        destination = {};
+        audioWorklet = { addModule: async () => {} };
+        async resume() {
+          this.state = "running";
+        }
+      },
+    );
+    vi.stubGlobal(
+      "AudioWorkletNode",
+      class {
+        port = { onmessage: null as ((e: { data: unknown }) => void) | null, postMessage: (m: (typeof sent)[number]) => sent.push(m) };
+        constructor() {
+          nodes.push(this);
+        }
+        connect() {}
+      },
+    );
+    return { sent, reply: (data: unknown) => nodes.at(-1)?.port.onmessage?.({ data }) };
+  };
+
+  it("play() 当场排队（取音频之前）；取音频失败也发 end，worklet 之后报的「播完」不改「失败」；预缓冲设置在建 worklet 时发出", async () => {
+    const { sent, reply } = fakeAudio();
+    // 第一句取音频失败；第二句正常（两个采样）
+    vi.stubGlobal("fetch", async (url: string) =>
+      url.endsWith("bad") ? new Response("", { status: 500 }) : new Response(new Uint8Array([0, 64, 0, 64])),
+    );
+    const p = new VoicePlayer({ prerollMs: 300 });
+    p.audioUrl = (_run, u) => `/audio/${u}`;
+    const errors: string[] = [];
+    p.onError = (m) => errors.push(m);
+    await p.unlock(); // 这时才建 worklet：设置跟着发过去
+    expect(sent).toEqual([{ type: "config", prerollSamples: 7200 }]);
+    p.beginTurn("T#1");
+    p.play("R", "T#1", "T#1.bad");
+    p.play("R", "T#1", "T#1.ok");
+    expect(sent.slice(1)).toEqual([
+      { type: "queue", epoch: 0, uttId: "T#1.bad" },
+      { type: "queue", epoch: 0, uttId: "T#1.ok" },
+    ]);
+    await vi.waitFor(() =>
+      expect(
+        sent
+          .filter((m) => m.type === "end")
+          .map((m) => m.uttId)
+          .sort(),
+      ).toEqual(["T#1.bad", "T#1.ok"]),
+    );
+    expect(errors).toHaveLength(1);
+    reply({ type: "ended", uttId: "T#1.bad" }); // 失败的那句已经收尾：这条改不了它的结果
+    reply({ type: "ended", uttId: "T#1.ok" });
+    const report = await p.finishTurn("T#1", 1000);
+    expect(report.utterances.map((u) => [u.utterance_id, u.outcome])).toEqual([
+      ["T#1.bad", "failed"],
+      ["T#1.ok", "ended"],
+    ]);
+  });
+
+  it("等到超时还没收尾的句子（取音频卡住了）：停掉下载、告诉 worklet 不会再有音频，免得挡着后面的句子；默认不开预缓冲", async () => {
+    const { sent } = fakeAudio();
+    let aborted = false;
+    vi.stubGlobal(
+      "fetch",
+      (_url: string, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) =>
+          init?.signal?.addEventListener("abort", () => {
+            aborted = true;
+            reject(new Error("aborted"));
+          }),
+        ),
+    );
+    const p = new VoicePlayer();
+    const errors: string[] = [];
+    p.onError = (m) => errors.push(m);
+    await p.unlock();
+    expect(sent).toEqual([]); // 默认 0：不发设置，worklet 照旧收到就放
+    p.beginTurn("T#1");
+    p.play("R", "T#1", "T#1.u0");
+    const report = await p.finishTurn("T#1", 20);
+    expect(report.utterances[0].outcome).toBe("failed");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(aborted).toBe(true);
+    expect(sent).toEqual([
+      { type: "queue", epoch: 0, uttId: "T#1.u0" },
+      { type: "end", epoch: 0, uttId: "T#1.u0" },
+    ]);
+    expect(errors).toEqual([]); // 是这边停掉的，不算出错
   });
 });
 

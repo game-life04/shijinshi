@@ -17,11 +17,14 @@
 
 import Link from "next/link";
 import AppShell from "@/components/AppShell";
+import AutoRefresh from "@/components/AutoRefresh";
 import { VARIANT_SHORT } from "@/components/wording";
 import { type MapLayer, OPENING } from "@/lib/domain/attack-map";
-import type { DataLevel, Family, SubjectVariant } from "@/lib/domain/types";
+import { BUSY_RUN_STATES, type DataLevel, type Family, type SubjectVariant } from "@/lib/domain/types";
 import { attackMap, MAP_VARIANTS, mapRuns } from "@/lib/server/attack-map";
 import { authConfig } from "@/lib/server/auth";
+import { listRuns } from "@/lib/server/runs";
+import { publicRuns } from "@/lib/server/sealed";
 import { getSession } from "@/lib/server/session";
 import { loadStrategies } from "@/lib/server/tester";
 import MatrixFold from "./MatrixFold";
@@ -54,6 +57,16 @@ const LAYER_CHIP: Record<MapLayer, { name: string; title: string }> = {
 };
 
 /** 空地图里的两个按钮：和 components/ui.tsx 的 Button 一个样子 */
+/** 图上用的是哪次体检（11-17 修改 4：终止了的那次不上地图，要写清楚按哪次算） */
+const runAt = (iso: string) =>
+  new Date(iso).toLocaleString("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
 const mapButton =
   "inline-flex h-8 items-center gap-1.5 rounded-sm border border-border bg-surface px-3 text-sm font-medium hover:bg-background focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary";
 
@@ -72,6 +85,9 @@ export default async function MapPage({ searchParams }: PageProps<"/map">) {
   const layer = pick<MapLayer>(sp.layer, LAYERS, "released");
   const view = sp.view === "compare" ? "compare" : "one";
   const merge = sp.runs === "all";
+  // 全部运行（含没跑完的）：有体检还在跑就每 5 秒刷新；比图上那次新、但没跑完的，图上说一声（11-17 修改 4）
+  const recent = publicRuns(listRuns()).filter((m) => whose !== "mine" || m.created_by === me);
+  const busy = recent.some((m) => BUSY_RUN_STATES.includes(m.state));
   const maps = MAP_VARIANTS.map((v) => ({ v, ...attackMap({ suite, variant: v, level, layer, all: merge }, all) }));
   const cur = maps.find((x) => x.v === variant) ?? maps[0];
   const { runs, available, map } = cur;
@@ -105,6 +121,7 @@ export default async function MapPage({ searchParams }: PageProps<"/map">) {
 
   return (
     <AppShell active="/map">
+      <AutoRefresh on={busy} ms={5000} />
       <div className="atk-page mx-auto w-full max-w-6xl space-y-4 p-4 text-sm">
         <header className="space-y-1">
           <h1 className="text-xl font-semibold" style={{ fontFamily: "var(--font-serif)" }}>
@@ -235,6 +252,29 @@ export default async function MapPage({ searchParams }: PageProps<"/map">) {
                     {merged && (
                       <span data-note="merged">
                         合并了 <b>{runs.length}</b> 次体检：同一道题每次各算一次，所以单位是题次
+                      </span>
+                    )}
+                    {!merged && runs[0] && (
+                      <span data-note="run">
+                        按 {runAt(runs[0].created_at)} 那次体检算
+                        {(() => {
+                          const first = runs[0];
+                          const cut = recent.find(
+                            (m) =>
+                              m.state !== "completed" &&
+                              m.created_at > first.created_at &&
+                              m.config.suite === suite &&
+                              m.config.variant === variant &&
+                              m.data_level === level &&
+                              m.config.policy === "S2" &&
+                              !m.config.persona &&
+                              !m.config.case_ids?.length,
+                          );
+                          if (!cut) return "";
+                          return BUSY_RUN_STATES.includes(cut.state)
+                            ? `；${runAt(cut.created_at)} 那次还在跑，跑完自己更新`
+                            : `；${runAt(cut.created_at)} 那次没跑完（${cut.state === "failed" ? "出错停了" : "终止了"}），不算进来`;
+                        })()}
                       </span>
                     )}
                     {layer === "raw" && <span>按角色原话算：判断不了原话的题不算</span>}

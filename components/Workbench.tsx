@@ -432,6 +432,9 @@ export default function Workbench() {
 
   const act = async (action: "pause" | "resume" | "cancel") => {
     if (!manifest) return;
+    // 终止先问一句（11-17 修改 4：一次体检开始十几秒就被终止了，运行记录里 0/16，攻防地图也不会算这一次）
+    if (action === "cancel" && !window.confirm("终止以后这次体检不能再继续：没跑完的题不出结论，攻防地图也不算这一次。确定终止吗？"))
+      return;
     setActionError(null);
     try {
       setManifest(await api<RunManifest>(`/api/runs/${manifest.run_id}/${action}`, { method: "POST" }));

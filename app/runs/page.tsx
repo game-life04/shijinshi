@@ -8,11 +8,12 @@
 
 import Link from "next/link";
 import AppShell from "@/components/AppShell";
+import AutoRefresh from "@/components/AutoRefresh";
 import RunPicker, { type RunRow } from "@/components/RunPicker";
 import { POLICY_SHORT, VARIANT_SHORT } from "@/components/wording";
 import { FATES_PAGE } from "@/lib/domain/fates-page";
 import { DEFAULT_PERSONA } from "@/lib/domain/persona";
-import type { RunManifest } from "@/lib/domain/types";
+import { BUSY_RUN_STATES, type RunManifest } from "@/lib/domain/types";
 import { authConfig } from "@/lib/server/auth";
 import { listRuns } from "@/lib/server/runs";
 import { publicRuns } from "@/lib/server/sealed";
@@ -87,12 +88,20 @@ export default async function RunsPage({ searchParams }: PageProps<"/runs">) {
   const picked = (r: RunManifest) => Boolean(r.config.case_ids?.length);
   const full = shown.filter((r) => !picked(r));
   const demos = shown.filter(picked);
+  // 有体检还没结束：这一页每 3 秒自己刷新（11-17 修改 4）
+  const busy = shown.some((r) => BUSY_RUN_STATES.includes(r.state));
 
   return (
     <AppShell active="/runs">
       <div className="mx-auto w-full max-w-6xl space-y-4 p-4 text-sm">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h1 className="text-xl font-semibold">运行记录</h1>
+          <AutoRefresh on={busy} />
+          {busy && (
+            <span className="text-xs text-muted" data-testid="runs-live">
+              有体检在跑：这一页每 3 秒自己刷新
+            </span>
+          )}
           {me && (
             <nav className="flex items-center gap-1.5 text-xs" aria-label="看谁的运行" data-testid="runs-whose">
               <Link className={seg(!all)} href="/runs" aria-current={!all ? "page" : undefined}>

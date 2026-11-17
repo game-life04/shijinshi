@@ -5,7 +5,7 @@
 //   规则、护栏模型管的是「说出口之前」：她这一轮的每一句话是一张纸条，从两组之间出发往下走，
 //   被哪一条拦下就停在那一条上、盖朱红「拦」，都过了才落到下面说出口。
 // 纸条用的是这一轮的真实记录（哪句放行、哪句被拦、谁拦的）；服务端把整轮审完才返回，所以是结果一到就照实放一遍，不是直播。
-// 最近一招被哪一层拦住（含「她自己没说」的人设、边界提示），那一条变朱红；这一关攻破过的层裂一道缝、写「破」。
+// 最近一招被哪一层拦住（含「她自己没说」的人设、边界提示，这两层写「守」），那一条变朱红；这一关攻破过的层裂一道缝、写「破」。
 
 import { type PlayLayer, TIERS, type Tier } from "@/lib/domain/levels";
 
@@ -61,9 +61,14 @@ function Band({
       </span>
       {!on && <span className="ml-1 shrink-0 text-xs text-muted">没开</span>}
       <span className="ml-auto flex shrink-0 items-center gap-1">
+        {/* 她自己没说（人设、边界提示管住了）写「守」，规则、护栏模型拦下的写「拦」（11-17 修改 4） */}
         {isLit && (
-          <span className="gate-mark bg-surface text-primary" data-testid="ladder-lit" title="最近一招是这一层拦住的">
-            拦
+          <span
+            className="gate-mark bg-surface text-primary"
+            data-testid="ladder-lit"
+            title={t.tier <= 2 ? "最近一招她自己没说出口：这一层管住了" : "最近一招是这一层拦住的"}
+          >
+            {t.tier <= 2 ? "守" : "拦"}
           </span>
         )}
         {broken && (

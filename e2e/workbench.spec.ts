@@ -157,6 +157,7 @@ test("完整体检：从开始到报告，分母对得上，证据可见", async
 test("终止：立即停止，状态可见，分母仍然对得上", async ({ page }, info) => {
   test.skip(info.project.name !== "desktop-1440", "终止流程只在一种尺寸上跑一次");
   await startRun(page, "FAULT");
+  page.once("dialog", (d) => void d.accept()); // 终止先确认（11-17 修改 4）
   await page.getByRole("button", { name: "终止" }).click();
   await expect(page.getByText("已终止")).toBeVisible({ timeout: 30_000 });
   const text = await page.getByText(/^\d+ = \d+ \+ \d+ \+ \d+ \+ \d+ \+ \d+$/).textContent();

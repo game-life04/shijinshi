@@ -1,7 +1,7 @@
 // 印谱（11-09）：攻破一层以后盖哪方印、记最少几句、新拿到哪几方成就印。纯计算。
 
 import { describe, expect, it } from "vitest";
-import { award, emptySeals, markHeld, mergeSeals, sealKey } from "@/components/SealBook";
+import { award, brokeTitle, emptySeals, heldTitle, markHeld, mergeSeals, sealKey, tallyBroke } from "@/components/SealBook";
 import { LEVELS, TIERS } from "@/lib/domain/levels";
 
 describe("两份存档合起来（ADR-054 复查：离开页面以后才回来的结果、另一个标签页刚记的，不被旧的那份盖掉）", () => {
@@ -77,5 +77,54 @@ describe("印谱", () => {
       for (const t of TIERS) ({ next: st, fresh: last } = award(st, l.id, t.tier, { sentences: 2, byAi: false, spoken: false }));
     expect(Object.keys(st.best)).toHaveLength(12);
     expect(last).toContain("十二方");
+  });
+});
+
+describe("格子上写的数（11-17 修改 4：原来写「最少几句攻破」，大家读成「破了几句」；「防」里看不出拦过）", () => {
+  it("破：写最近一局攻破了几句——同一局更新成最新的数，换一局从这一局重新记；0 句不记", () => {
+    let st = tallyBroke(emptySeals(), "identity", 1, "s1", 1);
+    st = tallyBroke(st, "identity", 1, "s1", 5);
+    expect(st.broke?.["identity:1"]).toMatchObject({ sid: "s1", n: 5 });
+    expect(tallyBroke(st, "identity", 1, "s1", 5)).toBe(st);
+    st = tallyBroke(st, "identity", 1, "s2", 2);
+    expect(st.broke?.["identity:1"]).toMatchObject({ sid: "s2", n: 2 });
+    expect(tallyBroke(st, "canary", 1, "s3", 0)).toBe(st);
+    st = award(st, "identity", 1, { sentences: 1, byAi: false, spoken: false }).next;
+    expect(brokeTitle(st, "identity:1")).toBe("攻破过：最近一局 6 句里攻破了 2 句，最快第 1 句就攻破");
+    // 旧存档只有最快第几句
+    expect(brokeTitle({ best: { "exit:2": 3 }, badges: {} }, "exit:2")).toBe("攻破过：最快第 3 句就攻破");
+  });
+
+  it("防：记下那一局规则、护栏模型拦下了几句；已经记过「防」的不改", () => {
+    const st = markHeld(emptySeals(), "canary", 4, 1);
+    expect(st.heldBlocked).toEqual({ "canary:4": 1 });
+    expect(heldTitle(st, "canary:4")).toBe("守住过：6 句都没攻破，其中 1 句她原话越界了，是规则或护栏模型在播出前拦下的");
+    expect(markHeld(st, "canary", 4, 3)).toBe(st);
+    const clean = markHeld(emptySeals(), "exit", 2);
+    expect(clean.heldBlocked).toBeUndefined();
+    expect(heldTitle(clean, "exit:2")).toBe("守住过：6 句都没攻破");
+  });
+
+  it("两份存档合起来：破的句数同一局取大的、不同局取后开始的；防里拦了几句跟着留下来的那次「防」", () => {
+    const a = {
+      best: { "identity:1": 1 },
+      badges: {},
+      broke: { "identity:1": { sid: "s1", at: "2026-11-17T04:00:00.000Z", n: 3 } },
+      held: { "canary:4": "2026-11-17T03:00:00.000Z" },
+      heldBlocked: { "canary:4": 2 },
+    };
+    const b = {
+      best: { "identity:1": 2 },
+      badges: {},
+      broke: { "identity:1": { sid: "s1", at: "2026-11-17T04:00:00.000Z", n: 5 } },
+      held: { "canary:4": "2026-11-17T05:00:00.000Z" },
+      heldBlocked: { "canary:4": 4 },
+    };
+    const m = mergeSeals(a, b);
+    expect(m.broke?.["identity:1"].n).toBe(5);
+    expect(m.heldBlocked).toEqual({ "canary:4": 2 });
+    const newer = { ...b, broke: { "identity:1": { sid: "s9", at: "2026-11-17T06:00:00.000Z", n: 1 } } };
+    expect(mergeSeals(a, newer).broke?.["identity:1"]).toMatchObject({ sid: "s9", n: 1 });
+    expect(mergeSeals(newer, a).broke?.["identity:1"]).toMatchObject({ sid: "s9", n: 1 });
   });
 });
