@@ -826,7 +826,8 @@ export default function Play() {
   /** 声音：第一次要用时建播放器（必须在用户点击里解锁，浏览器才让出声） */
   const ensureVoice = async () => {
     // 闯关页要听着顺：每句先攒 300 毫秒再放，网络一抖不会放一下停一下（11-17 修改 4；开场白也用这个播放器）
-    playerRef.current ??= new VoicePlayer({ prerollMs: 300 });
+    // 11-17 学妹「有一点点卡」：一句下完再下下一句（正在放的那句独占网速）；句子中途断过粮，以后多攒一点，最多 1 秒
+    playerRef.current ??= new VoicePlayer({ prerollMs: 300, maxPrerollMs: 1000, serialFetch: true });
     const p = playerRef.current;
     // 开场白不属于哪一局：编号写成 greet:关卡，从 /api/play/greet 取（ADR-046）
     p.audioUrl = (sid, u) =>

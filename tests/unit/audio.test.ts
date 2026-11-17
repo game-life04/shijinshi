@@ -276,6 +276,46 @@ describe("AudioWorklet 播放队列（epoch 截断）", () => {
     expect(r.finished).toEqual(["f0"]);
   });
 
+  it("断过就多攒（11-17）：句子放到一半断粮一次，以后要攒的翻一倍，最多到上限", () => {
+    const core = new PlaybackCore();
+    core.configure({ prerollSamples: 100, maxPrerollSamples: 300 });
+    core.queue({ epoch: 0, uttId: "u0" });
+    core.push(chunk(0, "u0", 0, 100));
+    expect(run(core, 1).segments).toEqual([["u0", 0, 100]]); // 攒够 100 开播，放完断粮：以后要攒 200
+    core.push(chunk(0, "u0", 100, 150));
+    expect(run(core, 1, 128).segments).toEqual([]); // 150 不到 200：不放
+    core.push(chunk(0, "u0", 250, 50));
+    expect(run(core, 2, 256).segments).toEqual([
+      ["u0", 100, 228],
+      ["u0", 228, 250],
+      ["u0", 250, 300],
+    ]); // 攒够 200 接着放；又断了一次：以后要攒 300（上限）
+    core.push(chunk(0, "u0", 300, 250));
+    expect(run(core, 1, 512).segments).toEqual([]); // 250 不到 300
+    core.push(chunk(0, "u0", 550, 50));
+    core.queue({ epoch: 0, uttId: "u1" });
+    expect(run(core, 3, 640).segments.at(-1)?.[2]).toBe(600); // 攒够 300 放完；再断也不超过 300
+    core.end({ epoch: 0, uttId: "u0" });
+    core.push(chunk(0, "u1", 0, 299));
+    expect(run(core, 1, 1024).segments).toEqual([]); // 下一句开播前也按 300 攒
+    core.end({ epoch: 0, uttId: "u1" });
+    expect(run(core, 3, 1152).segments).toEqual([
+      ["u1", 0, 128],
+      ["u1", 128, 256],
+      ["u1", 256, 299],
+    ]); // 全部送来就不用再等
+  });
+
+  it("没设上限（只设了预缓冲）：断过也照旧按预缓冲攒", () => {
+    const core = new PlaybackCore();
+    core.configure({ prerollSamples: 100 });
+    core.queue({ epoch: 0, uttId: "u0" });
+    core.push(chunk(0, "u0", 0, 100));
+    run(core, 1);
+    core.push(chunk(0, "u0", 100, 100));
+    expect(run(core, 1, 128).segments).toEqual([["u0", 100, 200]]); // 又是 100 就放
+  });
+
   it("预缓冲默认 0：和原来一样，收到就在这个处理块里放，断粮以后来一块放一块", () => {
     const core = new PlaybackCore();
     const out = new Float32Array(128);
@@ -335,7 +375,7 @@ describe("主线程播放器（假的 AudioWorklet）：先排队再取音频，
     const errors: string[] = [];
     p.onError = (m) => errors.push(m);
     await p.unlock(); // 这时才建 worklet：设置跟着发过去
-    expect(sent).toEqual([{ type: "config", prerollSamples: 7200 }]);
+    expect(sent).toEqual([{ type: "config", prerollSamples: 7200, maxPrerollSamples: 7200 }]); // 没设上限：断过也不多攒
     p.beginTurn("T#1");
     p.play("R", "T#1", "T#1.bad");
     p.play("R", "T#1", "T#1.ok");
@@ -359,6 +399,37 @@ describe("主线程播放器（假的 AudioWorklet）：先排队再取音频，
       ["T#1.bad", "failed"],
       ["T#1.ok", "ended"],
     ]);
+  });
+
+  it("一句下完再下下一句（serialFetch，11-17）：排队当场发，第二句等第一句下完才开始取；默认几句同时取", async () => {
+    const { sent } = fakeAudio();
+    const started: string[] = [];
+    const finish = new Map<string, () => void>();
+    vi.stubGlobal("fetch", (url: string) => {
+      started.push(url);
+      return new Promise<Response>((resolve) => finish.set(url, () => resolve(new Response(new Uint8Array([0, 64, 0, 64])))));
+    });
+    const p = new VoicePlayer({ prerollMs: 300, maxPrerollMs: 1000, serialFetch: true });
+    p.audioUrl = (_run, u) => `/audio/${u}`;
+    await p.unlock();
+    expect(sent[0]).toEqual({ type: "config", prerollSamples: 7200, maxPrerollSamples: 24000 });
+    p.beginTurn("T#1");
+    p.play("R", "T#1", "T#1.u0");
+    p.play("R", "T#1", "T#1.u1");
+    expect(sent.filter((m) => m.type === "queue").map((m) => m.uttId)).toEqual(["T#1.u0", "T#1.u1"]);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(started).toEqual(["/audio/T#1.u0"]); // 第二句还没开始取
+    finish.get("/audio/T#1.u0")?.();
+    await vi.waitFor(() => expect(started).toEqual(["/audio/T#1.u0", "/audio/T#1.u1"]));
+    // 默认：几句同时取（工作台照旧）
+    const q = new VoicePlayer();
+    q.audioUrl = (_run, u) => `/audio/${u}`;
+    await q.unlock();
+    q.beginTurn("T#2");
+    q.play("R", "T#2", "T#2.u0");
+    q.play("R", "T#2", "T#2.u1");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(started.slice(2)).toEqual(["/audio/T#2.u0", "/audio/T#2.u1"]);
   });
 
   it("等到超时还没收尾的句子（取音频卡住了）：停掉下载、告诉 worklet 不会再有音频，免得挡着后面的句子；默认不开预缓冲", async () => {

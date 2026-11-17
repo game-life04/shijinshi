@@ -61,6 +61,13 @@ export interface VoicePlayerOptions {
    * 代价是首声最多晚这么长。默认 0 = 收到就放，和以前完全一样
    */
   prerollMs?: number;
+  /** 句子中途断过粮以后，每次要攒的翻一倍，最多到这么长（毫秒）；不填就是不加（11-17：网慢时少一顿一顿） */
+  maxPrerollMs?: number;
+  /**
+   * 一句下完再下下一句（默认否：几句同时下）。网慢时几句同时下会分掉网速，正在放的那句断粮；
+   * 一句一句下，正在放的那句独占网速（11-17）。只给闯关页用，工作台照旧（量首声和漏出的口径不变）
+   */
+  serialFetch?: boolean;
 }
 
 export class VoicePlayer {
@@ -79,10 +86,17 @@ export class VoicePlayer {
   audioUrl?: (runId: string, uttId: string) => string;
   /** 预缓冲换算成采样数（AudioContext 是 24 kHz，和源采样一一对应）；0 = 不开 */
   private readonly prerollSamples: number;
+  private readonly maxPrerollSamples: number;
+  private readonly serialFetch: boolean;
+  /** 一句一句下时，排在最后的那次下载：下一句等它下完再开始 */
+  private fetchTail: Promise<void> = Promise.resolve();
 
   constructor(opts: VoicePlayerOptions = {}) {
-    const ms = opts.prerollMs ?? 0;
-    this.prerollSamples = Number.isFinite(ms) && ms > 0 ? Math.round((ms * PLAYER_SAMPLE_RATE) / 1000) : 0;
+    const samples = (ms: number | undefined) =>
+      ms !== undefined && Number.isFinite(ms) && ms > 0 ? Math.round((ms * PLAYER_SAMPLE_RATE) / 1000) : 0;
+    this.prerollSamples = samples(opts.prerollMs);
+    this.maxPrerollSamples = Math.max(this.prerollSamples, samples(opts.maxPrerollMs));
+    this.serialFetch = Boolean(opts.serialFetch);
   }
 
   get ready(): boolean {
@@ -131,7 +145,8 @@ export class VoicePlayer {
       this.node.port.onmessage = (e: MessageEvent<WorkletMessage>) => this.onMessage(e.data);
       this.node.connect(this.ctx.destination);
       // 预缓冲的设置：worklet 是第一次要用时才建的（关掉以后再用会重建），所以每次建好就发；不开就不发，worklet 默认收到就放
-      if (this.prerollSamples > 0) this.node.port.postMessage({ type: "config", prerollSamples: this.prerollSamples });
+      if (this.prerollSamples > 0)
+        this.node.port.postMessage({ type: "config", prerollSamples: this.prerollSamples, maxPrerollSamples: this.maxPrerollSamples });
     }
   }
 
@@ -166,7 +181,13 @@ export class VoicePlayer {
     this.utts.set(uttId, st);
     // 先排队再取音频：播放顺序 = 调用 play() 的顺序，不看哪句的音频先到
     this.node.port.postMessage({ type: "queue", epoch: st.epoch, uttId });
-    void this.stream(runId, st);
+    if (!this.serialFetch) {
+      void this.stream(runId, st);
+      return;
+    }
+    // 一句一句下：等前一句下完（或者失败、被截断）再开始；截断以后 fetchTail 换新，新的一代不等旧的
+    const run = this.fetchTail.then(() => this.stream(runId, st));
+    this.fetchTail = run.catch(() => {});
   }
 
   private async stream(runId: string, st: UttState) {
@@ -228,6 +249,7 @@ export class VoicePlayer {
   cut(reason: "cut" | "cancelled") {
     const at = performance.now();
     this.epoch++;
+    this.fetchTail = Promise.resolve();
     const affected = [...this.utts.values()].filter((u) => !u.settled && u.epoch < this.epoch);
     for (const u of affected) {
       u.cutAt = at;

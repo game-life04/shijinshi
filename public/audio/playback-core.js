@@ -5,6 +5,8 @@
 //   - 按句子排队，播放顺序 = 排队的先后（主线程调用 play() 的顺序），不看哪句的音频先到。
 //     一轮里几句话同时在下载，线上（HTTP/2 多路复用、网速慢）各句的网络分块是交错着到的：
 //     只从排在最前面的那句取音频，它暂时没有音频就放静音等它，不跳到后面的句子；一句放完才轮到下一句；
+//   - 断过就多攒（11-17，学妹：「声音有的时候还是有一点点卡」，限速 600 kbps 时 11 句里 5 句中途断）：开着预缓冲时，
+//     一句话放到一半断粮了，以后每次要攒的翻一倍，最多到 maxPrerollSamples（网慢的人多等一下，换来后面不再一顿一顿）；
 //   - 预缓冲（可选，默认 0 = 收到就放）：每句开播前、中途断粮以后，先攒够 prerollSamples 个采样
 //     （或者这句已经全部送来）再放，网络一抖不会放一下停一下；
 //   - 每次渲染都记下实际送进输出的源采样区间 [start, end)，按句子分段上报，用来算违规音频渲染时长；
@@ -30,15 +32,22 @@ export class PlaybackCore {
     this.started = new Set();
     /** 预缓冲：开播前、断粮后至少攒够多少个采样才放。0 = 收到就放 */
     this.prerollSamples = 0;
+    /** 断过以后最多攒到多少（不大于 prerollSamples 就是不加） */
+    this.maxPrerollSamples = 0;
+    /** 现在要攒多少：从 prerollSamples 起，句子中途断粮一次翻一倍，不超过 maxPrerollSamples */
+    this.waitSamples = 0;
   }
 
   /**
    * 设置预缓冲的采样数（主线程建好 worklet 时发一次）。不是正数就当 0。
-   * @param {{prerollSamples?:number}} m
+   * @param {{prerollSamples?:number, maxPrerollSamples?:number}} m
    */
   configure(m) {
     const n = Math.floor(Number(m.prerollSamples));
     this.prerollSamples = n > 0 ? n : 0;
+    const max = Math.floor(Number(m.maxPrerollSamples));
+    this.maxPrerollSamples = max > this.prerollSamples ? max : this.prerollSamples;
+    this.waitSamples = this.prerollSamples;
   }
 
   /**
@@ -137,13 +146,18 @@ export class PlaybackCore {
         }
         // 排在最前面的这句暂时没有音频（网络慢）：放静音等它，不跳到后面的句子。
         // 这个块还没填满才算真断粮：已经开播的，要重新攒够才接着放
-        if (i < out.length) u.playing = false;
+        if (i < out.length) {
+          // 放到一半断粮（已经开播了）：网慢，以后多攒一点（见文件开头）
+          if (u.playing && this.prerollSamples > 0)
+            this.waitSamples = Math.min(this.maxPrerollSamples, Math.max(this.waitSamples, this.prerollSamples) * 2);
+          u.playing = false;
+        }
         break;
       }
       if (i >= out.length) break;
       if (!u.playing) {
         // 开播前、断粮后：先攒够预缓冲；这句已经全部送来就不用再等
-        if (u.buffered < this.prerollSamples && !u.ended) break;
+        if (u.buffered < Math.max(this.prerollSamples, this.waitSamples) && !u.ended) break;
         u.playing = true;
       }
       const c = u.chunks[0];
