@@ -1,5 +1,6 @@
 // 语音转文字（ADR-054）：GET 告诉页面用哪种方式听（server：录一整段发到这里转；browser：用浏览器自带的识别——只在模拟模式下）；
-// POST 收一段 16 kHz 单声道 WAV（请求体就是音频本身），回 { text, simulated }。录音只用来转文字，不存。
+// POST 收一段录音（请求体就是音频本身：WebM 的 Opus，或者 16 kHz 单声道 WAV；按开头几个字节认，不看请求头），
+// 回 { text, simulated }。录音只用来转文字，不存。
 
 import { rateLimit } from "@/lib/server/access";
 import { ASR_MAX_BYTES, AsrError, asrAvailable, transcribe } from "@/lib/server/asr";

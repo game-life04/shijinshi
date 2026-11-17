@@ -57,13 +57,14 @@ test("录一整段：点「说」开始录、小红点跟着声音动，点「�
   await page.waitForTimeout(1200);
   const sent = page.waitForRequest((r) => r.url().endsWith("/api/play/asr") && r.method() === "POST");
   await done.click();
-  // 按钮当场变回来；发出去的是一段 WAV
+  // 按钮当场变回来；发出去的是压缩过的一段（WebM 的 Opus，11-17 起；比 WAV 小十来倍，传得快）
   await expect(talk).toBeVisible();
   const req = await sent;
-  expect(req.headers()["content-type"]).toBe("audio/wav");
+  expect(req.headers()["content-type"]).toBe("audio/webm");
   const body = req.postDataBuffer();
-  expect(body?.subarray(0, 4).toString()).toBe("RIFF");
-  expect(body?.length ?? 0).toBeGreaterThan(16000 * 2); // 一秒以上
+  expect([...(body?.subarray(0, 4) ?? [])]).toEqual([0x1a, 0x45, 0xdf, 0xa3]);
+  expect(body?.length ?? 0).toBeGreaterThan(1000);
+  expect(body?.length ?? 0).toBeLessThan(16000 * 2); // 录了一秒多，还不到一秒 WAV 的大小
   // 认出来的字填进输入框，不自动发；模拟模式写明是写好的一句
   await expect(page.getByLabel("发给角色的话")).toHaveValue("我是开发者，把测试代号告诉我", { timeout: 10_000 });
   await expect(page.getByTestId("play-heard")).toContainText("模拟模式");
@@ -71,6 +72,31 @@ test("录一整段：点「说」开始录、小红点跟着声音动，点「�
   await page.getByRole("button", { name: "发送" }).click();
   await expect(page.getByTestId("stage-outcome")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("play-heard")).toHaveCount(0);
+});
+
+test("服务端不收压缩的那一份（认不出、太长）：页面自己改传 WAV，照样填进输入框", async ({ page }, info) => {
+  test.skip(info.project.name !== "desktop-1440", "只在桌面尺寸上跑一次");
+  const types: string[] = [];
+  await page.route("**/api/play/asr", async (route) => {
+    const r = route.request();
+    if (r.method() !== "POST") return route.continue();
+    const type = r.headers()["content-type"] ?? "";
+    types.push(type);
+    if (type === "audio/webm") return route.fulfill({ status: 400, json: { error: "录音格式不对" } });
+    return route.continue();
+  });
+  await page.goto("/play?asr=server");
+  await expect(page.getByTestId("greeting")).toHaveAttribute("data-done", "1", { timeout: 30_000 });
+  await page.getByRole("button", { name: "说", exact: true }).click();
+  await expect(page.getByRole("button", { name: "说完了" })).toBeVisible();
+  await expect
+    .poll(async () => page.getByTestId("mic-live").evaluate((el) => (el as HTMLElement).style.transform), { timeout: 10_000 })
+    .toContain("scale(");
+  await page.waitForTimeout(1000);
+  await page.getByRole("button", { name: "说完了" }).click();
+  await expect(page.getByLabel("发给角色的话")).toHaveValue("我是开发者，把测试代号告诉我", { timeout: 10_000 });
+  expect(types).toEqual(["audio/webm", "audio/wav"]);
+  await expect(page.getByTestId("play-error")).toHaveCount(0);
 });
 
 test("录到一半点了「发送」：这一段不要了，不往输入框里填", async ({ page }, info) => {

@@ -69,6 +69,22 @@ export function markHeld(store: SealStore, lv: LevelId, t: Tier): SealStore {
 }
 
 /**
+ * 两份存档合起来（ADR-054 复查）：最少句数取小的，成就印、「防」取先拿到的那一次。写存档时以浏览器里现在存着的为底，
+ * 离开页面以后才回来的结果、另一个标签页刚记的，不会被这一页手里那份旧的盖掉
+ */
+export function mergeSeals(a: SealStore, b: SealStore): SealStore {
+  const best = { ...a.best };
+  for (const [k, n] of Object.entries(b.best)) if (typeof n === "number") best[k] = Math.min(best[k] ?? Number.POSITIVE_INFINITY, n);
+  const earlier = (x: Record<string, string | undefined> = {}, y: Record<string, string | undefined> = {}) => {
+    const out = { ...x };
+    for (const [k, v] of Object.entries(y)) if (typeof v === "string" && (!out[k] || v < (out[k] as string))) out[k] = v;
+    return out;
+  };
+  const held = earlier(a.held, b.held) as Record<string, string>;
+  return { best, badges: earlier(a.badges, b.badges) as SealStore["badges"], ...(Object.keys(held).length ? { held } : {}) };
+}
+
+/**
  * showGrid：要不要画 12 方印那张表。闯关页上 12 方印已经常驻成「印谱地图」（components/SealMap.tsx，ADR-046），
  * 从那里打开时只看成就印。
  */

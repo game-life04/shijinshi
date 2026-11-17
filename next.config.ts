@@ -18,6 +18,11 @@ const nextConfig: NextConfig = {
       },
     ];
   },
+  experimental: {
+    // 经过 proxy.ts（登录门禁）的请求，Next 会先把请求体收进内存再交给接口，默认最多 10 MB（ADR-054 复查）。
+    // 本站最大的请求体是「说」的录音（WAV 31 秒约 1 MB；压缩过的约 120 KB），收 2 MB 就够，和线上 nginx 一样
+    proxyClientMaxBodySize: "2mb",
+  },
   turbopack: {
     rules: {
       "*.css": {

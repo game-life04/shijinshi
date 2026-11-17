@@ -6,6 +6,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   anySignal,
   CAPTURE_WORKLET_SOURCE,
+  type Compressed,
+  FormatRejected,
   micError,
   RECORD_LIMITS,
   RecordError,
@@ -58,9 +60,11 @@ const flush = () => new Promise((r) => setTimeout(r, 0));
 function setup(
   o: {
     micFails?: unknown;
-    upload?: (wav: Uint8Array) => Promise<{ text: string; simulated?: boolean }>;
+    upload?: (audio: Uint8Array, mime: string) => Promise<{ text: string; simulated?: boolean }>;
     /** 麦克风等这个 Promise 好了才打开（模拟第一次用时的权限弹窗） */
     micGate?: Promise<void>;
+    /** 浏览器同时压的那一份：给了就有 finish（收尾时交出来）；不给就是不支持压缩的浏览器 */
+    compressed?: () => Promise<Compressed | null>;
   } = {},
 ) {
   const c = clock();
@@ -71,7 +75,9 @@ function setup(
     spoke: 0,
     notes: [] as string[],
     uploads: [] as Uint8Array[],
+    mimes: [] as string[],
     closed: 0,
+    finished: 0,
   };
   let feed: ((f: Float32Array) => void) | null = null;
   const s = new RecordSession(
@@ -86,11 +92,22 @@ function setup(
       if (o.micFails) throw o.micFails;
       if (o.micGate) await o.micGate;
       feed = onChunk;
-      return { sampleRate: RATE, close: () => log.closed++ };
+      const packed = o.compressed;
+      return {
+        sampleRate: RATE,
+        close: () => log.closed++,
+        finish: packed
+          ? () => {
+              log.finished++;
+              return packed();
+            }
+          : undefined,
+      };
     },
-    async (wav) => {
-      log.uploads.push(wav);
-      return o.upload ? o.upload(wav) : { text: "我最近情绪有一点不好" };
+    async (audio, mime) => {
+      log.uploads.push(audio);
+      log.mimes.push(mime);
+      return o.upload ? o.upload(audio, mime) : { text: "我最近情绪有一点不好" };
     },
     c.now,
     RECORD_LIMITS,
@@ -355,6 +372,96 @@ describe("录一整段、说完交给服务器转文字", () => {
       AbortSignal.any = any;
       AbortSignal.timeout = timeout;
     }
+  });
+
+  it("浏览器能压缩时：说完只传压缩的那一份（WebM），不再传 WAV；麦克风交给 finish 去关", async () => {
+    const webm = new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 1, 2, 3]);
+    const { s, log, talk } = setup({ compressed: async () => ({ data: webm, mime: "audio/webm" }) });
+    s.start();
+    await flush();
+    talk(1000);
+    s.stop();
+    await flush();
+    await flush();
+    expect(log.finished).toBe(1);
+    expect(log.closed).toBe(0);
+    expect(log.mimes).toEqual(["audio/webm"]);
+    expect(log.uploads[0]).toBe(webm);
+    expect(log.texts.at(-1)).toEqual(["我最近情绪有一点不好", true]);
+  });
+
+  it("服务端不收压缩的那一份（认不出、太长）：改传 WAV，照样把字交出来", async () => {
+    const { s, log, talk } = setup({
+      compressed: async () => ({ data: new Uint8Array([1, 2, 3]), mime: "audio/webm" }),
+      upload: async (_a, mime) => {
+        if (mime !== "audio/wav") throw new FormatRejected("录音格式不对");
+        return { text: "我最近情绪有一点不好" };
+      },
+    });
+    s.start();
+    await flush();
+    talk(1000);
+    s.stop();
+    for (let i = 0; i < 4; i++) await flush();
+    expect(log.mimes).toEqual(["audio/webm", "audio/wav"]);
+    expect(wavInfo(log.uploads[1])?.seconds).toBeGreaterThan(0.9);
+    expect(log.errors).toEqual([]);
+    expect(log.texts.at(-1)).toEqual(["我最近情绪有一点不好", true]);
+  });
+
+  it("压缩的那一份没拿到（录音器出错、超时）：传 WAV", async () => {
+    const { s, log, talk } = setup({ compressed: async () => null });
+    s.start();
+    await flush();
+    talk(1000);
+    s.stop();
+    for (let i = 0; i < 4; i++) await flush();
+    expect(log.mimes).toEqual(["audio/wav"]);
+    expect(log.texts.at(-1)).toEqual(["我最近情绪有一点不好", true]);
+  });
+
+  it("压缩那份传上去没连上、限流：不重传 WAV（重传也一样），照常报错、给再说一次", async () => {
+    const { s, log, talk } = setup({
+      compressed: async () => ({ data: new Uint8Array([1]), mime: "audio/webm" }),
+      upload: async () => {
+        throw new Error(RECORD_ERRORS.upload);
+      },
+    });
+    s.start();
+    await flush();
+    talk(1000);
+    s.stop();
+    for (let i = 0; i < 4; i++) await flush();
+    expect(log.mimes).toEqual(["audio/webm"]);
+    expect(log.errors).toEqual([RECORD_ERRORS.upload]);
+    expect(retryable(log.errors[0])).toBe(true);
+  });
+
+  it("等压缩那份的时候不要了（点了发送）：交出来了也不传", async () => {
+    let give: (c: Compressed | null) => void = () => {};
+    const { s, log, talk } = setup({ compressed: () => new Promise((r) => (give = r)) });
+    s.start();
+    await flush();
+    talk(1000);
+    s.stop();
+    s.cancel();
+    // 麦克风当场关，不等压缩那份交出来（复查：原来指示灯最多多亮 2 秒）
+    expect(log.closed).toBe(1);
+    give({ data: new Uint8Array([1]), mime: "audio/webm" });
+    for (let i = 0; i < 4; i++) await flush();
+    expect(log.uploads).toHaveLength(0);
+    expect(log.texts).toEqual([]);
+  });
+
+  it("没说话就收尾：压缩那份也不要，直接关麦克风", async () => {
+    const { s, log } = setup({ compressed: async () => ({ data: new Uint8Array([1]), mime: "audio/webm" }) });
+    s.start();
+    await flush();
+    s.stop();
+    await flush();
+    expect(log.finished).toBe(0);
+    expect(log.closed).toBe(1);
+    expect(log.uploads).toHaveLength(0);
   });
 
   it("麦克风还没打开就点了「说完了」：打开以后马上关掉，不留着录", async () => {

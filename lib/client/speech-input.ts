@@ -19,7 +19,7 @@
 // 原因见 recorder.ts 开头：Edge 连着听只回空字、一段一段听每段之间会丢字、Chrome 在国内连不上。
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { type OpenMic, openBrowserMic, RecordSession, recordSupported, type Upload, uploadWav } from "./recorder";
+import { type OpenMic, openBrowserMic, RecordSession, recordSupported, type Upload, uploadAudio } from "./recorder";
 import { ERRORS, retryable } from "./speech-messages";
 
 interface RecognitionResult {
@@ -383,7 +383,7 @@ export function useSpeechInput(o: {
     };
     s =
       engine === "server"
-        ? new RecordSession(events, cb.current.openMic ?? openBrowserMic, cb.current.upload ?? uploadWav)
+        ? new RecordSession(events, cb.current.openMic ?? openBrowserMic, cb.current.upload ?? uploadAudio)
         : new SpeechSession(C as RecognitionCtor, events);
     session.current = s;
     try {

@@ -38,6 +38,7 @@ import { isCompliment } from "@/lib/client/avatar/compliment";
 import { useAvatarStage, usePerformer } from "@/lib/client/avatar/stage";
 import { type Topic, topicOf } from "@/lib/client/avatar/topic";
 import type { CueAck } from "@/lib/client/avatar/types";
+import { timeoutSignal } from "@/lib/client/recorder";
 import { EXPIRED_MESSAGE, toLoginIfExpired } from "@/lib/client/session-expired";
 import { stampSound } from "@/lib/client/sfx";
 import { joinSpeech, type SpeechEngine, useSpeechInput } from "@/lib/client/speech-input";
@@ -64,7 +65,7 @@ import Avatar from "./Avatar";
 import { bubble, Chop, duration, Note, Row } from "./Chat";
 import { GuardCell } from "./Layers";
 import PlayGates from "./PlayGates";
-import SealBook, { award, BADGES, emptySeals, markHeld, SEALS_KEY, type SealStore, sealKey } from "./SealBook";
+import SealBook, { award, BADGES, emptySeals, markHeld, mergeSeals, SEALS_KEY, type SealStore, sealKey } from "./SealBook";
 import SealMap from "./SealMap";
 import SentenceJourney, { slipsOf } from "./SentenceJourney";
 import type { Phase } from "./StatusRing";
@@ -712,10 +713,18 @@ export default function Play() {
     return e;
   };
   const saveSeals = (next: SealStore) => {
-    sealsRef.current = next;
-    setSeals(next);
+    // 以浏览器里现在存着的为底合起来（ADR-054 复查）：离开页面以后才回来的结果、另一个标签页刚记的，不会被这一页手里那份旧的盖掉
+    let merged = next;
     try {
-      localStorage.setItem(SEALS_KEY, JSON.stringify(next));
+      const stored = JSON.parse(localStorage.getItem(SEALS_KEY) ?? "null") as SealStore | null;
+      if (stored && typeof stored === "object" && stored.best && stored.badges) merged = mergeSeals(stored, next);
+    } catch {
+      // 读不出就按这一页的
+    }
+    sealsRef.current = merged;
+    setSeals(merged);
+    try {
+      localStorage.setItem(SEALS_KEY, JSON.stringify(merged));
     } catch {
       // 存不下就只在这次页面里记
     }
@@ -730,17 +739,19 @@ export default function Play() {
     setTimeout(() => setFresh((f) => (f?.key === key ? null : f)), 3600);
     if (voiceRef.current) setTimeout(() => stampSound("印"), 700);
   };
-  const markBeaten = (lv: LevelId, t: Tier) =>
-    setBeaten((b) => {
-      if (b[lv]?.includes(t)) return b;
-      const next = { ...b, [lv]: [...(b[lv] ?? []), t].sort() as Tier[] };
-      try {
-        localStorage.setItem(LADDER_KEY, JSON.stringify(next));
-      } catch {
-        // 存不下就只在这次页面里记
-      }
-      return next;
-    });
+  const markBeaten = (lv: LevelId, t: Tier) => {
+    // 存档不放在 setBeaten 里面写（ADR-054 复查）：离开页面以后裁判才判出攻破，setBeaten 不再执行，原来阶梯上就少一个「破」；
+    // 也以存着的为底合进去
+    try {
+      const stored = JSON.parse(localStorage.getItem(LADDER_KEY) ?? "null") as Record<string, Tier[]> | null;
+      const base = stored && typeof stored === "object" && !Array.isArray(stored) ? stored : {};
+      const had = Array.isArray(base[lv]) ? base[lv] : [];
+      if (!had.includes(t)) localStorage.setItem(LADDER_KEY, JSON.stringify({ ...base, [lv]: [...had, t].sort() }));
+    } catch {
+      // 存不下就只在这次页面里记
+    }
+    setBeaten((b) => (b[lv]?.includes(t) ? b : { ...b, [lv]: [...(b[lv] ?? []), t].sort() as Tier[] }));
+  };
 
   /** 声音：第一次要用时建播放器（必须在用户点击里解锁，浏览器才让出声） */
   const ensureVoice = async () => {
@@ -994,7 +1005,13 @@ export default function Play() {
       setPending(null);
       setLeft(r.attempts_left);
       leftRef.current = r.attempts_left;
-      logTurn(s.id, lv, tr, r.turn.turn_id, { judging: r.judging, outcome: r.outcome, stopped_by: r.stopped_by });
+      const logged = logTurn(s.id, lv, tr, r.turn.turn_id, { judging: r.judging, outcome: r.outcome, stopped_by: r.stopped_by });
+      // 离开闯关页以后回复才回来、这一句又不用等裁判（ADR-054 复查）：页面不在了，下面「六句都守住」那段不会再跑，
+      // 六句都守住了在这里照样记「防」
+      if (!mountedRef.current && !r.judging && layerHeld([...logged.turns.values()])) {
+        const next = markHeld(sealsRef.current, lv, tr);
+        if (next !== sealsRef.current) saveSeals(next);
+      }
       if (!r.judging && r.outcome === "broken") {
         markBeaten(lv, tr);
         earn(lv, tr, { sentences: r.turn.index, byAi: Boolean(by), spoken });
@@ -1188,7 +1205,8 @@ export default function Play() {
     let live = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const ask = (tries: number) => {
-      fetch("/api/play/asr")
+      // 一次最多等 5 秒（ADR-054 复查：原来没有超时，服务器卡住时「说」一直灰着，也不会去问第二次）
+      fetch("/api/play/asr", { signal: timeoutSignal(5000) })
         .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
         .then((j: { engine?: SpeechEngine }) => {
           if (live) setEngine(j?.engine === "server" ? "server" : "browser");

@@ -7,6 +7,8 @@
 // （复查：原来从点「说」算，第一次用时权限弹窗看了 10 秒，一点「允许」就报没听到）。
 // 没算上开口、但录到了一点声音（最响的一段过了很低的底），收尾时照样交去认，空不空让识别去判
 // （复查：麦克风增益低、离得远时，小红点在动却说「没听到声音」，再说一次还是一样）。
+// 11-17 起浏览器支持时（Edge、Chrome、Firefox）另外同时压一份 WebM（Opus），说完先传压缩的（30 秒约 120 KB，WAV 约 0.96 MB）：
+// 线上「说完了」到出字要 5～10 秒，大半耗在传这近 1 MB 上。服务端认不出、嫌太长，或者压缩那份没拿到，就改传 WAV。
 
 import { EXPIRED_MESSAGE, toLoginIfExpired } from "./session-expired";
 import type { SpeechEvents, SpeechState, Timers } from "./speech-input";
@@ -35,15 +37,24 @@ export const RECORD_LIMITS = {
   faintRms: 0.004,
 };
 
-/** 开着的麦克风：采样率、关掉 */
+/** 压缩过的一段录音 */
+export interface Compressed {
+  data: Uint8Array;
+  mime: string;
+}
+/** 开着的麦克风：采样率、关掉；finish：收尾，交出同时压好的那一份再关掉（浏览器不支持压缩时没有这一项） */
 export interface Mic {
   sampleRate: number;
   close: () => void;
+  finish?: () => Promise<Compressed | null>;
 }
 /** 打开麦克风，每来一段声音调一次 onChunk */
 export type OpenMic = (onChunk: (samples: Float32Array) => void) => Promise<Mic>;
-/** 把 WAV 发去转文字 */
-export type Upload = (wav: Uint8Array, signal: AbortSignal) => Promise<{ text: string; simulated?: boolean }>;
+/** 把录音发去转文字（mime：audio/webm 或 audio/wav） */
+export type Upload = (audio: Uint8Array, mime: string, signal: AbortSignal) => Promise<{ text: string; simulated?: boolean }>;
+
+/** 服务端不收压缩的这一份（认不出、太长）：改传 WAV */
+export class FormatRejected extends Error {}
 
 export interface RecordEvents extends SpeechEvents {
   /** 响度（0～1），给「在听」的那个小红点跟着声音变大变小 */
@@ -90,6 +101,8 @@ export class RecordSession {
   private floorLevels: number[] | null = [];
   private threshold: number;
   private cancelled = false;
+  /** 收尾时在等它交出压缩那一份的麦克风：这时不要了，当场关掉（复查：原来要等那一份交出来，指示灯最多多亮 2 秒） */
+  private closing: Mic | null = null;
   private tickTimer: unknown = null;
   private abort: AbortController | null = null;
 
@@ -165,7 +178,7 @@ export class RecordSession {
   stop() {
     if (this.state !== "listening") return;
     this.timers.clear(this.tickTimer);
-    this.mic?.close();
+    const mic = this.mic;
     this.mic = null;
     let samples = concat(this.chunks);
     this.chunks = [];
@@ -174,29 +187,46 @@ export class RecordSession {
     if (samples.length > max) samples = samples.subarray(0, max);
     const ms = (samples.length / this.rate) * 1000;
     if (ms < this.limits.minMs || !(this.heardAny || this.peak >= this.limits.faintRms)) {
+      mic?.close();
       this.setState("idle");
       this.ev.onError(ERRORS["no-speech"]);
       this.ev.onText("", true);
       return;
     }
     this.setState("finishing");
-    const wav = encodeWav(resample(samples, this.rate, 16000), 16000);
-    this.abort = new AbortController();
-    this.upload(wav, this.abort.signal).then(
-      (r) => {
-        if (this.cancelled) return;
-        this.setState("idle");
-        if (!r.text) this.ev.onError(RECORD_ERRORS.unclear);
-        else if (r.simulated) this.ev.onNote?.("模拟模式：没有真的认，填进去的是写好的一句");
-        this.ev.onText(r.text, true);
-      },
-      (e) => {
-        if (this.cancelled) return;
-        this.setState("idle");
-        this.ev.onError(e instanceof Error && e.message ? e.message : RECORD_ERRORS.upload);
-        this.ev.onText("", true);
-      },
-    );
+    const abort = new AbortController();
+    this.abort = abort;
+    const rate = this.rate;
+    const wav = () => this.upload(encodeWav(resample(samples, rate, 16000), 16000), "audio/wav", abort.signal);
+    // 有压缩的那一份先传它；服务端不收（FormatRejected）、没拿到，传 WAV。别的错（没连上、限流）不重传，照常报
+    const compressed: Promise<Compressed | null> = mic?.finish ? mic.finish().catch(() => null) : Promise.resolve(null);
+    if (mic?.finish) this.closing = mic;
+    else mic?.close();
+    compressed
+      .then((c) => {
+        this.closing = null;
+        if (this.cancelled) return { text: "", simulated: false };
+        if (!c) return wav();
+        return this.upload(c.data, c.mime, abort.signal).catch((e) => {
+          if (e instanceof FormatRejected && !this.cancelled) return wav();
+          throw e;
+        });
+      })
+      .then(
+        (r) => {
+          if (this.cancelled) return;
+          this.setState("idle");
+          if (!r.text) this.ev.onError(RECORD_ERRORS.unclear);
+          else if (r.simulated) this.ev.onNote?.("模拟模式：没有真的认，填进去的是写好的一句");
+          this.ev.onText(r.text, true);
+        },
+        (e) => {
+          if (this.cancelled) return;
+          this.setState("idle");
+          this.ev.onError(e instanceof Error && e.message ? e.message : RECORD_ERRORS.upload);
+          this.ev.onText("", true);
+        },
+      );
   }
 
   /** 收尾时又要开新的一句：录着的先收尾；已经在转文字的照常等它回来 */
@@ -211,6 +241,8 @@ export class RecordSession {
     this.timers.clear(this.tickTimer);
     this.mic?.close();
     this.mic = null;
+    this.closing?.close();
+    this.closing = null;
     this.chunks = [];
     this.abort?.abort();
     this.setState("idle");
@@ -316,16 +348,40 @@ export const openBrowserMic: OpenMic = async (onChunk) => {
     mute.connect(ctx.destination);
     if (ctx.state === "suspended") await ctx.resume().catch(() => {});
     const s = stream;
+    // 和收音同时开始压（同一路麦克风）；压不了就只有 WAV
+    const packed = startCompressed(s);
+    let capturing = true;
+    let released = false;
+    /** 不再收音（响度、WAV 那一份到此为止） */
+    const stopCapture = () => {
+      if (!capturing) return;
+      capturing = false;
+      node.port.onmessage = null;
+      src.disconnect();
+      node.disconnect();
+      mute.disconnect();
+    };
+    /** 关掉麦克风（指示灯灭） */
+    const release = () => {
+      if (released) return;
+      released = true;
+      for (const t of s.getTracks()) t.stop();
+      void ctx.close().catch(() => {});
+    };
     return {
       sampleRate: ctx.sampleRate,
       close: () => {
-        node.port.onmessage = null;
-        src.disconnect();
-        node.disconnect();
-        mute.disconnect();
-        for (const t of s.getTracks()) t.stop();
-        void ctx.close().catch(() => {});
+        packed?.cancel();
+        stopCapture();
+        release();
       },
+      // 收尾：先停收音，等压缩的那一份交出来再关麦克风（先关麦克风，最后一点可能就没了）
+      finish: packed
+        ? () => {
+            stopCapture();
+            return packed.finish().finally(release);
+          }
+        : undefined,
     };
   } catch (e) {
     for (const t of stream?.getTracks() ?? []) t.stop();
@@ -333,6 +389,72 @@ export const openBrowserMic: OpenMic = async (onChunk) => {
     throw e;
   }
 };
+
+/** 压成哪种：只用 WebM 的 Opus（服务端只认这一种）；浏览器不支持（比如老一点的 Safari 只有 mp4）就只传 WAV */
+export function compressedType(): string | null {
+  if (typeof MediaRecorder === "undefined" || typeof MediaRecorder.isTypeSupported !== "function") return null;
+  return MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : null;
+}
+
+/**
+ * 同时压一份 WebM（Opus，每秒 32 千比特，一秒约 4 KB）。说完调 finish：等录音器把最后一点交出来（最多等 2 秒），
+ * 拿不到就交 null（改传 WAV）。cancel：不要了，直接停
+ */
+function startCompressed(stream: MediaStream): { finish: () => Promise<Compressed | null>; cancel: () => void } | null {
+  const type = compressedType();
+  if (!type) return null;
+  let rec: MediaRecorder;
+  const parts: Blob[] = [];
+  try {
+    rec = new MediaRecorder(stream, { mimeType: type, audioBitsPerSecond: 32000 });
+    rec.ondataavailable = (e) => {
+      if (e.data.size) parts.push(e.data);
+    };
+    rec.start();
+  } catch {
+    return null;
+  }
+  /** 还在等的那次 finish：cancel 时直接交 null */
+  let pending: ((v: Compressed | null) => void) | null = null;
+  return {
+    finish: () =>
+      new Promise<Compressed | null>((resolve) => {
+        let done = false;
+        const end = (v: Compressed | null) => {
+          if (done) return;
+          done = true;
+          pending = null;
+          clearTimeout(timer);
+          resolve(v);
+        };
+        pending = end;
+        const timer = setTimeout(() => end(null), 2000);
+        rec.onerror = () => end(null);
+        rec.onstop = () => {
+          new Blob(parts, { type: "audio/webm" }).arrayBuffer().then(
+            (b) => end(b.byteLength ? { data: new Uint8Array(b), mime: "audio/webm" } : null),
+            () => end(null),
+          );
+        };
+        try {
+          if (rec.state === "inactive") end(null);
+          else rec.stop();
+        } catch {
+          end(null);
+        }
+      }),
+    cancel: () => {
+      rec.ondataavailable = null;
+      rec.onstop = null;
+      try {
+        if (rec.state !== "inactive") rec.stop();
+      } catch {
+        // 已经停了
+      }
+      pending?.(null);
+    },
+  };
+}
 
 /** 这个浏览器能不能这样录：要有麦克风接口和 AudioWorklet（Edge、Chrome、Safari 14.1 起、Firefox 76 起都有） */
 export function recordSupported(): boolean {
@@ -368,15 +490,18 @@ export function timeoutSignal(ms: number): AbortSignal {
   return c.signal;
 }
 
-/** 发到 /api/play/asr 转文字；登录过期（401）和页面别处一样直接跳登录页 */
-export const uploadWav: Upload = async (wav, signal) => {
+/**
+ * 发到 /api/play/asr 转文字；登录过期（401）和页面别处一样直接跳登录页。
+ * 压缩的那一份被服务端拒了（认不出 400、太长 413）抛 FormatRejected，好让会话改传 WAV
+ */
+export const uploadAudio: Upload = async (audio, mime, signal) => {
   let res: Response;
   try {
     res = await fetch("/api/play/asr", {
       method: "POST",
-      headers: { "Content-Type": "audio/wav" },
+      headers: { "Content-Type": mime },
       // 直接发字节（不包成 Blob）：浏览器一样发，测试工具也读得到请求体
-      body: wav as unknown as BodyInit,
+      body: audio as unknown as BodyInit,
       signal: anySignal([signal, timeoutSignal(20000)]),
     });
   } catch {
@@ -384,6 +509,8 @@ export const uploadWav: Upload = async (wav, signal) => {
   }
   if (toLoginIfExpired(res.status)) throw new Error(EXPIRED_MESSAGE);
   const j = (await res.json().catch(() => null)) as { text?: string; simulated?: boolean; error?: string } | null;
+  if (!res.ok && mime !== "audio/wav" && (res.status === 400 || res.status === 413 || res.status === 415))
+    throw new FormatRejected(j?.error || RECORD_ERRORS.upload);
   if (!res.ok) throw new Error(j?.error || RECORD_ERRORS.upload);
   return { text: j?.text ?? "", simulated: j?.simulated };
 };
